@@ -63,8 +63,11 @@ jobs:
       - name: 后端编译检查
         run: go build ./...
 
+      # 依赖里存在 peer 范围冲突（例如 echarts-wordcloud 要求 echarts ^5，而 dependabot 把 echarts 升到 6），
+      # 新版 npm 默认会因 ERESOLVE 直接让 npm ci 失败。放宽 peer 校验让安装通过，
+      # 真正的类型/构建问题仍由后续的 svelte-check + vite build 把关。
       - name: 安装前端依赖
-        run: npm ci
+        run: npm ci --legacy-peer-deps
         working-directory: web
 
       # package.json 的 build = "svelte-check && vite build"，

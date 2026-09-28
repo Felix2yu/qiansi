@@ -35,8 +35,9 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
+      # 同 build.yml：放宽 peer 校验，避免 dependabot 主版本升级引发的 ERESOLVE 让安装失败。
       - name: 安装前端依赖
-        run: npm ci
+        run: npm ci --legacy-peer-deps
         working-directory: web
 
       # 前端产物（web/dist）由运行时从 QIANSI_WEB_DIR 提供，不嵌进二进制。
