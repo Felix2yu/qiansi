@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, yuan, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
-  import { Plus, X } from '@lucide/svelte'
+  import { Plus, X, Trash2 } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
   let list = $state<Event[]>([])
@@ -71,6 +71,20 @@
     await load()
   }
 
+  async function remove(id: string, title: string, expenseFen?: number) {
+    const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
+    if (!confirm(`确定删除「${title}」吗？${tail}`)) return
+    try {
+      await API.delete(`/api/v1/events/${id}`)
+    } catch (err: any) {
+      alert('删除失败：' + (err?.message || err))
+      return
+    }
+    showForm = false
+    editId = ''
+    await load()
+  }
+
   function locText(e: Event) {
     return e.locations && e.locations.length > 0 ? e.locations.join(' · ') : (e.location || '')
   }
@@ -111,7 +125,10 @@
           <div class="flex-1 min-w-0">
             <div class="flex items-start justify-between gap-2">
               <div class="text-sm font-medium">{e.title}</div>
-              <button class="text-xs shrink-0 px-2 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);" onclick={() => openEdit(e)}>编辑</button>
+              <div class="flex items-center gap-1 shrink-0">
+                <button class="text-xs px-2 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);" onclick={() => openEdit(e)}>编辑</button>
+                <button class="text-xs px-2 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;" onclick={() => remove(e.id, e.title, e.expense_fen)}>删除</button>
+              </div>
             </div>
             <div class="text-xs mt-0.5" style="color: var(--q-muted);">
               {e.type_name && `[${e.type_name}] `}
@@ -194,9 +211,19 @@
           </div>
         </div>
       </div>
-      <div class="flex justify-end gap-2 mt-5">
-        <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>
-        <button class="px-4 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={submit}>保存</button>
+      <div class="flex items-center justify-between gap-2 mt-5">
+        {#if editId}
+          <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm" style="border: 1px solid var(--q-border); color: #ef4444;"
+                  onclick={() => remove(editId, form.title, list.find(x => x.id === editId)?.expense_fen)}>
+            <Trash2 size={14} /> 删除
+          </button>
+        {:else}
+          <span></span>
+        {/if}
+        <div class="flex gap-2">
+          <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>
+          <button class="px-4 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={submit}>保存</button>
+        </div>
       </div>
     </div>
   </div>
