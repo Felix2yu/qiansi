@@ -77,7 +77,13 @@ func personToVCard(p *store.Person, fields []*store.PersonField) string {
 		abuid = p.ID // 稳定 UID：无保留值时复用 person id，避免每次导出漂移
 	}
 	iw.b.WriteString("FN:" + escapeVCardValue(p.Name) + "\r\n")
-	iw.b.WriteString("N:;" + escapeVCardValue(p.Name) + ";;;\r\n")
+	// 有姓/名结构时重建标准 N（Family;Given），与 Apple 通讯录字段一一对应；
+	// 仅有单一显示名的旧数据回退为整名塞进 Family 槽位（与历史行为一致）
+	if p.FamilyName != "" || p.GivenName != "" {
+		iw.b.WriteString("N:" + escapeVCardValue(p.FamilyName) + ";" + escapeVCardValue(p.GivenName) + ";;;\r\n")
+	} else {
+		iw.b.WriteString("N:;" + escapeVCardValue(p.Name) + ";;;\r\n")
+	}
 	if p.Nickname != "" {
 		iw.b.WriteString("NICKNAME:" + escapeVCardValue(p.Nickname) + "\r\n")
 	}

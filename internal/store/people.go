@@ -48,8 +48,11 @@ func (s *Store) SettingAll(ctx context.Context) (map[string]string, error) {
 // ===== People =====
 
 type Person struct {
-	ID                 string  `json:"id"`
-	Name               string  `json:"name"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	// FamilyName/GivenName 保留 vCard 的姓/名结构，显示顺序由 ComposeName 决定
+	FamilyName         string  `json:"family_name,omitempty"`
+	GivenName          string  `json:"given_name,omitempty"`
 	Nickname           string  `json:"nickname,omitempty"`
 	Gender             string  `json:"gender,omitempty"`
 	Birthday           string  `json:"birthday,omitempty"`
@@ -80,19 +83,53 @@ func (s *Store) PersonCreate(ctx context.Context, p *Person) error {
 	if p.Grade == 0 {
 		p.Grade = 3
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,x_abuid,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		p.ID, p.Name, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,family_name,given_name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,x_abuid,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		p.ID, p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
 		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 	p.UpdatedAt = nowUTC()
-	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,category_id=?,archived=?,x_abuid=?,updated_at=? WHERE id=?`,
-		p.Name, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
+	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,category_id=?,archived=?,x_abuid=?,updated_at=? WHERE id=?`,
+		p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
 		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.UpdatedAt, p.ID)
 	return err
+}
+
+// PersonUpdateNameParts 只更新姓名三件套（显示名/姓/名），
+// 供 vCard 重导入时按 X-ABUID 匹配回填，不触碰用户在应用内维护的其他字段。
+func (s *Store) PersonUpdateNameParts(ctx context.Context, id, name, familyName, givenName string) error {
+	_, err := s.DB.ExecContext(ctx,
+		"UPDATE people SET name=?,family_name=?,given_name=?,updated_at=? WHERE id=?",
+		name, familyName, givenName, nowUTC(), id)
+	return err
+}
+
+// ComposeName 由姓/名拼出显示名：含中文按「姓+名」（中文习惯姓在前），
+// 纯西文按「名 姓」（Western 习惯）。只有其一则直接用那个。
+func ComposeName(family, given string) string {
+	switch {
+	case family != "" && given != "":
+		if hasHan(family + given) {
+			return family + given
+		}
+		return given + " " + family
+	case family != "":
+		return family
+	default:
+		return given
+	}
+}
+
+func hasHan(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Store) PersonDelete(ctx context.Context, id string) error {
@@ -265,14 +302,14 @@ VALUES(?,?,?,?,?,1,'7,3,1,0',?, 'birthday')`,
 }
 
 func (s *Store) PersonGet(ctx context.Context, id string) (*Person, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name,p.birthday_anniversary_id
+	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name,p.birthday_anniversary_id
 FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
 	p := &Person{}
 	var grade int
 	var cat sql.NullString
 	var catID sql.NullInt64
 	var birthdayAnniv sql.NullString
-	if err := row.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
+	if err := row.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
 		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat, &birthdayAnniv); err != nil {
 		return nil, err
 	}
@@ -317,7 +354,7 @@ func (s *Store) PersonList(ctx context.Context, q string, categoryID, grade int,
 		args = append(args, tagID)
 	}
 	where := strings.Join(cond, " AND ")
-	query := fmt.Sprintf(`SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
+	query := fmt.Sprintf(`SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
 FROM people p LEFT JOIN categories c ON p.category_id=c.id
 WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, limit, offset)
@@ -332,7 +369,7 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 		var grade int
 		var cat sql.NullString
 		var catID sql.NullInt64
-	if err := rows.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
+	if err := rows.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
 		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
 			return nil, err
 		}

@@ -130,6 +130,9 @@ func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Name == "" {
+		p.Name = store.ComposeName(p.FamilyName, p.GivenName)
+	}
+	if p.Name == "" {
 		writeErr(w, 400, "name required")
 		return
 	}
@@ -164,6 +167,13 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
+	if p.Name == "" {
+		p.Name = store.ComposeName(p.FamilyName, p.GivenName)
+	}
+	if p.Name == "" {
+		writeErr(w, 400, "name required")
+		return
+	}
 	if err := a.Store.PersonUpdate(r.Context(), &p); err != nil {
 		writeErr(w, 500, err.Error())
 		return

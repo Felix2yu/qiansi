@@ -69,8 +69,9 @@
     importing = true
     try {
       const text = await file.text()
-      const res = await API.post<{ total: number; imported: number; skipped: number }>('/api/v1/people/import/vcard', { text })
+      const res = await API.post<{ total: number; imported: number; updated: number; skipped: number }>('/api/v1/people/import/vcard', { text })
       const parts = [`成功导入 ${res.imported} 人`]
+      if (res.updated > 0) parts.push(`更新姓名 ${res.updated} 人（与现有联系人按通讯录 ID 匹配）`)
       if (res.skipped > 0) parts.push(`跳过 ${res.skipped} 人（与现有联系人重复或缺少姓名）`)
       alert(`vCard 导入完成：${parts.join('，')}`)
       await load()

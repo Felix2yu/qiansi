@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -280,44 +279,34 @@ func (p *vProperty) value_() string {
 	return unescapeValue(v)
 }
 
-func hasCJK(s string) bool {
-	for _, r := range s {
-		if unicode.Is(unicode.Han, r) {
-			return true
-		}
+// nameParts 从 N 结构化姓名提取姓/名（N:Family;Given;Middle;Prefix;Suffix）
+func (c *vCard) nameParts() (family, given string) {
+	n := c.get("N")
+	if n == nil {
+		return "", ""
 	}
-	return false
+	segs := strings.SplitN(n.value_(), ";", 5)
+	family = strings.TrimSpace(segs[0])
+	if len(segs) > 1 {
+		given = strings.TrimSpace(segs[1])
+	}
+	return family, given
 }
 
-// fullName 计算 vCard 显示名：FN 优先，其次 N 结构化姓名
-func (c *vCard) fullName() string {
+// displayName 计算显示名：N 的姓/名经 ComposeName 拼接优先——
+// Apple 的 FN 按「通讯录显示顺序」偏好生成，可能是「名 姓」，不能照单全收；
+// N 缺失或为空时才回退 FN。
+func (c *vCard) displayName() string {
+	family, given := c.nameParts()
+	if name := store.ComposeName(family, given); name != "" {
+		return name
+	}
 	if fn := c.get("FN"); fn != nil {
 		if s := strings.TrimSpace(fn.value_()); s != "" {
 			return s
 		}
 	}
-	n := c.get("N")
-	if n == nil {
-		return ""
-	}
-	// N:Family;Given;Middle;Prefix;Suffix
-	segs := strings.SplitN(n.value_(), ";", 5)
-	family := strings.TrimSpace(segs[0])
-	given := ""
-	if len(segs) > 1 {
-		given = strings.TrimSpace(segs[1])
-	}
-	switch {
-	case family != "" && given != "":
-		if hasCJK(family + given) {
-			return family + given // 中文习惯：姓在前
-		}
-		return given + " " + family
-	case family != "":
-		return family
-	default:
-		return given
-	}
+	return ""
 }
 
 // normalizeBirthday 从 BDAY 提取 YYYY-MM-DD，无法识别返回空串
@@ -391,11 +380,12 @@ func parseVCardText(text string) []*vCard {
 
 // vCardToPerson 将一张 vCard 转换为 Person 及自定义字段；返回 false 表示缺少有效姓名
 func vCardToPerson(c *vCard) (*store.Person, []*store.PersonField, bool) {
-	name := c.fullName()
+	family, given := c.nameParts()
+	name := c.displayName()
 	if name == "" {
 		return nil, nil, false
 	}
-	p := &store.Person{Name: name}
+	p := &store.Person{Name: name, FamilyName: family, GivenName: given}
 
 	if nk := c.get("NICKNAME"); nk != nil {
 		v := nk.value_()
@@ -618,16 +608,17 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 	}
 	type key struct{ name, phone string }
 	seen := make(map[key]bool, len(existing))
-	seenUID := make(map[string]bool, len(existing))
+	uidToID := make(map[string]string, len(existing))
 	for _, ep := range existing {
 		seen[key{ep.Name, ep.Phone}] = true
 		if ep.XAbUID != "" {
-			seenUID[ep.XAbUID] = true
+			uidToID[ep.XAbUID] = ep.ID
 		}
 	}
 
 	imported := 0
 	skipped := 0
+	updated := 0
 	created := []*store.Person{}
 	for _, card := range cards {
 		p, fields, ok := vCardToPerson(card)
@@ -635,14 +626,17 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 			skipped++
 			continue
 		}
-		// X-ABUID 单独去重：UID 相同即视为同一人（号码/姓名变更也不重建）；
-		// 无 UID 的卡回退到 (name, phone) 匹配
+		// X-ABUID 命中即视为同一人：不重建，只按 vCard 回填姓名三件套，
+		// 其余字段保留应用内维护的值；无 UID 的卡回退到 (name, phone) 匹配
 		if p.XAbUID != "" {
-			if seenUID[p.XAbUID] {
-				skipped++
+			if id, hit := uidToID[p.XAbUID]; hit {
+				if err := a.Store.PersonUpdateNameParts(ctx, id, p.Name, p.FamilyName, p.GivenName); err != nil {
+					writeErr(w, 500, fmt.Sprintf("更新「%s」姓名失败: %v", p.Name, err))
+					return
+				}
+				updated++
 				continue
 			}
-			seenUID[p.XAbUID] = true
 		} else {
 			k := key{p.Name, p.Phone}
 			if seen[k] {
@@ -654,6 +648,9 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 		if err := a.Store.PersonCreate(ctx, p); err != nil {
 			writeErr(w, 500, fmt.Sprintf("导入「%s」失败: %v", p.Name, err))
 			return
+		}
+		if p.XAbUID != "" {
+			uidToID[p.XAbUID] = p.ID
 		}
 		for _, f := range fields {
 			f.PersonID = p.ID
@@ -668,6 +665,7 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"total":    len(cards),
 		"imported": imported,
+		"updated":  updated,
 		"skipped":  skipped,
 		"people":   created,
 	})

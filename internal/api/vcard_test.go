@@ -99,7 +99,7 @@ func TestVCardToPerson(t *testing.T) {
 	if !ok {
 		t.Fatal("转换失败")
 	}
-	if p.Name != "张三丰" || p.Nickname != "张真人" || p.Phone != "13800138000" ||
+	if p.Name != "张三丰" || p.FamilyName != "张" || p.GivenName != "三丰" || p.Nickname != "张真人" || p.Phone != "13800138000" ||
 		p.Gender != "M" || p.Birthday != "1247-05-15" || p.Location != "武当山路1号 十堰市 湖北省" ||
 		p.Notes != "太极创始人" {
 		t.Errorf("Person 字段不符: %+v", p)
@@ -139,11 +139,30 @@ func TestVCardToPerson_NoFN_UsesN(t *testing.T) {
 	if !ok || p.Name != "王小明" {
 		t.Errorf("中文 N 拼接失败: ok=%v name=%q", ok, p.Name)
 	}
+	if p.FamilyName != "王" || p.GivenName != "小明" {
+		t.Errorf("姓/名拆分失败: family=%q given=%q", p.FamilyName, p.GivenName)
+	}
 	// 无 FN，西文 N: given 在后
 	text = "BEGIN:VCARD\nVERSION:3.0\nN:Doe;John;;;\nEND:VCARD"
 	p, _, ok = vCardToPerson(parseVCardText(text)[0])
 	if !ok || p.Name != "John Doe" {
 		t.Errorf("西文 N 拼接失败: ok=%v name=%q", ok, p.Name)
+	}
+	if p.FamilyName != "Doe" || p.GivenName != "John" {
+		t.Errorf("西文姓/名拆分失败: family=%q given=%q", p.FamilyName, p.GivenName)
+	}
+}
+
+// Apple 通讯录「名字顺序」设为「名 姓」时，FN 会是「名 姓」；
+// 导入必须以 N 的姓/名为准，不能照搬 FN 顺序
+func TestVCardToPerson_NWinsOverFN(t *testing.T) {
+	text := "BEGIN:VCARD\nVERSION:3.0\nN:王;小明;;;\nFN:小明 王\nEND:VCARD"
+	p, _, ok := vCardToPerson(parseVCardText(text)[0])
+	if !ok || p.Name != "王小明" {
+		t.Errorf("N 应优先于 FN 的显示顺序: ok=%v name=%q", ok, p.Name)
+	}
+	if p.FamilyName != "王" || p.GivenName != "小明" {
+		t.Errorf("姓/名应为 N 原始拆分: family=%q given=%q", p.FamilyName, p.GivenName)
 	}
 }
 
@@ -171,7 +190,7 @@ func TestParseVCardText_Multiple(t *testing.T) {
 	if len(cards) != 2 {
 		t.Fatalf("应有 2 张, got %d", len(cards))
 	}
-	if cards[0].fullName() != "A" || cards[1].fullName() != "B" {
+	if cards[0].displayName() != "A" || cards[1].displayName() != "B" {
 		t.Errorf("姓名解析错误")
 	}
 }
@@ -259,7 +278,8 @@ func TestVCardToPerson_AppleContact(t *testing.T) {
 func TestRoundTrip_ExportImport(t *testing.T) {
 	src := &store.Person{
 		ID: "11111111-2222-3333-4444-555555555555",
-		Name: "张三丰", Nickname: "张真人", Phone: "13800138000", Wechat: "zsf",
+		Name: "张三丰", FamilyName: "张", GivenName: "三丰",
+		Nickname: "张真人", Phone: "13800138000", Wechat: "zsf",
 		Location: "武当山路1号 十堰市", Birthday: "1247-05-15", Gender: "M",
 		Notes: "太极创始人\n爱好喝茶", XAbUID: "AAAABBBB-CCCC-DDDD-EEEE-FFFF00001111",
 	}
@@ -287,7 +307,8 @@ func TestRoundTrip_ExportImport(t *testing.T) {
 	if !ok {
 		t.Fatal("再解析失败")
 	}
-	if p2.Name != src.Name || p2.Nickname != src.Nickname || p2.Phone != src.Phone ||
+	if p2.Name != src.Name || p2.FamilyName != src.FamilyName || p2.GivenName != src.GivenName ||
+		p2.Nickname != src.Nickname || p2.Phone != src.Phone ||
 		p2.Wechat != src.Wechat || p2.Location != src.Location || p2.Birthday != src.Birthday ||
 		p2.Gender != src.Gender || p2.XAbUID != src.XAbUID {
 		t.Errorf("往返字段不一致:\n src=%+v\n dst=%+v", src, p2)

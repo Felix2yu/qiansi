@@ -25,7 +25,8 @@ export const API = (() => {
 })()
 
 export type Person = {
-  id: string; name: string; nickname?: string; gender?: string;
+  id: string; name: string; family_name?: string; given_name?: string;
+  nickname?: string; gender?: string;
   birthday?: string; birthday_is_lunar?: boolean; avatar_attachment_id?: string;
   phone?: string; wechat?: string; location?: string; notes?: string;
   grade: number; category_id?: number; archived?: boolean;

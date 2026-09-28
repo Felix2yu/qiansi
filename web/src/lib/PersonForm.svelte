@@ -16,9 +16,42 @@
   } = $props()
 
   type Form = {
-    name: string; nickname: string; gender: string; grade: number; birthday: string
+    family_name: string; given_name: string; nickname: string; gender: string; grade: number; birthday: string
     birthday_is_lunar: boolean; phone: string; wechat: string; location: string
     notes: string; category_id: number
+  }
+
+  // 复姓表：编辑只有单一显示名的旧数据时用于正确拆分
+  const COMPOUND_SURNAMES = ['欧阳','太史','端木','上官','司马','东方','独孤','南宫','万俟','闻人','夏侯','诸葛','尉迟','公羊','赫连','澹台','皇甫','濮阳','公冶','太叔','申屠','公孙','慕容','仲孙','钟离','长孙','宇文','司徒','鲜于','司空','闾丘','亓官','司寇','巫马','公西','颛孙','公良','漆雕','乐正','宰父','谷梁','拓跋','夹谷','轩辕','令狐','百里','呼延','东郭','南门','羊舌','微生','左丘','东门','西门','南荣','第五']
+
+  const isHan = (s: string) => /\p{Script=Han}/u.test(s)
+
+  // 旧数据只有单一显示名，编辑时尽力拆回姓/名；拆不准时整体归入名，用户可改
+  function splitName(name: string): { family_name: string; given_name: string } {
+    const n = name.trim()
+    if (!n) return { family_name: '', given_name: '' }
+    const chars = [...n]
+    if (chars.every(isHan)) {
+      for (const s of COMPOUND_SURNAMES) {
+        if (n.startsWith(s)) return { family_name: s, given_name: n.slice(s.length) }
+      }
+      if (chars.length >= 2 && chars.length <= 3) {
+        return { family_name: chars[0], given_name: n.slice(1) }
+      }
+      return { family_name: '', given_name: n }
+    }
+    if (n.includes(' ')) {
+      const i = n.lastIndexOf(' ')
+      return { family_name: n.slice(i + 1), given_name: n.slice(0, i) }
+    }
+    return { family_name: '', given_name: n }
+  }
+
+  // 显示名：中文按「姓+名」，西文按「名 姓」，与导入规则一致
+  function composedName(): string {
+    const f = form.family_name.trim(), g = form.given_name.trim()
+    if (f && g) return isHan(f + g) ? f + g : `${g} ${f}`
+    return f || g
   }
 
   let form = $state<Form>(emptyForm())
@@ -30,7 +63,7 @@
 
   async function checkDuplicates() {
     clearTimeout(dupTimer)
-    const name = form.name.trim()
+    const name = composedName().trim()
     const phone = (form.phone || '').trim()
     const wechat = (form.wechat || '').trim()
     if (!name && !phone && !wechat) { dups = []; return }
@@ -44,7 +77,7 @@
   }
 
   function emptyForm(): Form {
-    return { name: '', nickname: '', gender: '', grade: 3, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', category_id: 0 }
+    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 3, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', category_id: 0 }
   }
 
   // 人物对象变化（切换编辑目标）时重新灌入表单与标签
@@ -52,10 +85,15 @@
     const p = person
     if (p) {
       form = {
-        name: p.name, nickname: p.nickname || '', gender: p.gender || '', grade: p.grade,
+        family_name: p.family_name || '', given_name: p.given_name || '',
+        nickname: p.nickname || '', gender: p.gender || '', grade: p.grade,
         birthday: p.birthday || '', birthday_is_lunar: !!p.birthday_is_lunar,
         phone: p.phone || '', wechat: p.wechat || '', location: p.location || '',
         notes: p.notes || '', category_id: p.category_id || 0,
+      }
+      // 旧数据没有姓/名结构：按启发式拆分回填，拆错可手动改
+      if (!p.family_name && !p.given_name && p.name) {
+        form = { ...form, ...splitName(p.name) }
       }
       loadTags(p.id)
     } else {
@@ -91,10 +129,10 @@
   }
 
   async function submit() {
-    if (!form.name.trim()) { alert('名字必填'); return }
+    if (!composedName().trim()) { alert('姓、名至少填一项'); return }
     saving = true
     try {
-      const body: any = { ...form }
+      const body: any = { ...form, name: composedName().trim() }
       if (!body.category_id) delete body.category_id
       let saved: Person
       if (person?.id) {
@@ -120,9 +158,14 @@
 </script>
 
 <div class="space-y-3">
-  <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="姓名 *"
-         style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-         bind:value={form.name} oninput={checkDuplicates} />
+  <div class="grid grid-cols-2 gap-3">
+    <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="姓"
+           style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+           bind:value={form.family_name} oninput={checkDuplicates} />
+    <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="名 *"
+           style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+           bind:value={form.given_name} oninput={checkDuplicates} />
+  </div>
   {#if dups.length > 0}
     <div class="rounded-lg p-2 text-xs" style="background: color-mix(in srgb, #f59e0b 12%, transparent); color: #b45309;">
       <div class="font-medium mb-1">发现 {dups.length} 位可能重复的联系人</div>
@@ -151,7 +194,7 @@
     </label>
   </div>
   {#if form.birthday}
-    <p class="text-xs" style="color: var(--q-muted);">保存后会自动生成一条「{form.name || 'TA'}的生日」纪念日并进入提醒。</p>
+    <p class="text-xs" style="color: var(--q-muted);">保存后会自动生成一条「{composedName() || 'TA'}的生日」纪念日并进入提醒。</p>
   {/if}
   <div class="grid grid-cols-2 gap-3">
     <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="电话"
