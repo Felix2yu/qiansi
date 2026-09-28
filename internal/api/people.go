@@ -12,6 +12,8 @@ func (a *API) registerPeople(r chi.Router) {
 		r.Get("/", a.peopleList)
 		r.Get("/count", a.peopleCount)
 		r.Post("/", a.peopleCreate)
+		r.Post("/import/vcard", a.peopleImportVCard)
+		r.Get("/export/vcard", a.peopleExportVCard)
 		r.Get("/{id}", a.peopleGet)
 		r.Put("/{id}", a.peopleUpdate)
 		r.Delete("/{id}", a.peopleDelete)

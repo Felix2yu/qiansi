@@ -61,6 +61,7 @@ type Person struct {
 	Grade              int     `json:"grade"`
 	CategoryID         *int    `json:"category_id,omitempty"`
 	Archived           bool    `json:"archived"`
+	XAbUID             string  `json:"x_abuid,omitempty"`
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
 	CategoryName       *string `json:"category_name,omitempty"`
@@ -76,18 +77,18 @@ func (s *Store) PersonCreate(ctx context.Context, p *Person) error {
 	if p.Grade == 0 {
 		p.Grade = 3
 	}
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,x_abuid,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
-		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.CreatedAt, p.UpdatedAt)
+		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.CreatedAt, p.UpdatedAt)
 	return err
 }
 
 func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 	p.UpdatedAt = nowUTC()
-	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,category_id=?,archived=?,updated_at=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,category_id=?,archived=?,x_abuid=?,updated_at=? WHERE id=?`,
 		p.Name, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
-		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.UpdatedAt, p.ID)
+		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.UpdatedAt, p.ID)
 	return err
 }
 
@@ -97,14 +98,14 @@ func (s *Store) PersonDelete(ctx context.Context, id string) error {
 }
 
 func (s *Store) PersonGet(ctx context.Context, id string) (*Person, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.created_at,p.updated_at,c.name
+	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
 FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
 	p := &Person{}
 	var grade int
 	var cat sql.NullString
 	var catID sql.NullInt64
 	if err := row.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
-		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
+		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
 		return nil, err
 	}
 	p.Grade = grade
@@ -147,7 +148,7 @@ func (s *Store) PersonList(ctx context.Context, q string, categoryID, grade int,
 		args = append(args, tagID)
 	}
 	where := strings.Join(cond, " AND ")
-	query := fmt.Sprintf(`SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.created_at,p.updated_at,c.name
+	query := fmt.Sprintf(`SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
 FROM people p LEFT JOIN categories c ON p.category_id=c.id
 WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, limit, offset)
@@ -162,8 +163,8 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 		var grade int
 		var cat sql.NullString
 		var catID sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
-			&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
+	if err := rows.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
+		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
 			return nil, err
 		}
 		p.Grade = grade
