@@ -2,14 +2,8 @@
 dist/
 *.log
 
-# data volume
-data/qiansi.db
-data/qiansi.db-shm
-data/qiansi.db-wal
-data/uploads/*
-!data/uploads/.gitkeep
-data/backups/*
-!data/backups/.gitkeep
+# data volume (runtime-created, see config.go MkdirAll)
+data/
 
 # frontend
 node_modules/
