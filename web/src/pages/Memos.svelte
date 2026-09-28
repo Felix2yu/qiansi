@@ -19,7 +19,7 @@
   async function submit() {
     if (!form.content.trim()) { alert('内容必填'); return }
     if (!form.said_at) form.said_at = new Date().toISOString().slice(0, 10)
-    const body = { ...form }
+    const body: any = { ...form }
     if (!body.person_id) delete body.person_id
     if (!body.due_date) delete body.due_date
     await API.post('/api/v1/memos', body); showForm = false; await load()

@@ -21,7 +21,7 @@
 
   async function submit() {
     if (!form.title.trim() || !form.event_date) { alert('标题和日期必填'); return }
-    const body = { ...form }
+    const body: any = { ...form }
     if (!body.type_id) delete body.type_id
     await API.post('/api/v1/events', body); showForm = false; await load()
   }

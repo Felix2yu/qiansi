@@ -36,6 +36,7 @@ export type Category = { id: number; name: string; color: string; icon: string; 
 export type Tag = { id: number; name: string; color: string }
 export type EventType = { id: number; name: string; color: string; icon: string; is_default: boolean; sort_order: number }
 export type Dashboard = { total_people: number; total_events: number; upcoming_days7: number; due_today: number; lend_fen: number; borrow_fen: number; pending_promises: number }
+export type GradeDist = { grade: number; count: number }
 export type Suggestion = { type: string; person_id?: string; person_name?: string; message: string }
 export type Relationship = { id: string; from_person_id: string; to_person_id: string; type: string; remark?: string; created_at: string; from_name?: string; to_name?: string }
 export type TimelineItem = { date: string; type: string; title: string; person_id?: string; person_name?: string; id: string }
