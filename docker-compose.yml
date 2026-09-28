@@ -1,0 +1,13 @@
+services:
+  qiansi:
+    build: .
+    image: qiansi:latest
+    container_name: qiansi
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+    environment:
+      QIANSI_ADDR: ":8080"
+      QIANSI_DATA_DIR: "/data"

@@ -1,0 +1,25 @@
+# build artifacts
+dist/
+*.log
+
+# data volume
+data/qiansi.db
+data/qiansi.db-shm
+data/qiansi.db-wal
+data/uploads/*
+!data/uploads/.gitkeep
+data/backups/*
+!data/backups/.gitkeep
+
+# frontend
+node_modules/
+web/dist/
+
+# build artifacts
+/qiansi
+
+# tooling / editor state
+.trae/
+.workbuddy/
+.DS_Store
+*.tar

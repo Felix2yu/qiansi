@@ -1,0 +1,25 @@
+@import "tailwindcss";
+:root {
+  --q-theme: #6366f1;
+  --q-bg: #f8fafc;
+  --q-surface: #ffffff;
+  --q-text: #1e293b;
+  --q-muted: #64748b;
+  --q-border: #e2e8f0;
+}
+html.dark {
+  --q-bg: #0b1020;
+  --q-surface: #111827;
+  --q-text: #e2e8f0;
+  --q-muted: #94a3b8;
+  --q-border: #1f2937;
+}
+html, body, #app { height: 100%; }
+body {
+  background: var(--q-bg); color: var(--q-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
+}
+html.dark body { background: #0b1020; }
+
+/* line clamp */
+.line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
