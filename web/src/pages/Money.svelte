@@ -1,16 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Transaction, type Person } from '../lib/api'
+  import { API, type Transaction, type Person, type Event } from '../lib/api'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Transaction[]>([])
   let people = $state<Person[]>([])
+  let events = $state<Event[]>([])
   let showForm = $state(false)
-  let form = $state({ person_id: '', kind: 'loan', direction: 'out', amount_fen: 0, title: '', occurred_at: '', due_date: '' })
+  let form = $state({ person_id: '', kind: 'loan', direction: 'out', amount_fen: 0, title: '', occurred_at: '', due_date: '', event_id: '' })
 
   async function load() {
-    ;[list, people] = await Promise.all([
-      API.get('/api/v1/transactions?limit=200'), API.get('/api/v1/people?limit=500')
+    ;[list, people, events] = await Promise.all([
+      API.get('/api/v1/transactions?limit=200'), API.get('/api/v1/people?limit=500'), API.get('/api/v1/events?limit=100')
     ]) as any
   }
   onMount(load)
@@ -34,8 +35,8 @@
       <h1 class="text-2xl font-semibold">金钱往来</h1>
       <p class="text-sm mt-1" style="color: var(--q-muted);">借款、还款、礼物、花销</p>
     </div>
-    <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);">
-            onclick={() => { form = { person_id:'', kind:'loan', direction:'out', amount_fen:0, title:'', occurred_at: new Date().toISOString().slice(0,10), due_date:'' }; showForm = true }}>
+    <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);"
+            onclick={() => { form = { person_id:'', kind:'loan', direction:'out', amount_fen:0, title:'', occurred_at: new Date().toISOString().slice(0,10), due_date:'', event_id:'' }; showForm = true }}>
       <Plus size={14} /> 新建
     </button>
   </header>
@@ -51,6 +52,7 @@
           <div class="text-xs mt-0.5" style="color: var(--q-muted);">
             {yuan(t.amount_fen)} · {t.kind} · {new Date(t.occurred_at).toLocaleDateString()}
             {t.settled && ' · 已结清'}
+            {t.event_title && ` · 关联事件：${t.event_title}`}
           </div>
         </div>
         <div class="text-sm font-semibold" style="color: {t.direction === 'out' ? '#ef4444' : '#10b981'};">{t.direction === 'out' ? '-' : '+'}{yuan(t.amount_fen)}</div>
@@ -87,6 +89,10 @@
           <input type="date" bind:value={form.occurred_at} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
           <input type="date" bind:value={form.due_date} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="到期（可选）" />
         </div>
+        <select bind:value={form.event_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
+          <option value="">关联事件（可选）</option>
+          {#each events as e}<option value={e.id}>{new Date(e.event_date).toLocaleDateString()} · {e.title}</option>{/each}
+        </select>
       </div>
       <div class="flex justify-end gap-2 mt-5">
         <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => showForm = false}>取消</button>

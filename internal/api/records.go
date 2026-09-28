@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"database/sql"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/qiansi/app/internal/store"
@@ -58,11 +61,101 @@ func (a *API) eventCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "event_date required")
 		return
 	}
+	// 地点：locations 为准，location 存拼接串供搜索/兼容
+	body.Event.Locations = cleanStrings(body.Event.Locations)
+	if len(body.Event.Locations) > 0 {
+		body.Event.Location = strings.Join(body.Event.Locations, " · ")
+	}
+	expensePerson := body.Event.ExpensePersonID
+	if expensePerson == "" && len(body.ParticipantIDs) > 0 {
+		expensePerson = body.ParticipantIDs[0]
+	}
+	if body.Event.ExpenseFen > 0 && expensePerson == "" {
+		writeErr(w, 400, "记录开销需要至少一位参与人（或指定开销归属人）")
+		return
+	}
 	if err := a.Store.EventCreate(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	if body.Event.ExpenseFen > 0 {
+		tx := &store.Transaction{
+			PersonID:   expensePerson,
+			Kind:       "expense",
+			Direction:  "out",
+			AmountFen:  body.Event.ExpenseFen,
+			Title:      body.Event.Title,
+			OccurredAt: body.Event.EventDate,
+			Settled:    true,
+			EventID:    body.Event.ID,
+		}
+		if err := a.Store.TransactionCreate(r.Context(), tx); err != nil {
+			writeErr(w, 500, "事件已保存，但开销记账失败: "+err.Error())
+			return
+		}
+	}
 	writeJSON(w, 200, body.Event)
+}
+
+func cleanStrings(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := map[string]bool{}
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
+}
+
+// syncEventExpense 把事件的开销金额同步到 Money：有金额则 upsert 一条关联交易，
+// 金额为 0 则删除该事件下由事件自动创建的 expense 交易。
+func (a *API) syncEventExpense(ctx context.Context, e *store.Event, participantIDs []string) error {
+	existing, err := a.Store.EventExpenses(ctx, e.ID)
+	if err != nil {
+		return err
+	}
+	if e.ExpenseFen <= 0 {
+		for _, t := range existing {
+			if t.Kind == "expense" {
+				if err := a.Store.TransactionDelete(ctx, t.ID); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	person := e.ExpensePersonID
+	if person == "" && len(participantIDs) > 0 {
+		person = participantIDs[0]
+	}
+	if person == "" {
+		return errors.New("记录开销需要至少一位参与人（或指定开销归属人）")
+	}
+	for _, t := range existing {
+		if t.Kind != "expense" {
+			continue
+		}
+		t.PersonID = person
+		t.AmountFen = e.ExpenseFen
+		t.Title = e.Title
+		t.OccurredAt = e.EventDate
+		t.Settled = true
+		return a.Store.TransactionUpdate(ctx, t)
+	}
+	return a.Store.TransactionCreate(ctx, &store.Transaction{
+		PersonID:   person,
+		Kind:       "expense",
+		Direction:  "out",
+		AmountFen:  e.ExpenseFen,
+		Title:      e.Title,
+		OccurredAt: e.EventDate,
+		Settled:    true,
+		EventID:    e.ID,
+	})
 }
 
 func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
@@ -76,8 +169,16 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Event.ID = id
+	body.Event.Locations = cleanStrings(body.Event.Locations)
+	if len(body.Event.Locations) > 0 {
+		body.Event.Location = strings.Join(body.Event.Locations, " · ")
+	}
 	if err := a.Store.EventUpdate(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
 		writeErr(w, 500, err.Error())
+		return
+	}
+	if err := a.syncEventExpense(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	writeJSON(w, 200, body.Event)

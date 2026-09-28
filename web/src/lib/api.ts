@@ -27,9 +27,9 @@ export type Person = {
   created_at: string; updated_at: string;
   category_name?: string; intimacy?: number
 }
-export type Event = { id: string; title: string; type_id?: number; type_name?: string; type_color?: string; event_date: string; location?: string; summary?: string; created_at: string; updated_at: string; participants?: Person[] }
+export type Event = { id: string; title: string; type_id?: number; type_name?: string; type_color?: string; event_date: string; location?: string; locations?: string[]; has_gift?: boolean; gift?: string; summary?: string; created_at: string; updated_at: string; participants?: Person[]; expense_fen?: number; expense_person_id?: string; expenses?: Transaction[] }
 export type Memo = { id: string; person_id?: string; speaker: string; content: string; said_at: string; is_promise: boolean; due_date?: string; status: string; created_at: string }
-export type Transaction = { id: string; person_id: string; kind: string; direction: string; amount_fen: number; title?: string; occurred_at: string; due_date?: string; settled: boolean; settled_at?: string; created_at: string; person_name?: string; repaid_fen?: number }
+export type Transaction = { id: string; person_id: string; kind: string; direction: string; amount_fen: number; title?: string; occurred_at: string; due_date?: string; settled: boolean; settled_at?: string; created_at: string; person_name?: string; repaid_fen?: number; event_id?: string; event_title?: string }
 export type Anniversary = { id: string; person_id?: string; title: string; date: string; is_lunar: boolean; repeat_yearly: boolean; remind_days: string; created_at: string; person_name?: string }
 export type Reminder = { id: string; person_id?: string; ref_type: string; ref_id?: string; title: string; due_at: string; status: string; created_at: string; completed_at?: string; person_name?: string }
 export type Category = { id: number; name: string; color: string; icon: string; sort_order: number }

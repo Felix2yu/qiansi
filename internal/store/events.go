@@ -3,8 +3,10 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,17 +16,52 @@ import (
 // ===== Events =====
 
 type Event struct {
-	ID           string    `json:"id"`
-	Title        string    `json:"title"`
-	TypeID       *int      `json:"type_id,omitempty"`
-	TypeName     *string   `json:"type_name,omitempty"`
-	TypeColor    *string   `json:"type_color,omitempty"`
-	EventDate    string    `json:"event_date"`
-	Location     string    `json:"location,omitempty"`
-	Summary      string    `json:"summary,omitempty"`
-	CreatedAt    string    `json:"created_at"`
-	UpdatedAt    string    `json:"updated_at"`
-	Participants []*Person `json:"participants,omitempty"`
+	ID              string         `json:"id"`
+	Title           string         `json:"title"`
+	TypeID          *int           `json:"type_id,omitempty"`
+	TypeName        *string        `json:"type_name,omitempty"`
+	TypeColor       *string        `json:"type_color,omitempty"`
+	EventDate       string         `json:"event_date"`
+	Location        string         `json:"location,omitempty"` // 兼容字段：地点拼接串
+	Locations       []string       `json:"locations,omitempty"`
+	HasGift         bool           `json:"has_gift"`
+	Gift            string         `json:"gift,omitempty"`
+	Summary         string         `json:"summary,omitempty"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
+	Participants    []*Person      `json:"participants,omitempty"`
+	ExpenseFen      int            `json:"expense_fen,omitempty"` // 关联开销合计（分）
+	ExpensePersonID string         `json:"expense_person_id,omitempty"`
+	Expenses        []*Transaction `json:"expenses,omitempty"`
+}
+
+func encodeLocations(locs []string) string {
+	clean := make([]string, 0, len(locs))
+	for _, l := range locs {
+		l = strings.TrimSpace(l)
+		if l != "" {
+			clean = append(clean, l)
+		}
+	}
+	if len(clean) == 0 {
+		return ""
+	}
+	b, err := json.Marshal(clean)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+func decodeLocations(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	if err := json.Unmarshal([]byte(s), &out); err != nil {
+		return nil
+	}
+	return out
 }
 
 func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []string) error {
@@ -38,8 +75,8 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, "INSERT INTO events(id,title,type_id,event_date,location,summary,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",
-		e.ID, e.Title, e.TypeID, e.EventDate, e.Location, e.Summary, e.CreatedAt, e.UpdatedAt)
+	_, err = tx.ExecContext(ctx, "INSERT INTO events(id,title,type_id,event_date,location,locations,has_gift,gift,summary,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+		e.ID, e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.CreatedAt, e.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -58,8 +95,8 @@ func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []stri
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, "UPDATE events SET title=?,type_id=?,event_date=?,location=?,summary=?,updated_at=? WHERE id=?",
-		e.Title, e.TypeID, e.EventDate, e.Location, e.Summary, e.UpdatedAt, e.ID)
+	_, err = tx.ExecContext(ctx, "UPDATE events SET title=?,type_id=?,event_date=?,location=?,locations=?,has_gift=?,gift=?,summary=?,updated_at=? WHERE id=?",
+		e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.UpdatedAt, e.ID)
 	if err != nil {
 		return err
 	}
@@ -73,15 +110,75 @@ func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []stri
 }
 
 func (s *Store) EventDelete(ctx context.Context, id string) error {
+	// 解除关联交易，避免留下指向已删除事件的 event_id
+	_, _ = s.DB.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id=?", id)
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM events WHERE id=?", id)
 	return err
+}
+
+// expense_fen 只统计支出方向（收到的礼金/回礼属入账，不算开销）
+const eventColumns = `e.id,e.title,e.type_id,e.event_date,e.location,e.locations,e.has_gift,e.gift,e.summary,e.created_at,e.updated_at,et.name,et.color,
+(SELECT COALESCE(SUM(t.amount_fen),0) FROM transactions t WHERE t.event_id=e.id AND t.direction='out')`
+
+func scanEvent(rows *sql.Rows) (*Event, error) {
+	e := &Event{}
+	var tn, tc, locs sql.NullString
+	if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &locs, &e.HasGift, &e.Gift, &e.Summary,
+		&e.CreatedAt, &e.UpdatedAt, &tn, &tc, &e.ExpenseFen); err != nil {
+		return nil, err
+	}
+	if tn.Valid {
+		e.TypeName = &tn.String
+	}
+	if tc.Valid {
+		e.TypeColor = &tc.String
+	}
+	e.Locations = decodeLocations(locs.String)
+	if len(e.Locations) == 0 && e.Location != "" {
+		e.Locations = []string{e.Location}
+	}
+	return e, nil
+}
+
+// EventExpenses 返回挂在该事件下的开销/往来记录
+func (s *Store) EventExpenses(ctx context.Context, eventID string) ([]*Transaction, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name
+FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.event_id=? ORDER BY t.occurred_at DESC`, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []*Transaction{}
+	for rows.Next() {
+		t := &Transaction{}
+		var title, due, settledAt, personName sql.NullString
+		if err := rows.Scan(&t.ID, &t.PersonID, &t.Kind, &t.Direction, &t.AmountFen, &title, &t.OccurredAt,
+			&due, &t.Settled, &settledAt, &t.CreatedAt, &personName); err != nil {
+			return nil, err
+		}
+		if title.Valid {
+			t.Title = title.String
+		}
+		if due.Valid {
+			t.DueDate = due.String
+		}
+		if settledAt.Valid {
+			t.SettledAt = settledAt.String
+		}
+		if personName.Valid {
+			t.PersonName = personName.String
+		}
+		t.EventID = eventID
+		list = append(list, t)
+	}
+	return list, rows.Err()
 }
 
 func (s *Store) EventList(ctx context.Context, q string, limit, offset int) ([]*Event, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	qry := `SELECT e.id,e.title,e.type_id,e.event_date,e.location,e.summary,e.created_at,e.updated_at,et.name,et.color
+	qry := `SELECT ` + eventColumns + `
 FROM events e LEFT JOIN event_types et ON e.type_id=et.id`
 	var args []any
 	if q != "" {
@@ -98,13 +195,10 @@ FROM events e LEFT JOIN event_types et ON e.type_id=et.id`
 	defer rows.Close()
 	list := []*Event{}
 	for rows.Next() {
-		e := &Event{}
-		var tn, tc sql.NullString
-		if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &e.Summary, &e.CreatedAt, &e.UpdatedAt, &tn, &tc); err != nil {
+		e, err := scanEvent(rows)
+		if err != nil {
 			return nil, err
 		}
-		if tn.Valid { e.TypeName = &tn.String }
-		if tc.Valid { e.TypeColor = &tc.String }
 		list = append(list, e)
 	}
 	// Hydrate participants for each event
@@ -270,6 +364,8 @@ type Transaction struct {
 	CreatedAt  string `json:"created_at"`
 	PersonName string `json:"person_name,omitempty"`
 	RepaidFen  int    `json:"repaid_fen,omitempty"`
+	EventID    string `json:"event_id,omitempty"`
+	EventTitle string `json:"event_title,omitempty"`
 }
 
 type Repayment struct {
@@ -291,8 +387,13 @@ func (s *Store) TransactionCreate(ctx context.Context, t *Transaction) error {
 	if t.SettledAt != "" { settledAt = t.SettledAt } else { settledAt = nil }
 	var title any
 	if t.Title != "" { title = t.Title } else { title = nil }
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-		t.ID, t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, t.CreatedAt)
+	var eventID any
+	if t.EventID != "" { eventID = t.EventID } else { eventID = nil }
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+		t.ID, t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, t.CreatedAt, eventID)
+	if err == nil && t.EventID != "" && t.EventTitle == "" {
+		_ = s.DB.QueryRowContext(ctx, "SELECT title FROM events WHERE id=?", t.EventID).Scan(&t.EventTitle)
+	}
 	return err
 }
 
@@ -303,8 +404,10 @@ func (s *Store) TransactionUpdate(ctx context.Context, t *Transaction) error {
 	if t.SettledAt != "" { settledAt = t.SettledAt } else { settledAt = nil }
 	var title any
 	if t.Title != "" { title = t.Title } else { title = nil }
-	_, err := s.DB.ExecContext(ctx, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=? WHERE id=?",
-		t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, t.ID)
+	var eventID any
+	if t.EventID != "" { eventID = t.EventID } else { eventID = nil }
+	_, err := s.DB.ExecContext(ctx, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=?",
+		t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, eventID, t.ID)
 	return err
 }
 
@@ -313,29 +416,38 @@ func (s *Store) TransactionDelete(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *Store) TransactionGet(ctx context.Context, id string) (*Transaction, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name,
-COALESCE((SELECT COALESCE(SUM(r.amount_fen),0) FROM repayments r WHERE r.transaction_id=t.id),0)
-FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.id=?`, id)
-	if err != nil { return nil, err }
-	defer rows.Close()
-	if !rows.Next() { return nil, nil }
+const txColumns = `t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name,
+COALESCE((SELECT COALESCE(SUM(r.amount_fen),0) FROM repayments r WHERE r.transaction_id=t.id),0),
+t.event_id,(SELECT ev.title FROM events ev WHERE ev.id=t.event_id)`
+
+func scanTransaction(rows *sql.Rows) (*Transaction, error) {
 	t := &Transaction{}
-	var title, due, settledAt, personName sql.NullString
-	if err := rows.Scan(&t.ID, &t.PersonID, &t.Kind, &t.Direction, &t.AmountFen, &title, &t.OccurredAt, &due, &t.Settled, &settledAt, &t.CreatedAt, &personName, &t.RepaidFen); err != nil {
+	var title, due, settledAt, personName, eventID, eventTitle sql.NullString
+	if err := rows.Scan(&t.ID, &t.PersonID, &t.Kind, &t.Direction, &t.AmountFen, &title, &t.OccurredAt, &due, &t.Settled,
+		&settledAt, &t.CreatedAt, &personName, &t.RepaidFen, &eventID, &eventTitle); err != nil {
 		return nil, err
 	}
 	if title.Valid { t.Title = title.String }
 	if due.Valid { t.DueDate = due.String }
 	if settledAt.Valid { t.SettledAt = settledAt.String }
 	if personName.Valid { t.PersonName = personName.String }
+	if eventID.Valid { t.EventID = eventID.String }
+	if eventTitle.Valid { t.EventTitle = eventTitle.String }
 	return t, nil
+}
+
+func (s *Store) TransactionGet(ctx context.Context, id string) (*Transaction, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+txColumns+`
+FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.id=?`, id)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	if !rows.Next() { return nil, nil }
+	return scanTransaction(rows)
 }
 
 func (s *Store) TransactionList(ctx context.Context, personID string, limit, offset int) ([]*Transaction, error) {
 	if limit <= 0 { limit = 200 }
-	q := `SELECT t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name,
-COALESCE((SELECT COALESCE(SUM(r.amount_fen),0) FROM repayments r WHERE r.transaction_id=t.id),0)
+	q := `SELECT ` + txColumns + `
 FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE 1=1`
 	var args []any
 	if personID != "" {
@@ -348,15 +460,10 @@ FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE 1=1`
 	defer rows.Close()
 	list := []*Transaction{}
 	for rows.Next() {
-		t := &Transaction{}
-		var title, due, settledAt, personName sql.NullString
-		if err := rows.Scan(&t.ID, &t.PersonID, &t.Kind, &t.Direction, &t.AmountFen, &title, &t.OccurredAt, &due, &t.Settled, &settledAt, &t.CreatedAt, &personName, &t.RepaidFen); err != nil {
+		t, err := scanTransaction(rows)
+		if err != nil {
 			return nil, err
 		}
-		if title.Valid { t.Title = title.String }
-		if due.Valid { t.DueDate = due.String }
-		if settledAt.Valid { t.SettledAt = settledAt.String }
-		if personName.Valid { t.PersonName = personName.String }
 		list = append(list, t)
 	}
 	return list, rows.Err()
@@ -718,23 +825,22 @@ func (s *Store) GradeDistribution(ctx context.Context) ([]*GradeDist, error) {
 // ===== EventGet (single event with participants) =====
 
 func (s *Store) EventGet(ctx context.Context, id string) (*Event, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT e.id,e.title,e.type_id,e.event_date,e.location,e.summary,e.created_at,e.updated_at,et.name,et.color
+	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventColumns+`
 FROM events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	if !rows.Next() { return nil, nil }
-	e := &Event{}
-	var tn, tc sql.NullString
-	if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &e.Summary, &e.CreatedAt, &e.UpdatedAt, &tn, &tc); err != nil {
-		return nil, err
-	}
-	if tn.Valid { e.TypeName = &tn.String }
-	if tc.Valid { e.TypeColor = &tc.String }
+	e, err := scanEvent(rows)
+	if err != nil { return nil, err }
+	rows.Close()
 	prows, _ := s.DB.QueryContext(ctx, `SELECT p.id,p.name FROM people p JOIN event_participants ep ON ep.person_id=p.id WHERE ep.event_id=? ORDER BY ep.rowid`, e.ID)
 	defer prows.Close()
 	for prows.Next() {
 		var pid, pn string
 		if prows.Scan(&pid, &pn) == nil { e.Participants = append(e.Participants, &Person{ID: pid, Name: pn}) }
+	}
+	if exps, err := s.EventExpenses(ctx, e.ID); err == nil {
+		e.Expenses = exps
 	}
 	return e, nil
 }

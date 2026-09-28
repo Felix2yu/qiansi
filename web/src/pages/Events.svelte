@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
+  import { API, yuan, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
   import { Plus, X } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
@@ -9,7 +9,19 @@
   let types = $state<EventType[]>([])
   let people = $state<Person[]>([])
   let showForm = $state(false)
-  let form = $state({ title: '', type_id: 0, event_date: '', location: '', summary: '', participant_ids: [] as string[] })
+  let form = $state({
+    title: '', type_id: 0, event_date: '', locations: [''] as string[],
+    has_gift: false, gift: '', summary: '', participant_ids: [] as string[],
+    expense_yuan: '', expense_person_id: '',
+  })
+
+  function resetForm() {
+    form = {
+      title: '', type_id: 0, event_date: new Date().toISOString().slice(0, 10),
+      locations: [''], has_gift: false, gift: '', summary: '', participant_ids: [],
+      expense_yuan: '', expense_person_id: '',
+    }
+  }
 
   async function load() {
     ;[list, types, people, timeline] = await Promise.all([
@@ -21,9 +33,26 @@
 
   async function submit() {
     if (!form.title.trim() || !form.event_date) { alert('标题和日期必填'); return }
-    const body: any = { ...form }
-    if (!body.type_id) delete body.type_id
-    await API.post('/api/v1/events', body); showForm = false; await load()
+    const locations = form.locations.map(s => s.trim()).filter(Boolean)
+    const body: any = {
+      title: form.title, event_date: form.event_date, locations,
+      has_gift: form.has_gift, gift: form.has_gift ? form.gift.trim() : '',
+      summary: form.summary, participant_ids: form.participant_ids,
+    }
+    if (form.type_id) body.type_id = form.type_id
+    const expenseFen = Math.round(parseFloat(form.expense_yuan || '0') * 100)
+    if (expenseFen > 0) {
+      body.expense_fen = expenseFen
+      if (form.expense_person_id) body.expense_person_id = form.expense_person_id
+      else if (form.participant_ids.length === 0) { alert('填写开销时需要选择参与人或指定开销归属人'); return }
+    }
+    await API.post('/api/v1/events', body)
+    showForm = false
+    await load()
+  }
+
+  function locText(e: Event) {
+    return e.locations && e.locations.length > 0 ? e.locations.join(' · ') : (e.location || '')
   }
 </script>
 <div class="space-y-4">
@@ -33,7 +62,7 @@
       <p class="text-sm mt-1" style="color: var(--q-muted);">{onlyTimeline ? '所有类型混合视图' : '记录与亲友的见面、聚会、运动等'}</p>
     </div>
     {#if !onlyTimeline}
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => { form = { title:'', type_id:0, event_date: new Date().toISOString().slice(0,10), location:'', summary:'', participant_ids: [] }; showForm = true }}>
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => { resetForm(); showForm = true }}>
         <Plus size={14} /> 新建
       </button>
     {/if}
@@ -64,8 +93,16 @@
             <div class="text-xs mt-0.5" style="color: var(--q-muted);">
               {e.type_name && `[${e.type_name}] `}
               {new Date(e.event_date).toLocaleDateString()}
-              {e.location && ` · ${e.location}`}
+              {locText(e) && ` · ${locText(e)}`}
               {e.participants && e.participants.length > 0 && ` · ${e.participants.map(p => p.name).join(', ')}`}
+            </div>
+            <div class="flex flex-wrap gap-1.5 mt-1.5">
+              {#if e.has_gift}
+                <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);">有礼物{e.gift ? `：${e.gift}` : ''}</span>
+              {/if}
+              {#if e.expense_fen}
+                <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);">花费 ¥{yuan(e.expense_fen)}</span>
+              {/if}
             </div>
             {#if e.summary}<div class="text-sm mt-1 line-clamp-2" style="color: var(--q-muted);">{e.summary}</div>{/if}
           </div>
@@ -77,7 +114,7 @@
 
 {#if showForm && !onlyTimeline}
   <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.3);" onclick={() => showForm = false}>
-    <div class="w-full max-w-lg rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <div class="w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);" onclick={(e) => e.stopPropagation()}>
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold">新建往来</h2>
         <button onclick={() => showForm = false}><X size={18} /></button>
@@ -91,7 +128,37 @@
           </select>
           <input type="date" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.event_date} />
         </div>
-        <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="地点" bind:value={form.location} />
+
+        <div class="space-y-2">
+          <div class="text-xs" style="color: var(--q-muted);">地点（可多个）</div>
+          {#each form.locations as _, i}
+            <div class="flex items-center gap-2">
+              <input class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder={i === 0 ? '地点，如 茶馆' : '追加地点'} bind:value={form.locations[i]} />
+              {#if form.locations.length > 1}
+                <button class="text-xs px-2 py-1 rounded" style="color: var(--q-muted);" onclick={() => form.locations = form.locations.filter((_, j) => j !== i)}>移除</button>
+              {/if}
+            </div>
+          {/each}
+          <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => form.locations = [...form.locations, '']}>+ 添加地点</button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <label class="flex items-center gap-1.5 text-sm shrink-0">
+            <input type="checkbox" bind:checked={form.has_gift} /> 有礼物
+          </label>
+          {#if form.has_gift}
+            <input class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="礼物说明，如 送了两盒茶" bind:value={form.gift} />
+          {/if}
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="开销（元，可空）" bind:value={form.expense_yuan} />
+          <select bind:value={form.expense_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+            <option value="">开销归属（默认首位参与人）</option>
+            {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+          </select>
+        </div>
+
         <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="备注" bind:value={form.summary}></textarea>
         <div>
           <div class="text-xs mb-1" style="color: var(--q-muted);">参与人</div>
