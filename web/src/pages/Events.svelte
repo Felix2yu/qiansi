@@ -9,6 +9,7 @@
   let types = $state<EventType[]>([])
   let people = $state<Person[]>([])
   let showForm = $state(false)
+  let editId = $state('')
   let form = $state({
     title: '', type_id: 0, event_date: '', locations: [''] as string[],
     has_gift: false, gift: '', summary: '', participant_ids: [] as string[],
@@ -21,6 +22,21 @@
       locations: [''], has_gift: false, gift: '', summary: '', participant_ids: [],
       expense_yuan: '', expense_person_id: '',
     }
+  }
+
+  async function openEdit(e: Event) {
+    const d = await API.get(`/api/v1/events/${e.id}`) as Event
+    const own = (d.expenses || []).find(t => t.kind === 'expense' && t.direction === 'out')
+    form = {
+      title: d.title, type_id: d.type_id ?? 0, event_date: (d.event_date || '').slice(0, 10),
+      locations: d.locations && d.locations.length > 0 ? [...d.locations] : [d.location || ''],
+      has_gift: !!d.has_gift, gift: d.gift || '', summary: d.summary || '',
+      participant_ids: (d.participants || []).map(p => p.id),
+      expense_yuan: own ? (own.amount_fen / 100).toFixed(2) : (d.expense_fen ? (d.expense_fen / 100).toFixed(2) : ''),
+      expense_person_id: own?.person_id || '',
+    }
+    editId = d.id
+    showForm = true
   }
 
   async function load() {
@@ -45,9 +61,13 @@
       body.expense_fen = expenseFen
       if (form.expense_person_id) body.expense_person_id = form.expense_person_id
       else if (form.participant_ids.length === 0) { alert('填写开销时需要选择参与人或指定开销归属人'); return }
+    } else if (editId) {
+      body.expense_fen = 0 // 清空原有开销
     }
-    await API.post('/api/v1/events', body)
+    if (editId) await API.put(`/api/v1/events/${editId}`, body)
+    else await API.post('/api/v1/events', body)
     showForm = false
+    editId = ''
     await load()
   }
 
@@ -62,7 +82,7 @@
       <p class="text-sm mt-1" style="color: var(--q-muted);">{onlyTimeline ? '所有类型混合视图' : '记录与亲友的见面、聚会、运动等'}</p>
     </div>
     {#if !onlyTimeline}
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => { resetForm(); showForm = true }}>
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => { resetForm(); editId = ''; showForm = true }}>
         <Plus size={14} /> 新建
       </button>
     {/if}
@@ -89,7 +109,10 @@
         <li class="rounded-lg p-3 flex items-start gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
           <div class="w-2 h-2 rounded-full mt-2" style="background: {e.type_color || '#6366f1'};"></div>
           <div class="flex-1 min-w-0">
-            <div class="text-sm font-medium">{e.title}</div>
+            <div class="flex items-start justify-between gap-2">
+              <div class="text-sm font-medium">{e.title}</div>
+              <button class="text-xs shrink-0 px-2 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);" onclick={() => openEdit(e)}>编辑</button>
+            </div>
             <div class="text-xs mt-0.5" style="color: var(--q-muted);">
               {e.type_name && `[${e.type_name}] `}
               {new Date(e.event_date).toLocaleDateString()}
@@ -116,8 +139,8 @@
   <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.3);" onclick={() => showForm = false}>
     <div class="w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);" onclick={(e) => e.stopPropagation()}>
       <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold">新建往来</h2>
-        <button onclick={() => showForm = false}><X size={18} /></button>
+        <h2 class="font-semibold">{editId ? '编辑往来' : '新建往来'}</h2>
+        <button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button>
       </div>
       <div class="space-y-3">
         <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="标题" bind:value={form.title} />
@@ -172,7 +195,7 @@
         </div>
       </div>
       <div class="flex justify-end gap-2 mt-5">
-        <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => showForm = false}>取消</button>
+        <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>
         <button class="px-4 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={submit}>保存</button>
       </div>
     </div>
