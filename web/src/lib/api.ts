@@ -1,7 +1,12 @@
 export const API = (() => {
   const base = ''
+  // 若服务端启用了 QIANSI_TOKEN，需要在前端保存同一个令牌
+  function authHeaders(): Record<string, string> {
+    const t = localStorage.getItem('q_token') || ''
+    return t ? { Authorization: 'Bearer ' + t } : {}
+  }
   async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
-    const res = await fetch(base + path, init)
+    const res = await fetch(base + path, { ...init, headers: { ...authHeaders(), ...(init.headers || {}) } })
     if (!res.ok) {
       let msg = res.statusText
       try { msg = (await res.json()).error || msg } catch {}
@@ -40,5 +45,33 @@ export type GradeDist = { grade: number; count: number }
 export type Suggestion = { type: string; person_id?: string; person_name?: string; message: string }
 export type Relationship = { id: string; from_person_id: string; to_person_id: string; type: string; remark?: string; created_at: string; from_name?: string; to_name?: string }
 export type TimelineItem = { date: string; type: string; title: string; person_id?: string; person_name?: string; id: string }
+export type Repayment = { id: string; transaction_id: string; amount_fen: number; occurred_at: string; note?: string }
+export type PersonField = { id: string; person_id: string; label: string; value?: string; sort_order?: number }
+export type BackupItem = { name: string; size: number; time: string }
+export type TrendPoint = { day: string; score: number }
+export type SearchResult = { type: string; id: string; title: string; subtitle?: string; date?: string; path: string }
+
+// ===== 枚举本地化：后端存英文，界面统一显示中文 =====
+export const KIND_LABEL: Record<string, string> = { loan: '借还', gift: '礼物', expense: '花销', other: '其它' }
+export const DIRECTION_LABEL: Record<string, string> = { out: '我支出', in: '我收入' }
+export const MEMO_STATUS_LABEL: Record<string, string> = { open: '进行中', fulfilled: '已兑现', broken: '未兑现' }
+export const REF_TYPE_LABEL: Record<string, string> = { custom: '手动', anniversary: '纪念日', birthday: '生日', memo: '对话', transaction: '金钱' }
+export const TIMELINE_LABEL: Record<string, string> = { event: '往来', memo: '对话', transaction: '金钱', anniversary: '纪念日' }
+export const SEARCH_LABEL: Record<string, string> = { person: '人物', event: '往来', memo: '对话', transaction: '金钱', anniversary: '纪念日' }
+export const RELATION_TYPES = ['家人', '亲戚', '朋友', '同学', '同事', '邻居', '合作伙伴', '其它']
 
 export const yuan = (fen: number) => (fen / 100).toFixed(2)
+
+/** 元字符串转分；非法输入返回 0，避免把 NaN 写进库 */
+export function toFen(input: string | number): number {
+  const n = typeof input === 'number' ? input : parseFloat(String(input || '').trim())
+  if (!isFinite(n) || n <= 0) return 0
+  return Math.round(n * 100)
+}
+
+/** 本地日期 YYYY-MM-DD（不用 toISOString，那是 UTC，会差一天） */
+export function todayLocal(): string {
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}

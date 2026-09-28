@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Category, type Tag, type EventType } from '../lib/api'
+  import { API, type Category, type Tag, type EventType, type BackupItem } from '../lib/api'
   import { Plus, Trash2, Download, Upload, Palette, Moon, Sun, Bell } from '@lucide/svelte'
 
   let settings = $state<Record<string, string>>({})
@@ -15,14 +15,21 @@
   let newCat = $state<Category>({ id: 0, name: '', color: '#6366f1', icon: 'circle', sort_order: 0 })
   let newTag = $state<Tag>({ id: 0, name: '', color: '#6366f1' })
   let newType = $state<EventType>({ id: 0, name: '', color: '#6366f1', icon: 'calendar', is_default: false, sort_order: 0 })
+  let backups = $state<BackupItem[]>([])
+  let restoreInput: HTMLInputElement | undefined = $state()
+  let restoring = $state(false)
+  let token = $state(localStorage.getItem('q_token') || '')
 
   async function load() {
     settings = await API.get('/api/v1/settings') as any
     appriseUrls = settings['apprise_urls'] || ''
     pushHour = parseInt(settings['push_time_hour'] || '9', 10)
-    categories = await API.get('/api/v1/categories') as Category[]
-    tags = await API.get('/api/v1/tags') as Tag[]
-    eventTypes = await API.get('/api/v1/event-types') as EventType[]
+    ;[categories, tags, eventTypes, backups] = await Promise.all([
+      API.get('/api/v1/categories') as Promise<Category[]>,
+      API.get('/api/v1/tags') as Promise<Tag[]>,
+      API.get('/api/v1/event-types') as Promise<EventType[]>,
+      API.get('/api/v1/backup/list') as Promise<BackupItem[]>,
+    ])
   }
   onMount(load)
 
@@ -33,9 +40,15 @@
     })
     alert('已保存推送设置')
   }
+  // 之前的「测试推送」只保存了配置却提示已触发，属于误导
   async function testNotify() {
     await API.post('/api/v1/settings/bulk', { apprise_urls: appriseUrls, push_time_hour: String(pushHour) })
-    alert('已触发测试推送（若配置正确渠道，稍后会收到）')
+    try {
+      await API.post('/api/v1/notify/test', {})
+      alert('已发送测试推送，请检查对应渠道')
+    } catch (err: any) {
+      alert('测试推送失败：' + (err?.message || err))
+    }
   }
 
   function setTheme() {
@@ -46,7 +59,58 @@
     localStorage.setItem('q_dark', dark ? '1' : '0')
     document.documentElement.classList.toggle('dark', dark)
   }
-  // apply on mount
+  function applySaved() {
+    document.documentElement.style.setProperty('--q-theme', theme)
+    document.documentElement.classList.toggle('dark', dark)
+  }
+  // 保存的设置要在刷新后仍然生效
+  onMount(applySaved)
+
+  function saveToken() {
+    if (token.trim()) localStorage.setItem('q_token', token.trim())
+    else localStorage.removeItem('q_token')
+    alert('已保存访问令牌；若服务端未设置 QIANSI_TOKEN，请留空')
+  }
+
+  async function exportData() { window.location.href = '/api/v1/backup/export' }
+
+  async function snapshot() {
+    await API.post('/api/v1/backup/snapshot', {})
+    backups = await API.get('/api/v1/backup/list') as BackupItem[]
+    alert('已生成一份归档快照')
+  }
+
+  async function restoreData(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    if (!file) return
+    if (!confirm('恢复会用上传的数据库覆盖当前数据，当前数据会先自动归档一份。确定继续？')) {
+      input.value = ''
+      return
+    }
+    restoring = true
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/v1/backup/restore', {
+        method: 'POST',
+        headers: (localStorage.getItem('q_token') || '') ? { Authorization: 'Bearer ' + localStorage.getItem('q_token') } : undefined,
+        body: fd,
+      })
+      if (!res.ok) {
+        let msg = res.statusText
+        try { msg = (await res.json()).error || msg } catch {}
+        throw new Error(msg)
+      }
+      alert('恢复完成，即将重新加载页面')
+      location.reload()
+    } catch (err: any) {
+      alert('恢复失败：' + (err?.message || err))
+    } finally {
+      input.value = ''
+      restoring = false
+    }
+  }
 
   async function addCategory() { if (!newCat.name.trim()) return
     await API.post('/api/v1/categories', newCat); newCat = { id: 0, name: '', color: '#6366f1', icon: 'circle', sort_order: 0 }; await load() }
@@ -57,8 +121,6 @@
   async function delCategory(id: number) { if (confirm('删除圈子？')) { await API.delete(`/api/v1/categories/${id}`); await load() } }
   async function delTag(id: number) { if (confirm('删除标签？')) { await API.delete(`/api/v1/tags/${id}`); await load() } }
   async function delType(id: number) { if (confirm('删除类型？')) { await API.delete(`/api/v1/event-types/${id}`); await load() } }
-
-  async function exportData() { window.location.href = '/api/v1/backup/export' }
 </script>
 <div class="space-y-6">
   <header><h1 class="text-2xl font-semibold">设置</h1><p class="text-sm mt-1" style="color: var(--q-muted);">偏好、数据、通知渠道</p></header>
@@ -135,8 +197,8 @@
     <textarea bind:value={appriseUrls} class="w-full h-28 px-3 py-2 rounded-lg text-sm outline-none font-mono" style="background: var(--q-bg); border: 1px solid var(--q-border);"
       placeholder='每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat'></textarea>
     <div class="flex items-center gap-3 mt-3">
-      <label class="text-sm" style="color: var(--q-muted);">每日推送时间</label>
-      <input type="number" min={0} max={23} bind:value={pushHour} class="w-20 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
+      <span class="text-sm" style="color: var(--q-muted);">每日推送时间</span>
+      <input type="number" min={0} max={23} bind:value={pushHour} aria-label="每日推送时间（0-23 时）" class="w-20 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
       <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={saveNotify}>保存</button>
       <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={testNotify}>测试推送</button>
     </div>
@@ -145,14 +207,44 @@
     </p>
   </section>
 
+  <!-- 访问令牌 -->
+  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <h2 class="text-sm font-medium mb-3">访问令牌（可选）</h2>
+    <div class="flex gap-2">
+      <input bind:value={token} type="password" placeholder="服务端 QIANSI_TOKEN，未设置则留空"
+             class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
+      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={saveToken}>保存</button>
+    </div>
+    <p class="text-xs mt-2" style="color: var(--q-muted);">
+      服务端设置 QIANSI_TOKEN 后，所有接口都需要此令牌；跨站访问默认已被 CORS 拒绝。
+    </p>
+  </section>
+
   <!-- 数据管理 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">数据备份</h2>
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={exportData}><Download size={14} /> 导出数据库</button>
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={snapshot}>生成归档快照</button>
+      <input type="file" accept=".db,.sqlite,.sqlite3" class="hidden" bind:this={restoreInput} onchange={restoreData} />
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+              style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;"
+              disabled={restoring} onclick={() => restoreInput?.click()}>
+        <Upload size={14} /> {restoring ? '恢复中…' : '从备份恢复'}
+      </button>
     </div>
     <p class="text-xs mt-2" style="color: var(--q-muted);">
-      Docker 部署时，实际数据位于 data 挂载目录；可直接拷贝 qiansi.db + uploads/ + backups/。
+      导出会生成一份一致性快照（不含未落盘的 WAL 残留）；系统每日 04:00 自动归档一份，最多保留 7 份。恢复前会自动归档当前数据。
     </p>
+    {#if backups.length > 0}
+      <ul class="mt-3 space-y-1">
+        {#each backups as b}
+          <li class="flex items-center gap-2 text-xs px-2 py-1 rounded" style="background: var(--q-bg); color: var(--q-muted);">
+            <span class="truncate">{b.name}</span>
+            <span class="ml-auto shrink-0">{(b.size / 1024).toFixed(0)} KB · {b.time}</span>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </section>
 </div>

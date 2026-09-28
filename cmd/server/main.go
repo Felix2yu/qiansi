@@ -41,8 +41,8 @@ func main() {
 	// SPA static files (expect ./web/dist or ./web to contain built SPA, or placeholder)
 	a.Router.Get("/*", spaHandler(cfg))
 
-	// notifications scheduler
-	go notify.RunScheduler(ctx, st)
+	// notifications scheduler（顺带每日归档一份数据库快照）
+	go notify.RunScheduler(ctx, st, a.DailyBackupTick)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,
@@ -66,7 +66,8 @@ func main() {
 	case s := <-sig:
 		log.Printf("got %s, shutting down", s)
 		cancel()
-		shutdownCtx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancelShutdown()
 		_ = srv.Shutdown(shutdownCtx)
 	}
 }

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, yuan, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
-  import { Plus, X, Trash2 } from '@lucide/svelte'
+  import { API, yuan, todayLocal, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
+  import { Plus, X, Trash2, Search } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
   let list = $state<Event[]>([])
@@ -10,17 +10,58 @@
   let people = $state<Person[]>([])
   let showForm = $state(false)
   let editId = $state('')
+  // 参与人较多时不能平铺全量，这里按关键字过滤
+  let peopleQuery = $state('')
   let form = $state({
     title: '', type_id: 0, event_date: '', locations: [''] as string[],
     has_gift: false, gift: '', summary: '', participant_ids: [] as string[],
     expense_yuan: '', expense_person_id: '',
   })
 
+  // 列表筛选：支持按参与人过滤（此前 person_id 被当成标题关键字，筛选形同虚设）
+  let filterPerson = $state('')
+  let filterQuery = $state('')
+
+  const matchedPeople = $derived(
+    peopleQuery.trim()
+      ? people.filter(p => p.name.includes(peopleQuery.trim()) || (p.nickname || '').includes(peopleQuery.trim()))
+      : people
+  )
+  const participants = $derived(
+    people.filter(p => form.participant_ids.includes(p.id))
+  )
+
+  function toggleParticipant(id: string) {
+    form.participant_ids = form.participant_ids.includes(id)
+      ? form.participant_ids.filter(x => x !== id)
+      : [...form.participant_ids, id]
+  }
+
   function resetForm() {
     form = {
-      title: '', type_id: 0, event_date: new Date().toISOString().slice(0, 10),
+      title: '', type_id: 0, event_date: todayLocal(),
       locations: [''], has_gift: false, gift: '', summary: '', participant_ids: [],
       expense_yuan: '', expense_person_id: '',
+    }
+    peopleQuery = ''
+  }
+
+  // 常见场景的一键预填：只填「骨架」，明细仍由用户补
+  const TEMPLATES = [
+    { name: '见面聊天', title: '见面', summary: '聊了聊近况', has_gift: false },
+    { name: '一起吃饭', title: '吃饭', summary: '', has_gift: false },
+    { name: '送礼', title: '送礼', summary: '', has_gift: true, gift: '' },
+    { name: '电话/微信', title: '通话', summary: '', has_gift: false },
+    { name: '运动出游', title: '一起运动', summary: '', has_gift: false },
+  ]
+
+  function applyTemplate(t: typeof TEMPLATES[number]) {
+    form = {
+      ...form,
+      title: t.title,
+      summary: form.summary || t.summary,
+      has_gift: t.has_gift,
+      gift: t.has_gift ? (form.gift || t.gift || '') : '',
     }
   }
 
@@ -39,13 +80,28 @@
     showForm = true
   }
 
-  async function load() {
-    ;[list, types, people, timeline] = await Promise.all([
-      API.get('/api/v1/events?limit=100'), API.get('/api/v1/event-types'),
+  const PAGE = 50
+  let page = $state(0)
+  let hasMore = $state(false)
+
+  async function load(reset = true) {
+    if (reset) page = 0
+    const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) })
+    if (filterPerson) qs.set('person_id', filterPerson)
+    if (filterQuery.trim()) qs.set('q', filterQuery.trim())
+    const [batch, ty, pe, tl] = await Promise.all([
+      API.get(`/api/v1/events?${qs}`), API.get('/api/v1/event-types'),
       API.get('/api/v1/people?limit=500'), API.get('/api/v1/dashboard/timeline?limit=200'),
     ]) as any
+    hasMore = (batch || []).length === PAGE
+    list = reset ? batch : [...list, ...batch]
+    types = ty; people = pe; timeline = tl
   }
-  onMount(load)
+  async function loadMore() {
+    page += 1
+    await load(false)
+  }
+  onMount(() => load(true))
 
   async function submit() {
     if (!form.title.trim() || !form.event_date) { alert('标题和日期必填'); return }
@@ -118,6 +174,23 @@
       {/each}
     </ul>
   {:else}
+    <div class="flex flex-wrap gap-2">
+      <select bind:value={filterPerson} onchange={() => load()} class="px-3 py-2 rounded-lg text-sm outline-none"
+              style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="">全部参与人</option>
+        {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+      </select>
+      <div class="relative flex-1 min-w-[180px]">
+        <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
+        <input bind:value={filterQuery} onkeydown={(e) => e.key === 'Enter' && load()} placeholder="搜索标题 / 地点 / 备注"
+               class="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+      </div>
+      {#if filterPerson || filterQuery}
+        <button class="px-3 py-2 rounded-lg text-sm" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
+                onclick={() => { filterPerson = ''; filterQuery = ''; load() }}>清除筛选</button>
+      {/if}
+    </div>
     <ul class="space-y-2">
       {#each list as e}
         <li class="rounded-lg p-3 flex items-start gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
@@ -147,19 +220,37 @@
             {#if e.summary}<div class="text-sm mt-1 line-clamp-2" style="color: var(--q-muted);">{e.summary}</div>{/if}
           </div>
         </li>
+      {:else}
+        <li class="text-center py-8 text-sm" style="color: var(--q-muted);">没有符合条件的往来</li>
       {/each}
     </ul>
+    {#if hasMore}
+      <div class="text-center mt-3">
+        <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);" onclick={loadMore}>
+          加载更多（已显示 {list.length} 条）
+        </button>
+      </div>
+    {/if}
   {/if}
 </div>
 
 {#if showForm && !onlyTimeline}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4" style="background: rgba(0,0,0,0.3);" onclick={() => showForm = false}>
-    <div class="w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);" onclick={(e) => e.stopPropagation()}>
+  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
+    <button type="button" aria-label="关闭弹窗" class="absolute inset-0 cursor-default" style="background: rgba(0,0,0,0.3); border: 0;" onclick={() => { showForm = false; editId = '' }}></button>
+    <div class="relative w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <div class="flex items-center justify-between mb-4">
         <h2 class="font-semibold">{editId ? '编辑往来' : '新建往来'}</h2>
         <button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button>
       </div>
       <div class="space-y-3">
+        {#if !editId}
+          <div class="flex flex-wrap gap-1">
+            {#each TEMPLATES as t}
+              <button class="text-xs px-2 py-1 rounded-md" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+                      onclick={() => applyTemplate(t)}>{t.name}</button>
+            {/each}
+          </div>
+        {/if}
         <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="标题" bind:value={form.title} />
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.type_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
@@ -195,18 +286,31 @@
           <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="开销（元，可空）" bind:value={form.expense_yuan} />
           <select bind:value={form.expense_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
             <option value="">开销归属（默认首位参与人）</option>
-            {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+            {#each participants as p}<option value={p.id}>{p.name}（参与人）</option>{/each}
+            {#each people.filter(p => !form.participant_ids.includes(p.id)) as p}<option value={p.id}>{p.name}</option>{/each}
           </select>
         </div>
 
         <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="备注" bind:value={form.summary}></textarea>
         <div>
-          <div class="text-xs mb-1" style="color: var(--q-muted);">参与人</div>
-          <div class="flex flex-wrap gap-1">
-            {#each people as p}
-              <label class="flex items-center gap-1 text-xs px-2 py-1 rounded-md" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-                <input type="checkbox" value={p.id} bind:group={form.participant_ids} /> {p.name}
-              </label>
+          <div class="flex items-center justify-between mb-1">
+            <div class="text-xs" style="color: var(--q-muted);">参与人（已选 {form.participant_ids.length} 人）</div>
+            <div class="relative">
+              <Search size={12} class="absolute left-2 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
+              <input bind:value={peopleQuery} placeholder="搜索联系人"
+                     class="pl-7 pr-2 py-1 rounded-md text-xs outline-none w-36"
+                     style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+            </div>
+          </div>
+          <div class="flex flex-wrap gap-1 max-h-40 overflow-auto">
+            {#each matchedPeople as p}
+              <button class="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition"
+                      style={form.participant_ids.includes(p.id)
+                        ? 'background: var(--q-theme); color: white; border: 1px solid var(--q-theme);'
+                        : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
+                      onclick={() => toggleParticipant(p.id)}>{p.name}</button>
+            {:else}
+              <span class="text-xs" style="color: var(--q-muted);">没有匹配的联系人</span>
             {/each}
           </div>
         </div>

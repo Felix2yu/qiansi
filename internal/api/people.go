@@ -2,6 +2,9 @@ package api
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/qiansi/app/internal/store"
@@ -23,7 +26,73 @@ func (a *API) registerPeople(r chi.Router) {
 		r.Get("/{id}/fields", a.personFieldList)
 		r.Post("/{id}/fields", a.personFieldUpsert)
 		r.Delete("/{id}/fields/{fid}", a.personFieldDelete)
+		r.Post("/{id}/archive", a.personArchive)
+		r.Delete("/{id}/archive", a.personUnarchive)
+		r.Post("/{id}/merge", a.personMerge)
 	})
+	r.Get("/api/v1/people/duplicates", a.personDuplicates)
+	r.Get("/api/v1/search", a.search)
+}
+
+// search 跨模块统一检索
+func (a *API) search(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query().Get("q")
+	list, err := a.Store.Search(r.Context(), q, parseIntQuery(r, "limit", 5))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, list)
+}
+
+// personDuplicates 返回可能与给定信息重复的联系人，供新建/编辑时提示
+func (a *API) personDuplicates(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	list, err := a.Store.PersonDuplicates(r.Context(), q.Get("name"), q.Get("phone"), q.Get("wechat"), q.Get("exclude_id"))
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, list)
+}
+
+func (a *API) personArchive(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := a.Store.PersonArchive(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+func (a *API) personUnarchive(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := a.Store.PersonUnarchive(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// personMerge 把 body.from 的数据合并进当前人物，然后删除 from
+func (a *API) personMerge(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var body struct {
+		From string `json:"from"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if body.From == "" {
+		writeErr(w, 400, "from required")
+		return
+	}
+	if err := a.Store.PersonMerge(r.Context(), body.From, id); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "merged_into": id})
 }
 
 func (a *API) peopleList(w http.ResponseWriter, r *http.Request) {
@@ -68,6 +137,11 @@ func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// 生日要能进入提醒与建议，落库后同步生成对应纪念日
+	if err := a.Store.SyncBirthdayAnniversary(r.Context(), &p); err != nil {
+		writeErr(w, 500, "人物已保存，但生日纪念日生成失败: "+err.Error())
+		return
+	}
 	writeJSON(w, 200, p)
 }
 
@@ -94,14 +168,36 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// 生日改动要同步到纪念日；清空生日则移除此前自动生成的那条
+	if err := a.Store.SyncBirthdayAnniversary(r.Context(), &p); err != nil {
+		writeErr(w, 500, "人物已保存，但生日纪念日同步失败: "+err.Error())
+		return
+	}
 	writeJSON(w, 200, p)
 }
 
+// peopleDelete 删除联系人。外键已开启，关联记录会级联清理；
+// 附件不在级联范围内，需要显式摘掉引用并删除磁盘文件，否则留下孤儿。
 func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	atts, err := a.Store.PersonDetachAttachments(r.Context(), id)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	if err := a.Store.PersonDelete(r.Context(), id); err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	for _, att := range atts {
+		if att == nil {
+			continue
+		}
+		p := filepath.Join(a.Cfg.Uploads, att.StoredName)
+		if filepath.Clean(p) == p {
+			_ = os.Remove(p)
+		}
+		_, _ = a.Store.DB.ExecContext(r.Context(), "DELETE FROM attachments WHERE id=?", att.ID)
 	}
 	w.WriteHeader(204)
 }
@@ -195,6 +291,18 @@ func (a *API) relCreate(w http.ResponseWriter, r *http.Request) {
 	var rel store.Relationship
 	if err := decode(r, &rel); err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	if rel.FromPerson == "" || rel.ToPerson == "" {
+		writeErr(w, 400, "需要指定关系的双方")
+		return
+	}
+	if rel.FromPerson == rel.ToPerson {
+		writeErr(w, 400, "不能与自己建立关系")
+		return
+	}
+	if strings.TrimSpace(rel.Type) == "" {
+		writeErr(w, 400, "type required")
 		return
 	}
 	if err := a.Store.RelationshipCreate(r.Context(), &rel); err != nil {

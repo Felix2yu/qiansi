@@ -2,10 +2,11 @@
   import { onMount, onDestroy } from 'svelte'
   import * as echarts from 'echarts'
   import { API, type Person, type Relationship } from '../lib/api'
+  import { navigate } from '../lib/router'
 
   let people = $state<Person[]>([])
   let rels = $state<Relationship[]>([])
-  let chartDiv: HTMLDivElement | null = null
+  let chartDiv: HTMLDivElement | null = $state(null)
   let chart: echarts.ECharts | null = null
 
   async function load() {
@@ -34,6 +35,10 @@
         data: nodes, links,
       }]
     })
+    // 点击节点直接进人物详情，关系的增删改在那里操作
+    chart.on('click', (p: any) => {
+      if (p?.dataType === 'node' && p?.data?.id) navigate(`/people/${p.data.id}`)
+    })
   }
 
   function onResize() { chart?.resize() }
@@ -41,7 +46,7 @@
   onDestroy(() => { chart?.dispose(); window.removeEventListener('resize', onResize) })
 </script>
 <div class="space-y-4">
-  <header><h1 class="text-2xl font-semibold">关系图</h1><p class="text-sm mt-1" style="color: var(--q-muted);">人物之间的联结</p></header>
+  <header><h1 class="text-2xl font-semibold">关系图</h1><p class="text-sm mt-1" style="color: var(--q-muted);">人物之间的联结 · 点击节点进入详情维护关系</p></header>
   {#if people.length === 0}
     <div class="text-center py-12 text-sm" style="color: var(--q-muted);">还没有人物或关系</div>
   {:else}

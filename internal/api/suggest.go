@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"database/sql"
+
+	"github.com/qiansi/app/internal/store"
 )
 
 type Suggestion struct {
@@ -19,8 +21,8 @@ func (a *API) suggest() []Suggestion {
 
 	// 1. People not updated recently
 	rows, err := st.QueryContext(ctx, `SELECT p.id,p.name FROM people p
-WHERE p.archived=0 AND p.updated_at < datetime('now','-14 day')
-ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`)
+WHERE p.archived=0 AND substr(p.updated_at,1,10) < ?
+ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -35,30 +37,30 @@ ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`)
 	}
 
 	// 2. Upcoming anniversaries within 7 days
-	rows, err = st.QueryContext(ctx, `SELECT COALESCE(p.id,''), COALESCE(p.name,''), a.title, a.date, a.is_lunar
-FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id
-WHERE date(a.date) BETWEEN date('now') AND date('now','+7 day')
-ORDER BY date(a.date)`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var personID, name, title, date string
-			var isLunar bool
-			if err := rows.Scan(&personID, &name, &title, &date, &isLunar); err == nil {
-				out = append(out, Suggestion{
-					Type: "纪念日临近", PersonID: personID, PersonName: name,
-					Message: title + "（" + date + "）",
-				})
-			}
+	//
+	// 必须走 NextOccurrence 计算「下一次发生」：直接比较 date(a.date) 只在
+	// 建档当年命中一次，之后每年重复的纪念日再也不会出现在建议里。
+	if upcoming, err := a.Store.AnniversaryUpcoming(ctx, 7); err == nil {
+		for _, r := range upcoming {
+			name := r.PersonName
+			out = append(out, Suggestion{
+				Type: "纪念日临近", PersonID: r.PersonID, PersonName: name,
+				Message: r.Title,
+			})
 		}
 	}
 
 	// 3. Unsettled lent money
-	rows, err = st.QueryContext(ctx, `SELECT p.id,p.name,
-COALESCE(SUM(t.amount_fen)-COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0),0) AS unpaid
-FROM transactions t JOIN people p ON p.id=t.person_id
-WHERE t.direction='out' AND t.settled=0
-GROUP BY t.person_id ORDER BY unpaid DESC LIMIT 5`)
+	//
+	// 先按每笔交易扣掉各自还款，再按人汇总。直接在聚合里写 t.id 会让 SQLite
+	// 取未定义的某一行，多笔借款时数字是错的。
+	rows, err = st.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(SUM(x.remaining),0) AS unpaid
+FROM (
+  SELECT t.person_id AS pid,
+         t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
+  FROM transactions t WHERE t.direction='out' AND t.settled=0
+) x JOIN people p ON p.id=x.pid
+GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -76,7 +78,7 @@ GROUP BY t.person_id ORDER BY unpaid DESC LIMIT 5`)
 	// 4. Open promises past due
 	rows, err = st.QueryContext(ctx, `SELECT COALESCE(p.id,''), COALESCE(p.name,''), m.content, COALESCE(m.due_date,'')
 FROM memos m LEFT JOIN people p ON p.id=m.person_id
-WHERE m.is_promise=1 AND m.status='open' AND date(m.due_date) < date('now')`)
+WHERE m.is_promise=1 AND m.status='open' AND m.due_date<>'' AND date(m.due_date) < ?`, store.TodayLocal())
 	if err == nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -94,9 +96,11 @@ WHERE m.is_promise=1 AND m.status='open' AND date(m.due_date) < date('now')`)
 	return out
 }
 
+// truncate 按字符（rune）截断，避免把中文按字节切开产生乱码。
 func truncate(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	return string(r[:n]) + "…"
 }

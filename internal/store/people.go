@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -66,6 +67,8 @@ type Person struct {
 	UpdatedAt          string  `json:"updated_at"`
 	CategoryName       *string `json:"category_name,omitempty"`
 	Intimacy           *int    `json:"intimacy,omitempty"`
+	// BirthdayAnniversaryID 指向由生日自动生成的纪念日，为空表示尚未生成。
+	BirthdayAnniversaryID string `json:"birthday_anniversary_id,omitempty"`
 }
 
 func (s *Store) PersonCreate(ctx context.Context, p *Person) error {
@@ -97,18 +100,184 @@ func (s *Store) PersonDelete(ctx context.Context, id string) error {
 	return err
 }
 
+// PersonDetachAttachments 返回该人物的附件列表，并把引用清空。
+// 磁盘文件由调用方（API 层）删除——store 不碰文件系统。
+func (s *Store) PersonDetachAttachments(ctx context.Context, id string) ([]*Attachment, error) {
+	atts, err := s.AttachmentsOf(ctx, "person", id)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.DB.ExecContext(ctx, "UPDATE people SET avatar_attachment_id=NULL WHERE id=?", id); err != nil {
+		return nil, err
+	}
+	return atts, nil
+}
+
+// Duplicates 找出可能与给定人物重复的记录：同名，或电话/微信相同。
+// excludeID 用于编辑时排除自己。
+func (s *Store) PersonDuplicates(ctx context.Context, name, phone, wechat, excludeID string) ([]*Person, error) {
+	name = strings.TrimSpace(name)
+	if name == "" && strings.TrimSpace(phone) == "" && strings.TrimSpace(wechat) == "" {
+		return []*Person{}, nil
+	}
+	var conds []string
+	var args []any
+	if name != "" {
+		conds = append(conds, "(p.name=? OR p.nickname=?)")
+		args = append(args, name, name)
+	}
+	for _, col := range []string{"phone", "wechat"} {
+		v := ""
+		if col == "phone" {
+			v = strings.TrimSpace(phone)
+		} else {
+			v = strings.TrimSpace(wechat)
+		}
+		if v != "" {
+			conds = append(conds, "p."+col+"=?")
+			args = append(args, v)
+		}
+	}
+	if len(conds) == 0 {
+		return []*Person{}, nil
+	}
+	q := `SELECT p.id,p.name,p.nickname,p.phone,p.wechat,p.grade,p.category_id,p.archived,c.name
+FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE (` + strings.Join(conds, " OR ") + ")"
+	if excludeID != "" {
+		q += " AND p.id<>?"
+		args = append(args, excludeID)
+	}
+	q += " ORDER BY p.updated_at DESC LIMIT 10"
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Person{}
+	for rows.Next() {
+		p := &Person{}
+		var nick, ph, wc, cat sql.NullString
+		var catID sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.Name, &nick, &ph, &wc, &p.Grade, &catID, &p.Archived, &cat); err != nil {
+			return nil, err
+		}
+		if nick.Valid { p.Nickname = nick.String }
+		if ph.Valid { p.Phone = ph.String }
+		if wc.Valid { p.Wechat = wc.String }
+		if catID.Valid { v := int(catID.Int64); p.CategoryID = &v }
+		if cat.Valid { v := cat.String; p.CategoryName = &v }
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// PersonMerge 把 source 的关联数据全部迁到 target，然后删除 source。
+// 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、自定义字段、关系的两端。
+// 事件参与人用 INSERT OR IGNORE，避免同一事件里出现重复条目。
+func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) error {
+	if sourceID == "" || targetID == "" || sourceID == targetID {
+		return errors.New("需要两个不同的联系人")
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	steps := []struct {
+		sql  string
+		args []any
+	}{
+		{"INSERT OR IGNORE INTO event_participants(event_id,person_id) SELECT event_id,? FROM event_participants WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE memos SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE transactions SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE anniversaries SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE reminders SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE OR IGNORE taggings SET target_id=? WHERE target_type='person' AND target_id=?", []any{targetID, sourceID}},
+		{"UPDATE person_fields SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		{"UPDATE OR IGNORE relationships SET from_person_id=? WHERE from_person_id=?", []any{targetID, sourceID}},
+		{"UPDATE OR IGNORE relationships SET to_person_id=? WHERE to_person_id=?", []any{targetID, sourceID}},
+		{"DELETE FROM relationships WHERE from_person_id=? OR to_person_id=?", []any{sourceID, sourceID}},
+		{"DELETE FROM event_participants WHERE person_id=?", []any{sourceID}},
+		{"DELETE FROM taggings WHERE target_type='person' AND target_id=?", []any{sourceID}},
+		{"DELETE FROM people WHERE id=?", []any{sourceID}},
+	}
+	for _, st := range steps {
+		if _, err := tx.ExecContext(ctx, st.sql, st.args...); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// SyncBirthdayAnniversary 让「人物生日」与「纪念日」保持双向一致，
+// 否则 people.birthday 只是一个孤立字段，永远不会进入提醒与建议。
+//
+// - 有生日：创建或更新一条 source='birthday' 的纪念日，并回写 people.birthday_anniversary_id
+// - 无生日：删除此前自动生成的纪念日，避免留下幽灵提醒
+func (s *Store) SyncBirthdayAnniversary(ctx context.Context, p *Person) error {
+	if p == nil || p.ID == "" {
+		return nil
+	}
+	if strings.TrimSpace(p.Birthday) == "" {
+		if p.BirthdayAnniversaryID != "" {
+			if _, err := s.DB.ExecContext(ctx, "DELETE FROM anniversaries WHERE id=? AND source='birthday'", p.BirthdayAnniversaryID); err != nil {
+				return err
+			}
+		}
+		if _, err := s.DB.ExecContext(ctx, "UPDATE people SET birthday_anniversary_id=NULL WHERE id=?", p.ID); err != nil {
+			return err
+		}
+		p.BirthdayAnniversaryID = ""
+		return nil
+	}
+
+	// 优先复用已登记的关联纪念日；没有再按来源找一条，避免重复新建。
+	annivID := p.BirthdayAnniversaryID
+	if annivID == "" {
+		var found string
+		err := s.DB.QueryRowContext(ctx,
+			"SELECT id FROM anniversaries WHERE person_id=? AND source='birthday' ORDER BY created_at LIMIT 1", p.ID).Scan(&found)
+		if err == nil && found != "" {
+			annivID = found
+		}
+	}
+
+	title := p.Name + "的生日"
+	if annivID != "" {
+		if _, err := s.DB.ExecContext(ctx,
+			"UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=1 WHERE id=?",
+			p.ID, title, p.Birthday, p.BirthdayIsLunar, annivID); err != nil {
+			return err
+		}
+	} else {
+		annivID = uuid.NewString()
+		if _, err := s.DB.ExecContext(ctx, `INSERT INTO anniversaries(id,person_id,title,date,is_lunar,repeat_yearly,remind_days,created_at,source)
+VALUES(?,?,?,?,?,1,'7,3,1,0',?, 'birthday')`,
+			annivID, p.ID, title, p.Birthday, p.BirthdayIsLunar, nowUTC()); err != nil {
+			return err
+		}
+	}
+	if _, err := s.DB.ExecContext(ctx, "UPDATE people SET birthday_anniversary_id=? WHERE id=?", annivID, p.ID); err != nil {
+		return err
+	}
+	p.BirthdayAnniversaryID = annivID
+	return nil
+}
+
 func (s *Store) PersonGet(ctx context.Context, id string) (*Person, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
+	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name,p.birthday_anniversary_id
 FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
 	p := &Person{}
 	var grade int
 	var cat sql.NullString
 	var catID sql.NullInt64
+	var birthdayAnniv sql.NullString
 	if err := row.Scan(&p.ID, &p.Name, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
-		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
+		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat, &birthdayAnniv); err != nil {
 		return nil, err
 	}
 	p.Grade = grade
+	if birthdayAnniv.Valid { p.BirthdayAnniversaryID = birthdayAnniv.String }
 	if catID.Valid {
 		v := int(catID.Int64)
 		p.CategoryID = &v
@@ -270,7 +439,11 @@ func (s *Store) CategoryUpsert(ctx context.Context, c *Category) error {
 	return err
 }
 
+// CategoryDelete 删除圈子，并把所属人物的圈子置空，避免留下悬空引用。
 func (s *Store) CategoryDelete(ctx context.Context, id int) error {
+	if _, err := s.DB.ExecContext(ctx, "UPDATE people SET category_id=NULL WHERE category_id=?", id); err != nil {
+		return err
+	}
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM categories WHERE id=?", id)
 	return err
 }
@@ -312,7 +485,11 @@ func (s *Store) TagUpsert(ctx context.Context, t *Tag) error {
 	return err
 }
 
+// TagDelete 删除标签。taggings 有外键级联，这里只需保证记录本身被清掉。
 func (s *Store) TagDelete(ctx context.Context, id int) error {
+	if _, err := s.DB.ExecContext(ctx, "DELETE FROM taggings WHERE tag_id=?", id); err != nil {
+		return err
+	}
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM tags WHERE id=?", id)
 	return err
 }
@@ -359,7 +536,11 @@ func (s *Store) EventTypeUpsert(ctx context.Context, e *EventType) error {
 	return err
 }
 
+// EventTypeDelete 删除事件类型，并把引用它的往来置为「未分类」。
 func (s *Store) EventTypeDelete(ctx context.Context, id int) error {
+	if _, err := s.DB.ExecContext(ctx, "UPDATE events SET type_id=NULL WHERE type_id=?", id); err != nil {
+		return err
+	}
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM event_types WHERE id=?", id)
 	return err
 }

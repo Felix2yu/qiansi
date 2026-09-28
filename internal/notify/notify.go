@@ -14,7 +14,7 @@ import (
 
 // RunScheduler is the long-running scheduler for daily digest and day-before reminders.
 // If no apprise URLs are configured, it is effectively a no-op.
-func RunScheduler(ctx context.Context, s *store.Store) {
+func RunScheduler(ctx context.Context, s *store.Store, backup func(context.Context)) {
 	t := time.NewTicker(30 * time.Minute)
 	defer t.Stop()
 	for {
@@ -22,15 +22,19 @@ func RunScheduler(ctx context.Context, s *store.Store) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runTick(ctx, s)
+			runTick(ctx, s, backup)
 		}
 	}
 }
 
-func runTick(ctx context.Context, s *store.Store) {
+func runTick(ctx context.Context, s *store.Store, backup func(context.Context)) {
 	// 1. Intimacy snapshot daily (03:00)
 	if time.Now().Hour() == 3 && time.Now().Minute() < 5 {
 		snapshotAll(ctx, s)
+	}
+	// 1b. Daily database archive (04:00)
+	if backup != nil && time.Now().Hour() == 4 && time.Now().Minute() < 5 {
+		backup(ctx)
 	}
 	// 2. Digest at configured push time (default 09:00)
 	pushHour := 9

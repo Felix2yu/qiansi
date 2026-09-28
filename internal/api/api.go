@@ -1,10 +1,12 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
@@ -21,12 +23,16 @@ type API struct {
 func New(s *store.Store, cfg *config.Config) *API {
 	api := &API{Store: s, Cfg: cfg, Router: chi.NewRouter()}
 	r := api.Router
+	// 默认不再对任意来源开放：CORS 只放行显式配置的来源（同源请求不带 Origin，不受影响），
+	// 避免任意网站跨站读写本机数据。需要跨域时用 QIANSI_CORS_ORIGINS 指定。
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins: []string{"*"},
-		AllowedMethods: []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Authorization", "Content-Type", "X-Requested-With"},
+		AllowedOrigins:   cfg.CORSOrigins,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-Requested-With"},
+		AllowCredentials: false,
 	}))
 	r.Use(api.recoverer)
+	r.Use(api.authGuard)
 
 	r.Get("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -46,12 +52,42 @@ func New(s *store.Store, cfg *config.Config) *API {
 	api.registerAnniversaries(r)
 	api.registerReminders(r)
 	api.registerAttachments(r)
+	api.registerNotify(r)
+	api.registerBackup(r)
 	registerDashboard(r, api)
 
 	return api
 }
 
 func (a *API) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.Router.ServeHTTP(w, r) }
+
+// authGuard 可选的访问令牌校验。
+//
+// 未配置 QIANSI_TOKEN 时完全放行，保持自托管单机场景的开箱即用；
+// 一旦配置，所有 /api 与 /uploads 请求都必须携带正确的 Bearer 令牌。
+// 静态资源（SPA 页面本身）不校验，因为页面不含数据。
+func (a *API) authGuard(next http.Handler) http.Handler {
+	token := a.Cfg.Token
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := r.URL.Path
+		if !strings.HasPrefix(p, "/api/") && !strings.HasPrefix(p, "/uploads/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got == "" {
+			got = r.Header.Get("X-Qiansi-Token")
+		}
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			writeErr(w, http.StatusUnauthorized, "unauthorized")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func (a *API) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

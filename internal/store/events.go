@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	qiansiLunar "github.com/qiansi/app/internal/lunar"
@@ -174,17 +173,25 @@ FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.event_id=? OR
 	return list, rows.Err()
 }
 
-func (s *Store) EventList(ctx context.Context, q string, limit, offset int) ([]*Event, error) {
+func (s *Store) EventList(ctx context.Context, personID string, q string, limit, offset int) ([]*Event, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	qry := `SELECT ` + eventColumns + `
 FROM events e LEFT JOIN event_types et ON e.type_id=et.id`
 	var args []any
+	var conds []string
+	if personID != "" {
+		conds = append(conds, "e.id IN (SELECT ep.event_id FROM event_participants ep WHERE ep.person_id=?)")
+		args = append(args, personID)
+	}
 	if q != "" {
-		qry += " WHERE e.title LIKE ? OR e.summary LIKE ? OR e.location LIKE ?"
+		conds = append(conds, "(e.title LIKE ? OR e.summary LIKE ? OR e.location LIKE ?)")
 		q = "%" + q + "%"
 		args = append(args, q, q, q)
+	}
+	if len(conds) > 0 {
+		qry += " WHERE " + strings.Join(conds, " AND ")
 	}
 	qry += " ORDER BY e.event_date DESC, e.created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
@@ -441,7 +448,7 @@ func (s *Store) TransactionGet(ctx context.Context, id string) (*Transaction, er
 FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.id=?`, id)
 	if err != nil { return nil, err }
 	defer rows.Close()
-	if !rows.Next() { return nil, nil }
+	if !rows.Next() { return nil, sql.ErrNoRows }
 	return scanTransaction(rows)
 }
 
@@ -608,20 +615,26 @@ FROM reminders r LEFT JOIN people p ON r.person_id=p.id WHERE 1=1`
 
 // ReminderUpcoming returns explicit reminders plus anniversary-derived entries
 // whose next solar occurrence falls within `horizonDays`.
+//
+// 时间基准统一为本地时区（见 store.nowLocal 注释）；horizonDays<=0 表示不限。
 func (s *Store) ReminderUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
-	now := time.Now().UTC()
-	dueCutoff := now.AddDate(0, 0, horizonDays).UTC().Format(timeFormat)
-	rows, err := s.DB.QueryContext(ctx, `SELECT r.id,r.person_id,r.ref_type,r.ref_id,r.title,r.due_at,r.status,r.created_at,r.completed_at,p.name
+	q := `SELECT r.id,r.person_id,r.ref_type,r.ref_id,r.title,r.due_at,r.status,r.created_at,r.completed_at,p.name
 FROM reminders r LEFT JOIN people p ON r.person_id=p.id
-WHERE r.status='pending' AND r.due_at<=?
-ORDER BY r.due_at ASC`, dueCutoff)
+WHERE r.status='pending'`
+	var args []any
+	if horizonDays > 0 {
+		q += " AND r.due_at<=?"
+		args = append(args, localCutoff(horizonDays))
+	}
+	q += " ORDER BY r.due_at ASC"
+	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil { return nil, err }
-	defer rows.Close()
 	list := []*Reminder{}
 	for rows.Next() {
 		r := &Reminder{}
 		var pid, refid, completed, pn sql.NullString
 		if err := rows.Scan(&r.ID, &pid, &r.RefType, &refid, &r.Title, &r.DueAt, &r.Status, &r.CreatedAt, &completed, &pn); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		if pid.Valid { r.PersonID = pid.String }
@@ -630,6 +643,7 @@ ORDER BY r.due_at ASC`, dueCutoff)
 		if pn.Valid { r.PersonName = pn.String }
 		list = append(list, r)
 	}
+	rows.Close() // 连接池只有 1 条，必须先释放再查纪念日
 	// Merge anniversary-derived reminders (lunar→solar)
 	annivs, err := s.AnniversaryUpcoming(ctx, horizonDays)
 	if err == nil {
@@ -641,21 +655,49 @@ ORDER BY r.due_at ASC`, dueCutoff)
 
 // AnniversaryUpcoming returns Reminder-shaped entries for anniversaries whose
 // next occurrence (lunar→solar if is_lunar=true) falls within `horizonDays`.
+//
+// 已经「完成」过的本次提醒（anniversary_dismiss）会被跳过，
+// 否则用户在今日页勾掉纪念日后，刷新又会原样出现。
 func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
 	today := qiansiLunar.NowLocal()
 	cutoff := today.AddDays(horizonDays)
+	// 注意：连接池上限是 1（db.SetMaxOpenConns(1)），查询期间不能再发起其它查询，
+	// 否则会互相等待造成死锁。这里先把结果全部读进内存并关闭 rows，再做后续计算。
+	type annivRow struct {
+		id, personID, title, date, remindDays, personName string
+		isLunar                                           bool
+	}
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.remind_days,p.name
 FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id`)
 	if err != nil { return nil, err }
-	defer rows.Close()
-	list := []*Reminder{}
+	raw := []annivRow{}
 	for rows.Next() {
 		var anID, personID, title, date, remindDays, personName sql.NullString
 		var isLunar bool
 		if err := rows.Scan(&anID, &personID, &title, &date, &isLunar, &remindDays, &personName); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		if !date.Valid || !title.Valid || title.String == "" { continue }
+		raw = append(raw, annivRow{anID.String, personID.String, title.String, date.String, remindDays.String, personName.String, isLunar})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	dismissed := s.dismissedOccurrences(ctx)
+	list := []*Reminder{}
+	for _, a := range raw {
+		if a.date == "" || a.title == "" { continue }
+		anID, personID, title, date, remindDays, personName :=
+			sql.NullString{String: a.id, Valid: a.id != ""},
+			sql.NullString{String: a.personID, Valid: a.personID != ""},
+			sql.NullString{String: a.title, Valid: true},
+			sql.NullString{String: a.date, Valid: true},
+			sql.NullString{String: a.remindDays, Valid: a.remindDays != ""},
+			sql.NullString{String: a.personName, Valid: a.personName != ""}
+		isLunar := a.isLunar
 		anchor := qiansiLunar.ParseDate(date.String)
 		next := qiansiLunar.NextOccurrence(anchor, isLunar, today)
 		offsets := qiansiLunar.RemindDates(remindDays.String)
@@ -664,6 +706,9 @@ FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id`)
 			rd := next.AddDays(-offset)
 			if rd.Before(today) { continue }
 			if horizonDays > 0 && cutoff.Before(rd) { continue }
+			// 本次发生 + 提前量构成唯一的一次提醒
+			occurrence := next.String() + ":" + strconv.Itoa(offset)
+			if dismissed[anID.String+"|"+occurrence] { continue }
 			personIDStr := ""
 			if personID.Valid { personIDStr = personID.String }
 			pn := ""
@@ -673,12 +718,12 @@ FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id`)
 			whenTag := ""
 			if offset > 0 { whenTag = "，还有 " + strconv.Itoa(offset) + " 天" } else { whenTag = "，今天" }
 			r := &Reminder{
-				ID:         "anniv:" + anID.String + ":" + next.String() + ":" + strconv.Itoa(offset),
+				ID:         "anniv:" + anID.String + ":" + occurrence,
 				PersonID:   personIDStr,
 				RefType:    "anniversary",
 				RefID:      anID.String,
 				Title:      title.String + "（" + next.String() + typeTag + whenTag + "）",
-				DueAt:      rd.String() + "T09:00:00Z",
+				DueAt:      rd.String() + "T09:00:00",
 				Status:     "pending",
 				PersonName: pn,
 			}
@@ -686,7 +731,111 @@ FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id`)
 		}
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
-	return list, rows.Err()
+	return list, nil
+}
+
+// dismissedOccurrences 返回已被标记为完成的「纪念日 + 本次发生」集合，
+// key 形如 "<anniversary_id>|<YYYY-MM-DD>:<offset>"。
+func (s *Store) dismissedOccurrences(ctx context.Context) map[string]bool {
+	out := map[string]bool{}
+	rows, err := s.DB.QueryContext(ctx, "SELECT anniversary_id,occurrence FROM anniversary_dismiss")
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, occ string
+		if err := rows.Scan(&id, &occ); err == nil {
+			out[id+"|"+occ] = true
+		}
+	}
+	return out
+}
+
+// AnniversaryDismiss 把某次纪念日提醒标记为已完成（occurrence 形如 "2026-10-01:0"）。
+func (s *Store) AnniversaryDismiss(ctx context.Context, anniversaryID, occurrence string) error {
+	if anniversaryID == "" || occurrence == "" {
+		return nil
+	}
+	_, err := s.DB.ExecContext(ctx,
+		"INSERT OR IGNORE INTO anniversary_dismiss(anniversary_id,occurrence,created_at) VALUES(?,?,?)",
+		anniversaryID, occurrence, nowUTC())
+	return err
+}
+
+// ===== Global search =====
+
+type SearchResult struct {
+	Type    string `json:"type"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Subtitle string `json:"subtitle,omitempty"`
+	Date    string `json:"date,omitempty"`
+	Path    string `json:"path"`
+}
+
+// Search 跨人物 / 往来 / 对话 / 金钱 / 纪念日做一次统一检索。
+// 各分支独立 LIMIT，避免某类数据过多把其它类别挤掉。
+func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchResult, error) {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return []*SearchResult{}, nil
+	}
+	if perType <= 0 {
+		perType = 5
+	}
+	like := "%" + q + "%"
+	out := []*SearchResult{}
+
+	// 人物
+	people, err := s.PersonList(ctx, q, 0, 0, true, 0, perType, 0)
+	if err == nil {
+		for _, p := range people {
+			sub := ""
+			if p.Phone != "" { sub = p.Phone }
+			if p.Wechat != "" {
+				if sub != "" { sub += " · " }
+				sub += "微信 " + p.Wechat
+			}
+			out = append(out, &SearchResult{Type: "person", ID: p.ID, Title: p.Name, Subtitle: sub, Path: "/people/" + p.ID})
+		}
+	}
+
+	type row struct{ kind, sql string }
+	queries := []row{
+		{"event", `SELECT id,title,COALESCE(summary,''),event_date FROM events WHERE title LIKE ? OR summary LIKE ? OR location LIKE ? ORDER BY event_date DESC LIMIT ?`},
+		{"memo", `SELECT id,content,COALESCE(due_date,''),said_at FROM memos WHERE content LIKE ? ORDER BY said_at DESC LIMIT ?`},
+		{"transaction", `SELECT t.id,COALESCE(t.title,'')||' '||COALESCE(p.name,''),COALESCE(p.name,''),t.occurred_at FROM transactions t LEFT JOIN people p ON p.id=t.person_id WHERE t.title LIKE ? OR p.name LIKE ? ORDER BY t.occurred_at DESC LIMIT ?`},
+		{"anniversary", `SELECT id,title,COALESCE(date,''),date FROM anniversaries WHERE title LIKE ? ORDER BY date DESC LIMIT ?`},
+	}
+	for _, qr := range queries {
+		var args []any
+		switch qr.kind {
+		case "event":
+			args = []any{like, like, like, perType}
+		case "transaction":
+			args = []any{like, like, perType}
+		default:
+			args = []any{like, perType}
+		}
+		rows, err := s.DB.QueryContext(ctx, qr.sql, args...)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			var id, title, sub, date string
+			if err := rows.Scan(&id, &title, &sub, &date); err != nil {
+				continue
+			}
+			path := "/events"
+			if qr.kind == "memo" { path = "/memos" }
+			if qr.kind == "transaction" { path = "/money" }
+			if qr.kind == "anniversary" { path = "/anniversaries" }
+			out = append(out, &SearchResult{Type: qr.kind, ID: id, Title: title, Subtitle: sub, Date: date, Path: path})
+		}
+		rows.Close()
+	}
+	return out, nil
 }
 
 // ===== Timeline =====
@@ -764,17 +913,36 @@ type GradeDist struct {
 	Count int `json:"count"`
 }
 
+// unsettledBalanceSQL 计算某个方向上未结清的净额（分）。
+//
+// 注意：必须先在子查询里按每笔交易 t.id 扣除对应还款，再在外层求和。
+// 原先写成 `SUM(t.amount_fen) - (SELECT … WHERE r.transaction_id=t.id)` 时，
+// 聚合上下文中的 t.id 是裸列，SQLite 取哪一行未定义，多笔借款时结果错误。
+const unsettledBalanceSQL = `SELECT COALESCE(SUM(remaining),0) FROM (
+  SELECT t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
+  FROM transactions t WHERE t.direction=? AND t.settled=0)`
+
 func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 	var totalPeople, totalEvents int
 	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM people WHERE archived=0`).Scan(&totalPeople)
 	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM events`).Scan(&totalEvents)
-	var upcoming7, dueToday, pendingPromises int
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM reminders WHERE status='pending' AND date(due_at) BETWEEN date('now') AND date('now','+7 day')`).Scan(&upcoming7)
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM reminders WHERE status='pending' AND date(due_at)=date('now')`).Scan(&dueToday)
+	var pendingPromises int
 	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM memos WHERE is_promise=1 AND status='open'`).Scan(&pendingPromises)
+
+	// 待办口径与「近期待办」列表保持一致：自定义提醒 + 纪念日衍生，且排除已完成的纪念日提醒。
+	upcoming7, dueToday := 0, 0
+	if all, err := s.ReminderUpcoming(ctx, 7); err == nil {
+		today := todayLocal()
+		for _, r := range all {
+			upcoming7++
+			if len(r.DueAt) >= 10 && r.DueAt[:10] == today {
+				dueToday++
+			}
+		}
+	}
 	var lendFen, borrowFen sql.NullInt64
-	_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount_fen)-COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0),0) FROM transactions t WHERE t.direction='out' AND t.settled=0`).Scan(&lendFen)
-	_ = s.DB.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount_fen)-COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0),0) FROM transactions t WHERE t.direction='in' AND t.settled=0`).Scan(&borrowFen)
+	_ = s.DB.QueryRowContext(ctx, unsettledBalanceSQL, "out").Scan(&lendFen)
+	_ = s.DB.QueryRowContext(ctx, unsettledBalanceSQL, "in").Scan(&borrowFen)
 	return map[string]any{
 		"total_people":     totalPeople,
 		"total_events":     totalEvents,
@@ -786,14 +954,25 @@ func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 	}, nil
 }
 
+// StatsByMonth 统计月度活动。
+//
+// 月份维度取三张表的并集：原先以 events 为主表分组，
+// 某月只有备忘或金钱往来时整月会缺失，趋势图出现空洞。
 func (s *Store) StatsByMonth(ctx context.Context, months int) ([]map[string]any, error) {
 	if months <= 0 { months = 12 }
-	rows, err := s.DB.QueryContext(ctx, `SELECT strftime('%Y-%m', event_date) AS month,
-COUNT(*) AS event_count,
-(SELECT COUNT(*) FROM memos WHERE strftime('%Y-%m', said_at)=strftime('%Y-%m', e.event_date)) AS memo_count,
-(SELECT COUNT(*) FROM transactions WHERE strftime('%Y-%m', occurred_at)=strftime('%Y-%m', e.event_date)) AS tx_count
-FROM events e
-GROUP BY month ORDER BY month DESC LIMIT ?`, months)
+	rows, err := s.DB.QueryContext(ctx, `WITH months(month) AS (
+  SELECT DISTINCT strftime('%Y-%m', event_date) FROM events WHERE event_date IS NOT NULL AND event_date <> ''
+  UNION
+  SELECT DISTINCT strftime('%Y-%m', said_at) FROM memos WHERE said_at IS NOT NULL AND said_at <> ''
+  UNION
+  SELECT DISTINCT strftime('%Y-%m', occurred_at) FROM transactions WHERE occurred_at IS NOT NULL AND occurred_at <> ''
+)
+SELECT m.month,
+(SELECT COUNT(*) FROM events e WHERE strftime('%Y-%m', e.event_date)=m.month) AS event_count,
+(SELECT COUNT(*) FROM memos x WHERE strftime('%Y-%m', x.said_at)=m.month) AS memo_count,
+(SELECT COUNT(*) FROM transactions y WHERE strftime('%Y-%m', y.occurred_at)=m.month) AS tx_count
+FROM months m WHERE m.month IS NOT NULL AND m.month <> ''
+ORDER BY m.month DESC LIMIT ?`, months)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	list := []map[string]any{}
@@ -829,7 +1008,7 @@ func (s *Store) EventGet(ctx context.Context, id string) (*Event, error) {
 FROM events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id)
 	if err != nil { return nil, err }
 	defer rows.Close()
-	if !rows.Next() { return nil, nil }
+	if !rows.Next() { return nil, sql.ErrNoRows }
 	e, err := scanEvent(rows)
 	if err != nil { return nil, err }
 	rows.Close()
@@ -899,12 +1078,20 @@ func (s *Store) PersonUnarchive(ctx context.Context, id string) error {
 
 // ===== PersonIntimacy / WordCloud =====
 
+// TrendPoint 是某一天的亲密度快照。
+type TrendPoint struct {
+	Day   string `json:"day"`
+	Score int    `json:"score"`
+}
+
 type PersonIntimacy struct {
-	CurrentScore   int      `json:"current_score"`
-	Grade          int      `json:"grade"`
-	RecentEvents   int      `json:"recent_events"`
-	LastInteraction string  `json:"last_interaction,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
+	CurrentScore   int          `json:"current_score"`
+	Grade          int          `json:"grade"`
+	RecentEvents   int          `json:"recent_events"`
+	LastInteraction string      `json:"last_interaction,omitempty"`
+	Tags           []string     `json:"tags,omitempty"`
+	// Trend 供详情页折线图使用；快照不足时至少回退为当天一点，避免前端拿到 undefined。
+	Trend          []TrendPoint `json:"trend"`
 }
 
 func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonIntimacy, error) {
@@ -914,7 +1101,7 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 	if p != nil { grade = p.Grade }
 	// Recent event count
 	var recentCount int
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?) AND e.event_date >= date('now','-60 day')`, personID).Scan(&recentCount)
+	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?) AND e.event_date >= ?`, personID, daysFromTodayLocal(-60)).Scan(&recentCount)
 	// Last interaction
 	var last sql.NullString
 	_ = s.DB.QueryRowContext(ctx, `SELECT MAX(event_date) FROM events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?)`, personID).Scan(&last)
@@ -925,6 +1112,29 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 	if score < 0 { score = 0 }
 	out := &PersonIntimacy{CurrentScore: score, Grade: grade, RecentEvents: recentCount}
 	if last.Valid { out.LastInteraction = last.String }
+
+	// 趋势：读取快照表，并把今天的最新分数补到末尾，保证至少有一个点。
+	out.Trend = []TrendPoint{}
+	if rows, err := s.DB.QueryContext(ctx,
+		`SELECT day,score FROM intimacy_snapshots WHERE person_id=? ORDER BY day DESC LIMIT 30`, personID); err == nil {
+		type row struct{ day string; score int }
+		collected := []row{}
+		for rows.Next() {
+			var d string
+			var sc int
+			if err := rows.Scan(&d, &sc); err == nil {
+				collected = append(collected, row{d, sc})
+			}
+		}
+		rows.Close()
+		for i := len(collected) - 1; i >= 0; i-- {
+			out.Trend = append(out.Trend, TrendPoint{Day: collected[i].day, Score: collected[i].score})
+		}
+	}
+	today := todayLocal()
+	if len(out.Trend) == 0 || out.Trend[len(out.Trend)-1].Day != today {
+		out.Trend = append(out.Trend, TrendPoint{Day: today, Score: score})
+	}
 	return out, nil
 }
 

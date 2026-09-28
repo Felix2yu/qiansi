@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/qiansi/app/internal/store"
@@ -24,8 +25,10 @@ func (a *API) registerEvents(r chi.Router) {
 }
 
 func (a *API) eventList(w http.ResponseWriter, r *http.Request) {
+	// person_id 按参与人过滤，q 才是标题/摘要/地点关键字，两者互不混淆。
 	list, err := a.Store.EventList(r.Context(),
 		r.URL.Query().Get("person_id"),
+		r.URL.Query().Get("q"),
 		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
 	if err != nil {
 		writeErr(w, 500, err.Error())
@@ -268,6 +271,7 @@ func (a *API) registerTransactions(r chi.Router) {
 		r.Delete("/{id}", a.txDelete)
 		r.Post("/{id}/repayments", a.repaymentCreate)
 		r.Get("/{id}/repayments", a.repaymentsList)
+		r.Delete("/{id}/repayments/{rid}", a.repaymentDelete)
 	})
 }
 
@@ -341,11 +345,28 @@ func (a *API) repaymentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rp.TransactionID = id
+	if rp.OccurredAt == "" {
+		rp.OccurredAt = nowLocalStamp()[:10]
+	}
+	if rp.AmountFen <= 0 {
+		writeErr(w, 400, "amount_fen 必须大于 0")
+		return
+	}
 	if err := a.Store.RepaymentCreate(r.Context(), &rp); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	// 还款后自动校正结清状态，还完即结清、删掉还款则回到未结清
+	if err := a.resyncSettled(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	writeJSON(w, 200, rp)
+}
+
+// nowLocalStamp 返回本地时间戳（不带时区后缀），与 due_at/occurred_at 的口径一致。
+func nowLocalStamp() string {
+	return time.Now().Format("2006-01-02T15:04:05")
 }
 
 func (a *API) repaymentsList(w http.ResponseWriter, r *http.Request) {
@@ -356,6 +377,43 @@ func (a *API) repaymentsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, list)
+}
+
+func (a *API) repaymentDelete(w http.ResponseWriter, r *http.Request) {
+	rid := chi.URLParam(r, "rid")
+	if err := a.Store.RepaymentDelete(r.Context(), rid); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	// 删掉一笔还款后重新计算结清状态，避免出现「已结清但仍有欠款」
+	if err := a.resyncSettled(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	w.WriteHeader(204)
+}
+
+// resyncSettled 按「本金 - 已还」自动校正交易的结清标记。
+func (a *API) resyncSettled(ctx context.Context, txID string) error {
+	if txID == "" {
+		return nil
+	}
+	t, err := a.Store.TransactionGet(ctx, txID)
+	if err != nil || t == nil {
+		return nil
+	}
+	remaining := t.AmountFen - t.RepaidFen
+	settled := remaining <= 0
+	if settled == t.Settled {
+		return nil
+	}
+	t.Settled = settled
+	if settled {
+		t.SettledAt = nowLocalStamp()
+	} else {
+		t.SettledAt = ""
+	}
+	return a.Store.TransactionUpdate(ctx, t)
 }
 
 // ===== anniversaries =====
@@ -458,6 +516,14 @@ func (a *API) reminderCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if strings.TrimSpace(rm.Title) == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
+	if strings.TrimSpace(rm.DueAt) == "" {
+		writeErr(w, 400, "due_at required")
+		return
+	}
 	if err := a.Store.ReminderCreate(r.Context(), &rm); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -489,8 +555,27 @@ func (a *API) reminderDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
+// reminderDone 完成一条待办。
+//
+// 纪念日衍生待办的 id 是合成串 "anniv:<anniversary_id>:<date>:<offset>"，
+// 它们并不存在于 reminders 表，走 UPDATE 会静默影响 0 行并返回 204，
+// 用户以为已完成，刷新后又原样出现。这里单独落一条 dismiss 记录。
 func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if strings.HasPrefix(id, "anniv:") {
+		rest := strings.TrimPrefix(id, "anniv:")
+		annivID, occurrence, ok := strings.Cut(rest, ":")
+		if !ok || annivID == "" || occurrence == "" {
+			writeErr(w, 400, "bad anniversary reminder id")
+			return
+		}
+		if err := a.Store.AnniversaryDismiss(r.Context(), annivID, occurrence); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
 	if err := a.Store.ReminderDone(r.Context(), id); err != nil {
 		writeErr(w, 500, err.Error())
 		return

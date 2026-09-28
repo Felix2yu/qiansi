@@ -44,6 +44,10 @@ docker compose up -d
 | `QIANSI_ADDR` | `:8080` | HTTP 监听地址 |
 | `QIANSI_DATA_DIR` | `data` | 数据目录（数据库、上传文件） |
 | `QIANSI_WEB_DIR` | — | 前端静态文件目录（镜像内已固定为 `/app/web/dist`，一般无需设置） |
+| `QIANSI_TOKEN` | — | 访问令牌。设置后 `/api/` 与 `/uploads/` 需要 `Authorization: Bearer <token>`；不设则放行 |
+| `QIANSI_CORS_ORIGINS` | — | 允许跨域的来源，逗号分隔。默认不返回 CORS 头（仅同源可用） |
+
+> 默认配置面向「本机单用户」：不鉴权、不跨域。若要暴露到局域网或公网，请设置 `QIANSI_TOKEN` 并自行加反向代理与 HTTPS。
 
 ## 数据与备份
 
@@ -52,12 +56,13 @@ docker compose up -d
 ```
 data/
 ├── qiansi.db        # SQLite 数据库（WAL 模式，含 -wal/-shm 边车文件）
-└── uploads/         # 上传的图片附件（头像等）
+├── uploads/         # 上传的图片附件（头像等）
+└── backups/         # 归档快照（每日 04:00 自动一份，最多保留 7 份）
 ```
 
 - 目录在启动时自动创建，无需手动初始化
+- 设置页「导出数据库」会生成一份一致性快照（等同于在线热备份），「从备份恢复」会先把当前数据归档再覆盖
 - 冷备份：`docker compose stop` 后直接拷贝 `qiansi.db`（连同 `-wal`/`-shm`，如有）
-- 热备份建议使用 `sqlite3 .backup`，避免拷到写入一半的 WAL
 
 ## 本地开发
 
