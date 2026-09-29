@@ -309,11 +309,14 @@ FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
 	var cat sql.NullString
 	var catID sql.NullInt64
 	var birthdayAnniv sql.NullString
-	if err := row.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
+	// 删除头像时 PersonDetachAttachments 会把该列写成 NULL，不能用裸 string 扫。
+	var avatar sql.NullString
+	if err := row.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &avatar,
 		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat, &birthdayAnniv); err != nil {
 		return nil, err
 	}
 	p.Grade = grade
+	p.AvatarAttachmentID = avatar.String
 	if birthdayAnniv.Valid { p.BirthdayAnniversaryID = birthdayAnniv.String }
 	if catID.Valid {
 		v := int(catID.Int64)
@@ -369,11 +372,13 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 		var grade int
 		var cat sql.NullString
 		var catID sql.NullInt64
-	if err := rows.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &p.AvatarAttachmentID,
-		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
+		var avatar sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &avatar,
+			&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
 			return nil, err
 		}
 		p.Grade = grade
+		p.AvatarAttachmentID = avatar.String
 		if catID.Valid {
 			v := int(catID.Int64)
 			p.CategoryID = &v
