@@ -564,6 +564,11 @@ func vCardToPerson(c *vCard) (*store.Person, []*store.PersonField, bool) {
 		v = strings.TrimSuffix(v, ":ABPerson")
 		p.XAbUID = strings.ToUpper(strings.TrimSpace(v))
 	}
+	// 只有本应用导出的 vcf 带这个属性，iOS 导出的没有，视为未归档
+	if arch := c.get("X-QIANSI-ARCHIVED"); arch != nil {
+		v := strings.ToUpper(strings.TrimSpace(arch.value_()))
+		p.Archived = v == "1" || v == "TRUE"
+	}
 	if len(notes) > 0 {
 		p.Notes = strings.Join(notes, "\n")
 	}
@@ -612,8 +617,11 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 	for _, ep := range existing {
 		seen[key{ep.Name, ep.Phone}] = true
 		if ep.XAbUID != "" {
-			uidToID[ep.XAbUID] = ep.ID
+			uidToID[strings.ToUpper(ep.XAbUID)] = ep.ID
 		}
+		// 导出时 X-ABUID 会回退用 person id（应用内新建的联系人没有 x_abuid），
+		// 所以 id 也认作同一人，否则自家导出回导会把这批人整份复制一遍
+		uidToID[strings.ToUpper(ep.ID)] = ep.ID
 	}
 
 	imported := 0
@@ -633,6 +641,14 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 				if err := a.Store.PersonUpdateNameParts(ctx, id, p.Name, p.FamilyName, p.GivenName); err != nil {
 					writeErr(w, 500, fmt.Sprintf("更新「%s」姓名失败: %v", p.Name, err))
 					return
+				}
+				// 只顺着卡上的标记归档、不反向取消：外来 vcf 没有这个属性，
+				// 反向操作会把用户精心隐藏的企业联系人又放出来
+				if p.Archived {
+					if err := a.Store.PersonArchive(ctx, id); err != nil {
+						writeErr(w, 500, fmt.Sprintf("归档「%s」失败: %v", p.Name, err))
+						return
+					}
 				}
 				updated++
 				continue
@@ -655,8 +671,9 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if p.XAbUID != "" {
-			uidToID[p.XAbUID] = p.ID
+			uidToID[strings.ToUpper(p.XAbUID)] = p.ID
 		}
+		uidToID[strings.ToUpper(p.ID)] = p.ID
 		for _, f := range fields {
 			f.PersonID = p.ID
 			if err := a.Store.PersonFieldUpsert(ctx, f); err != nil {

@@ -147,6 +147,10 @@ func personToVCard(p *store.Person, fields []*store.PersonField) string {
 	if p.Gender == "M" || p.Gender == "F" {
 		iw.b.WriteString("X-GENDER:" + p.Gender + "\r\n")
 	}
+	// 归档状态只有本应用懂：导出带上它，重新导入才不会把隐藏的企业联系人放回列表
+	if p.Archived {
+		iw.b.WriteString("X-QIANSI-ARCHIVED:1\r\n")
+	}
 	if len(noteLines) > 0 {
 		iw.b.WriteString("NOTE:" + escapeVCardValue(strings.Join(noteLines, "\n")) + "\r\n")
 	}
@@ -157,11 +161,13 @@ func personToVCard(p *store.Person, fields []*store.PersonField) string {
 
 func (a *API) peopleExportVCard(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	// 归档只是隐藏不是删除，而导出是唯一备份手段：默认含归档，漏掉就等于丢数据。
+	// ?archived=0 才只要未归档的。
 	list, err := a.Store.PersonList(r.Context(),
 		q.Get("q"),
 		parseIntQuery(r, "category_id", 0),
 		parseIntQuery(r, "grade", 0),
-		q.Get("archived") == "1",
+		q.Get("archived") != "0",
 		parseIntQuery(r, "tag_id", 0),
 		1<<30, 0,
 	)

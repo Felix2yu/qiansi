@@ -365,15 +365,17 @@ func TestVCardAPIExportEmptyAndFilter(t *testing.T) {
 		t.Errorf("X-Export-Count=%q", rec.Header().Get("X-Export-Count"))
 	}
 
-	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "甲一", "phone": "10086"})
-	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "乙二", "phone": "10087"})
+	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "甲一", "phone": "10086", "x_abuid": "ABUID-JIA-1"})
+	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "乙二", "phone": "10087", "x_abuid": "ABUID-YI-2"})
+	// 丙三 没有 x_abuid：导出时 X-ABUID 回退用 person id，回导必须认回同一个人
+	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "丙三", "phone": "10088"})
 
 	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard?q=甲一", nil); !strings.Contains(r.Body.String(), "FN:甲一") || strings.Contains(r.Body.String(), "FN:乙二") {
 		t.Errorf("q 筛选失败:\n%s", r.Body.String())
 	} else if r.Header().Get("X-Export-Count") != "1" {
 		t.Errorf("筛选后计数=%q", r.Header().Get("X-Export-Count"))
 	}
-	// 归档联系人默认被排除，archived=1 时包含
+	// 归档只是隐藏不是删除，导出是备份手段，所以默认含归档；?archived=0 才排除
 	aid := ""
 	lst := vcardBackupDecodeList(t, s.do(http.MethodGet, "/api/v1/people/?q=乙二", nil))
 	if len(lst) == 1 {
@@ -382,11 +384,25 @@ func TestVCardAPIExportEmptyAndFilter(t *testing.T) {
 	if r := s.do(http.MethodPost, "/api/v1/people/"+aid+"/archive", nil); r.Code != 204 {
 		t.Fatalf("archive => %d", r.Code)
 	}
-	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard", nil); strings.Contains(r.Body.String(), "FN:乙二") {
-		t.Errorf("默认导出不应包含归档联系人:\n%s", r.Body.String())
+	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard", nil); !strings.Contains(r.Body.String(), "FN:乙二") {
+		t.Errorf("默认导出应包含归档联系人:\n%s", r.Body.String())
+	} else if !strings.Contains(r.Body.String(), "X-QIANSI-ARCHIVED:1") {
+		t.Errorf("归档联系人应带 X-QIANSI-ARCHIVED 标记:\n%s", r.Body.String())
 	}
-	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard?archived=1", nil); !strings.Contains(r.Body.String(), "FN:乙二") {
-		t.Errorf("archived=1 导出应包含归档联系人:\n%s", r.Body.String())
+	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard?archived=0", nil); strings.Contains(r.Body.String(), "FN:乙二") {
+		t.Errorf("archived=0 不应包含归档联系人:\n%s", r.Body.String())
+	}
+	// 导出→回导往返：归档状态要保得住，否则隐藏的记录会重新出现在列表里
+	exported := s.do(http.MethodGet, "/api/v1/people/export/vcard", nil).Body.String()
+	if r := s.do(http.MethodPost, "/api/v1/people/import/vcard", map[string]any{"text": exported}); r.Code != 200 {
+		t.Fatalf("回导失败 => %d %s", r.Code, r.Body.String())
+	}
+	after := vcardBackupDecodeList(t, s.do(http.MethodGet, "/api/v1/people/?archived=1&q=乙二", nil))
+	if len(after) != 1 || after[0]["archived"] != true {
+		t.Errorf("回导后应仍为归档: %v", after)
+	}
+	if all := vcardBackupDecodeList(t, s.do(http.MethodGet, "/api/v1/people/?archived=1", nil)); len(all) != 3 {
+		t.Errorf("回导不应产生重复记录: %v", all)
 	}
 	// 非法整型查询参数走默认值而不是报错
 	if r := s.do(http.MethodGet, "/api/v1/people/export/vcard?category_id=abc&grade=x&tag_id=9", nil); r.Code != 200 {
