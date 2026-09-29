@@ -425,6 +425,34 @@ func TestAPIPeopleArchiveUnarchive(t *testing.T) {
 	apiWantStatus(t, http.MethodDelete, "unarchive unknown", s.do(http.MethodDelete, "/api/v1/people/ghost/archive", nil), http.StatusNoContent)
 }
 
+func TestAPIPeopleListArchivedOnly(t *testing.T) {
+	s := newTestServer(t)
+
+	keep := apiCreatePersonMap(t, s, map[string]any{"name": "在册人"})["id"].(string)
+	gone := apiCreatePersonMap(t, s, map[string]any{"name": "隐藏人"})["id"].(string)
+	if r := s.do(http.MethodPost, "/api/v1/people/"+gone+"/archive", nil); r.Code != http.StatusNoContent {
+		t.Fatalf("archive => %d: %s", r.Code, r.Body.String())
+	}
+	def := apiNames(t, apiArray(s, "/api/v1/people/"))
+	if !def["在册人"] {
+		t.Fatalf("默认列表缺少未归档联系人 %q (创建返回 id=%s)", "在册人", keep)
+	}
+	if def["隐藏人"] {
+		t.Errorf("默认列表不该出现归档联系人: %v", def)
+	}
+	// 「已归档」筛选页：只翻被隐藏掉的人，好把他们找回来
+	only := apiNames(t, apiArray(s, "/api/v1/people/?archived=only"))
+	if !only["隐藏人"] {
+		t.Errorf("archived=only 应含归档联系人: %v", only)
+	}
+	if only["在册人"] {
+		t.Errorf("archived=only 混进了未归档的人: %v", only)
+	}
+	if n := len(only); n != 1 {
+		t.Errorf("archived=only 条数 = %d, want 1", n)
+	}
+}
+
 func TestAPIPeopleMerge(t *testing.T) {
 	s := newTestServer(t)
 	ctx := context.Background()

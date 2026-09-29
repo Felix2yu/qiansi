@@ -344,13 +344,25 @@ FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
 }
 
 func (s *Store) PersonList(ctx context.Context, q string, categoryID, grade int, archived bool, tagID int, limit, offset int) ([]*Person, error) {
+	return s.queryPeople(ctx, q, categoryID, grade, archived, false, tagID, limit, offset)
+}
+
+// PersonArchivedOnly 只翻已归档的人物，供列表页的「已归档」筛选使用。
+func (s *Store) PersonArchivedOnly(ctx context.Context, q string, categoryID, grade, tagID, limit, offset int) ([]*Person, error) {
+	return s.queryPeople(ctx, q, categoryID, grade, false, true, tagID, limit, offset)
+}
+
+func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int, includeArchived, onlyArchived bool, tagID, limit, offset int) ([]*Person, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	var cond []string
 	var args []any
 	cond = append(cond, "1=1")
-	if !archived {
+	switch {
+	case onlyArchived:
+		cond = append(cond, "p.archived=1")
+	case !includeArchived:
 		cond = append(cond, "p.archived=0")
 	}
 	if q != "" {

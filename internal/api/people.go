@@ -100,16 +100,29 @@ func (a *API) personMerge(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) peopleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	archived := q.Get("archived") == "1"
-	list, err := a.Store.PersonList(r.Context(),
-		q.Get("q"),
-		parseIntQuery(r, "category_id", 0),
-		parseIntQuery(r, "grade", 0),
-		archived,
-		parseIntQuery(r, "tag_id", 0),
-		parseIntQuery(r, "limit", 50),
-		parseIntQuery(r, "offset", 0),
-	)
+	var list []*store.Person
+	var err error
+	if q.Get("archived") == "only" {
+		// 列表页的「已归档」筛选：只看被隐藏掉的人，好把他们找回来
+		list, err = a.Store.PersonArchivedOnly(r.Context(),
+			q.Get("q"),
+			parseIntQuery(r, "category_id", 0),
+			parseIntQuery(r, "grade", 0),
+			parseIntQuery(r, "tag_id", 0),
+			parseIntQuery(r, "limit", 50),
+			parseIntQuery(r, "offset", 0),
+		)
+	} else {
+		list, err = a.Store.PersonList(r.Context(),
+			q.Get("q"),
+			parseIntQuery(r, "category_id", 0),
+			parseIntQuery(r, "grade", 0),
+			q.Get("archived") == "1",
+			parseIntQuery(r, "tag_id", 0),
+			parseIntQuery(r, "limit", 50),
+			parseIntQuery(r, "offset", 0),
+		)
+	}
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
