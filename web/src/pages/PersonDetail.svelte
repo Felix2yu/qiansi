@@ -5,6 +5,7 @@
            type PersonField, type TrendPoint } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import PersonRelEditor from '../lib/PersonRelEditor.svelte'
+  import EventForm from '../lib/EventForm.svelte'
   import { navigate } from '../lib/router'
   import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload } from '@lucide/svelte'
 
@@ -22,10 +23,41 @@
   let words = $state<{ word: string; count: number }[]>([])
   let avatarInput: HTMLInputElement | undefined = $state()
   let uploadingAvatar = $state(false)
-  // 快捷记录：不用离开详情页就能补一条往来 / 一笔钱 / 一句话
-  let quick = $state<'' | 'event' | 'money' | 'memo'>('')
+  // 快捷记录：不用离开详情页就能补一笔钱 / 一句话；往来走完整表单（可改日期、地点、礼物）
+  let quick = $state<'' | 'money' | 'memo'>('')
   let quickText = $state('')
   let quickAmount = $state('')
+  // 往来表单：复用往来页的新建/编辑框
+  let showEventForm = $state(false)
+  let eventEditId = $state('')
+  // 预填对象引用保持稳定，表单组件只在打开时读取，变动会重置已填内容
+  let eventPreset = $state<{ event_date?: string; participant_ids?: string[] }>({})
+
+  function openEventForm(editId = '') {
+    eventPreset = { event_date: todayLocal(), participant_ids: [id] }
+    eventEditId = editId
+    showEventForm = true
+  }
+  function closeEventForm() {
+    showEventForm = false
+    eventEditId = ''
+  }
+  async function afterEventForm() {
+    closeEventForm()
+    await load()
+    await loadWords()
+  }
+  async function removeEvent(eventId: string, title: string, expenseFen?: number) {
+    const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
+    if (!confirm(`确定删除「${title}」吗？${tail}`)) return
+    try {
+      await API.delete(`/api/v1/events/${eventId}`)
+    } catch (err: any) {
+      alert('删除失败：' + (err?.message || err))
+      return
+    }
+    await afterEventForm()
+  }
 
   async function loadWords() {
     try {
@@ -76,10 +108,7 @@
     if (!quick) return
     const text = quickText.trim()
     try {
-      if (quick === 'event') {
-        if (!text) { alert('请填写往来标题'); return }
-        await API.post('/api/v1/events', { title: text, event_date: todayLocal(), participant_ids: [id] })
-      } else if (quick === 'money') {
+      if (quick === 'money') {
         const fen = toFen(quickAmount)
         if (fen <= 0) { alert('请填写金额（元）'); return }
         await API.post('/api/v1/transactions', {
@@ -212,14 +241,14 @@
     <section class="rounded-xl p-4" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-xs" style="color: var(--q-muted);">快捷记录</span>
-        <button class="text-xs px-2 py-1 rounded-md" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => (quick = quick === 'event' ? '' : 'event')}>记一次往来</button>
+        <button class="text-xs px-2 py-1 rounded-md" style="background: var(--q-theme); color: white; border: 1px solid var(--q-theme);" onclick={() => openEventForm()}>记一次往来（完整）</button>
         <button class="text-xs px-2 py-1 rounded-md" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => (quick = quick === 'money' ? '' : 'money')}>记一笔钱</button>
         <button class="text-xs px-2 py-1 rounded-md" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => (quick = quick === 'memo' ? '' : 'memo')}>记一句话</button>
       </div>
       {#if quick}
         <div class="flex gap-2 mt-3">
           <input bind:value={quickText} class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-                 placeholder={quick === 'event' ? '往来标题，如 一起吃饭' : quick === 'memo' ? 'TA 说了什么' : '用途，如 借款'} />
+                 placeholder={quick === 'memo' ? 'TA 说了什么' : '用途，如 借款'} />
           {#if quick === 'money'}
             <input type="number" step="0.01" min="0" bind:value={quickAmount} class="w-28 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="金额（元）" />
           {/if}
@@ -281,7 +310,11 @@
     {/if}
 
     <section>
-      <h2 class="text-sm font-medium mb-3">时间线</h2>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-medium">时间线</h2>
+        <button class="flex items-center gap-1 text-xs px-2 py-1 rounded-md" style="background: var(--q-theme); color: white;"
+                onclick={() => openEventForm()}><Plus size={13} /> 新建往来</button>
+      </div>
       {#if timeline.length === 0}
         <div class="rounded-lg p-6 text-center text-sm" style="color: var(--q-muted); background: var(--q-surface); border: 1px dashed var(--q-border);">暂无记录</div>
       {:else}
@@ -293,7 +326,13 @@
               {:else if t.type === 'transaction'}<div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background: #ef4444;"></div>
               {:else}<div class="w-2 h-2 rounded-full mt-2 shrink-0" style="background: #6366f1;"></div>{/if}
               <div class="flex-1 min-w-0">
-                <div class="text-sm">{t.title}</div>
+                <div class="flex items-start justify-between gap-2">
+                  <div class="text-sm">{t.title}</div>
+                  {#if t.type === 'event'}
+                    <button class="text-xs px-2 py-0.5 rounded shrink-0" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+                            onclick={() => openEventForm(t.id)}>编辑</button>
+                  {/if}
+                </div>
                 <div class="text-xs mt-0.5" style="color: var(--q-muted);">
                   {TIMELINE_LABEL[t.type] || t.type} · {new Date(t.date).toLocaleDateString()}
                 </div>
@@ -317,6 +356,20 @@
         <button onclick={() => (showEdit = false)}><X size={18} /></button>
       </div>
       <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load() }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
+    </div>
+  </div>
+{/if}
+
+{#if showEventForm}
+  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
+    <button type="button" aria-label="关闭弹窗" class="absolute inset-0 cursor-default" style="background: rgba(0,0,0,0.3); border: 0;" onclick={closeEventForm}></button>
+    <div class="relative w-full max-w-lg max-h-[90vh] overflow-auto rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold">{eventEditId ? '编辑往来' : '新建往来'}</h2>
+        <button onclick={closeEventForm}><X size={18} /></button>
+      </div>
+      <EventForm editId={eventEditId} preset={eventPreset}
+                 onsave={afterEventForm} oncancel={closeEventForm} onremove={removeEvent} />
     </div>
   </div>
 {/if}
