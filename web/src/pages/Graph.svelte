@@ -51,7 +51,7 @@
       legend: [{ data: categories.map(c => c.name) }],
       series: [{
         type: 'graph', layout: 'force', roam: true, draggable: true,
-        // 从一个节点拖到另一个节点即发起连线，落下后由 graphEdge 事件接手
+        // 从一个节点拖到另一个节点即发起连线
         editable: true,
         force: { repulsion: 250, edgeLength: 120 },
         emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
@@ -61,6 +61,7 @@
         categories, data: nodes, links,
       }]
     })
+    // 尚未生效：echarts 5/6 都没有 graphEdge 这个事件名，图上拖拽连线还没接通
     chart.on('graphEdge', (p: any) => {
       const to = p?.targetNode?.id
       const from = p?.targetNodeEdge?.source
@@ -108,7 +109,7 @@
   <header class="flex flex-wrap items-start justify-between gap-3">
     <div>
       <h1 class="text-2xl font-semibold">关系图</h1>
-      <p class="text-sm mt-1" style="color: var(--q-muted);">从一个人物拖到另一个人物即可连线 · 点击节点进入详情维护关系</p>
+      <p class="text-sm mt-1" style="color: var(--q-muted);">点击节点进入详情维护关系</p>
     </div>
     <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => openForm()}>
       <Plus size={14} /> 添加关系
