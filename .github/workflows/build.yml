@@ -94,6 +94,10 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           files: coverage.xml
+          # 关掉自动搜索：否则 CLI 会把 coverage.out 也一起上报，
+          # 而 Go 原生格式没有文件路径，codecov.yml 里排除 internal/testdb 的
+          # ignore 规则对它无效，0% 的测试辅助包会被算进总分。
+          disable_search: true
           flags: backend
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
