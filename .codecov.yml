@@ -1,0 +1,52 @@
+# Codecov 配置：仓库只有 Go 后端有测试，前端（web/）暂无测试框架，
+# 不纳入统计口径，否则总分永远被 0% 的前端拖住。
+codecov:
+  notify:
+    wait_for_ci: true
+
+coverage:
+  precision: 1
+  round: down
+  # 总体达标线：与 scripts/coverage.sh、CI 同一口径。
+  status:
+    project:
+      default:
+        target: 80%
+        # 覆盖率先跌后涨时不必刷屏；真实下降超过 1% 仍然会报。
+        threshold: 1%
+        base: auto
+    patch:
+      default:
+        # 新增/改动的代码必须基本被测到，避免靠存量高分掩盖新写的无测试代码。
+        target: 80%
+    changes:
+      default:
+        target: 80%
+
+ignore:
+  - "web"
+  - "docs"
+  - "scripts"
+  # 仅为其他包的测试建库，自身不含被测逻辑。
+  - "internal/testdb"
+
+flags:
+  backend:
+    paths:
+      - internal
+      - cmd
+    carryforward: false
+
+comment:
+  # 只在 PR 上留一次总结，不逐 commit 刷屏。
+  behavior: default
+  layout: "reach, diff, flags, files"
+  require_changes: true
+  require_head: true
+
+component_management:
+  individual_components:
+    - component_id: internal
+      name: 后端
+      paths:
+        - internal/**

@@ -55,11 +55,11 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
 
-      # 纯函数单测（目前 internal/ 暂无测试用例，此步作为编译期闸门保留）。
-      - name: 后端单元测试
-        run: go test ./internal/...
+      # 单测跑一次即产出覆盖率剖面；80% 的底线由 scripts/coverage.sh 在本地/CI 把关，
+      # PR 上的增量检查（patch status）交给 codecov。
+      - name: 后端单元测试（含覆盖率）
+        run: go test ./internal/... -count=1 -covermode=atomic -coverprofile=coverage.out
 
-      # 确保整套代码（含 cmd/server）能编译通过。
       - name: 后端编译检查
         run: go build ./...
 
@@ -75,6 +75,28 @@ jobs:
       - name: 前端类型检查与构建
         run: npm run build
         working-directory: web
+
+      # 预装转换器：coverage.sh 会优先用 PATH 上的 gocover-cobertura，
+      # 避免运行时 go run @latest 依赖一次额外的模块下载。
+      - name: 安装 gocover-cobertura
+        run: go install github.com/boumenot/gocover-cobertura@latest
+
+      # Go 原生 coverage.out 不带文件路径信息，codecov.yml 的 ignore 规则对它无效
+      # （testdb 这种 0% 的测试辅助包会被算进去拖低总分），所以转成 Cobertura 再上传。
+      # 复用测试已经产出的 coverage.out：脚本里的 go test 命中构建缓存，不会重跑一遍。
+      - name: 生成 Cobertura 覆盖率报告
+        run: ./scripts/coverage.sh
+
+      # codecov 是报告服务，不是构建闸门：token 未配置或上传失败都不应让 CI 变红，
+      # 80% 的硬约束在上面的 coverage.sh 与 codecov.yml 的 PR 状态检查里。
+      - name: 上传覆盖率到 Codecov
+        if: always()
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage.xml
+          flags: backend
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   # 每个架构在自己的原生 runner 上构建：arm64 走到 QEMU 模拟的话，
   # 镜像里那次 Go 编译会被拖慢好几倍，而 arm64 runner 对公开仓库是免费的。

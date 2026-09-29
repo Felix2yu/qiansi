@@ -12,6 +12,10 @@ web/dist/
 # build artifacts
 /qiansi
 
+# coverage outputs (scripts/coverage.sh)
+coverage.out
+coverage.xml
+
 # tooling / editor state
 .trae/
 .workbuddy/

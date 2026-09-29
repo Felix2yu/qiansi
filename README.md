@@ -1,5 +1,8 @@
 # 牵丝 (Qiansi)
 
+[![测试与构建](https://github.com/Felix2yu/qiansi/actions/workflows/build.yml/badge.svg)](https://github.com/Felix2yu/qiansi/actions/workflows/build.yml)
+[![codecov](https://codecov.io/gh/Felix2yu/qiansi/branch/main/graph/badge.svg)](https://codecov.io/gh/Felix2yu/qiansi)
+
 自托管的人情往来与关系管理应用。记录身边的人、发生过的事、欠着的人情——单个 Go 二进制 + 内嵌 SQLite，开箱即用。
 
 ## 功能
@@ -78,6 +81,7 @@ go run ./cmd/server
 
 - 后端接口统一挂在 `/api/v1/` 下，健康检查：`GET /api/v1/health`
 - 测试：`go test ./...`
+- 覆盖率：`./scripts/coverage.sh`（产出 `coverage.out` 与 `coverage.xml`，低于 80% 时脚本非零退出，与 codecov 的项目状态检查同一条线）
 - 仓库根目录自带的 `docker-compose.yml` 使用 `build: .` 从源码构建镜像；想直接用预构建镜像请替换为上面的 `image:` 写法
 
 ## 技术栈
