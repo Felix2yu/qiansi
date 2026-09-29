@@ -145,7 +145,7 @@
           <div class="text-sm font-medium truncate">{personName(t.person_id)}{t.title && ` · ${t.title}`}</div>
           <div class="text-xs mt-0.5" style="color: var(--q-muted);">
             ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} · {DIRECTION_LABEL[t.direction] || t.direction} · {new Date(t.occurred_at).toLocaleDateString()}
-            {t.settled && ' · 已结清'}
+            {t.settled ? ' · 已结清' : ''}
             {#if !t.settled && (t.repaid_fen || 0) > 0}· 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(remaining(t))}{/if}
             {t.event_title && ` · 关联事件：${t.event_title}`}
           </div>

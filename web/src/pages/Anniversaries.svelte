@@ -89,8 +89,8 @@
           <div class="text-sm font-medium truncate">{a.title}</div>
           <div class="text-xs mt-0.5" style="color: var(--q-muted);">
             {a.person_name && `${a.person_name} · `}
-            {a.is_lunar && '农历 '}{displayDate(a)}
-            {a.repeat_yearly && ' · 每年循环'}
+            {a.is_lunar ? '农历 ' : ''}{displayDate(a)}
+            {a.repeat_yearly ? ' · 每年循环' : ''}
           </div>
         </div>
         {#if cd}
