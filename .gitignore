@@ -8,6 +8,7 @@ data/
 # frontend
 node_modules/
 web/dist/
+web/.svelte-check/
 
 # build artifacts
 /qiansi
