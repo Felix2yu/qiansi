@@ -55,6 +55,19 @@
     const d = new Date(a.date)
     return a.repeat_yearly ? `${d.getMonth() + 1}月${d.getDate()}日` : d.toLocaleDateString()
   }
+
+  /** 角标显示下一次发生的月日（循环/农历项取后端换算后的公历日期） */
+  function badgeDate(a: Anniversary) {
+    const d = new Date(a.next_date || a.date)
+    return { m: d.getMonth() + 1, d: d.getDate() }
+  }
+
+  /** 倒计时文案；null 表示不展示 chip */
+  function countdownLabel(a: Anniversary): string | null {
+    if (a.days_until == null) return a.repeat_yearly ? null : '已过'
+    if (a.days_until === 0) return '今天'
+    return `${a.days_until} 天`
+  }
 </script>
 <div class="space-y-4">
   <header class="flex items-center justify-between">
@@ -65,10 +78,12 @@
   </header>
   <ul class="space-y-2">
     {#each list as a}
+      {@const bd = badgeDate(a)}
+      {@const cd = countdownLabel(a)}
       <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
         <div class="w-10 h-10 rounded-lg flex flex-col items-center justify-center text-white shrink-0" style="background: var(--q-theme);">
-          <div class="text-[10px] leading-none">{new Date(a.date).getMonth()+1}月</div>
-          <div class="text-base font-semibold leading-none mt-0.5">{new Date(a.date).getDate()}</div>
+          <div class="text-[10px] leading-none">{bd.m}月</div>
+          <div class="text-base font-semibold leading-none mt-0.5">{bd.d}</div>
         </div>
         <div class="flex-1 min-w-0">
           <div class="text-sm font-medium truncate">{a.title}</div>
@@ -78,6 +93,12 @@
             {a.repeat_yearly && ' · 每年循环'}
           </div>
         </div>
+        {#if cd}
+          <span class="text-xs px-2 py-0.5 rounded-full shrink-0"
+            style={a.days_until != null && a.days_until <= 7
+              ? 'background: var(--q-theme); color: #fff;'
+              : 'background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);'}>{cd}</span>
+        {/if}
         <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => openEdit(a)}>编辑</button>
         <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(a)}>删</button>
       </li>

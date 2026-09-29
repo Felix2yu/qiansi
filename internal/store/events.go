@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/qiansi/app/internal/lunar"
+
 	"github.com/google/uuid"
 	qiansiLunar "github.com/qiansi/app/internal/lunar"
 )
@@ -488,6 +490,10 @@ type Anniversary struct {
 	RemindDays   string `json:"remind_days"`
 	CreatedAt    string `json:"created_at"`
 	PersonName   string `json:"person_name,omitempty"`
+	// NextDate 下一次发生的公历日期（YYYY-MM-DD）；每年循环/农历项由后端计算。
+	// DaysUntil 为 nil 表示无下一次（不循环且已过）。
+	NextDate  string `json:"next_date,omitempty"`
+	DaysUntil *int   `json:"days_until,omitempty"`
 }
 
 func (s *Store) AnniversaryCreate(ctx context.Context, a *Anniversary) error {
@@ -516,7 +522,7 @@ func (s *Store) AnniversaryDelete(ctx context.Context, id string) error {
 
 func (s *Store) AnniversaryList(ctx context.Context) ([]*Anniversary, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,a.created_at,p.name
-FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id ORDER BY a.date`)
+FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id`)
 	if err != nil { return nil, err }
 	defer rows.Close()
 	list := []*Anniversary{}
@@ -530,7 +536,45 @@ FROM anniversaries a LEFT JOIN people p ON p.id=a.person_id ORDER BY a.date`)
 		if personName.Valid { a.PersonName = personName.String }
 		list = append(list, a)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil { return nil, err }
+
+	// 计算下一次发生日期与倒计时，并按「即将到来在前、已过在后」排序。
+	today := lunar.NowLocal()
+	for _, a := range list {
+		d := lunar.ParseDate(a.Date)
+		if d.Year == 0 || d.Month < 1 || d.Day < 1 {
+			continue // 日期异常，跳过
+		}
+		if a.RepeatYearly {
+			next := lunar.NextOccurrence(d, a.IsLunar, today)
+			a.NextDate = next.String()
+			n := lunar.DaysBetween(today, next)
+			a.DaysUntil = &n
+		} else {
+			next := lunar.YMD{Year: d.Year, Month: d.Month, Day: d.Day}
+			if !next.Before(today) {
+				a.NextDate = next.String()
+				n := lunar.DaysBetween(today, next)
+				a.DaysUntil = &n
+			}
+			// 不循环且已过：NextDate/DaysUntil 为空，排在最后
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		di, dj := list[i].DaysUntil, list[j].DaysUntil
+		switch {
+		case di != nil && dj != nil:
+			if *di != *dj { return *di < *dj }
+			return list[i].Date < list[j].Date
+		case di != nil:
+			return true
+		case dj != nil:
+			return false
+		default:
+			return list[i].Date < list[j].Date
+		}
+	})
+	return list, nil
 }
 
 // ===== Reminders =====
