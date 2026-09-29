@@ -34,9 +34,9 @@
       selectedIds = [...new Set([...selectedIds, ...list.map((p) => p.id)])]
     }
   }
-  function exitSelectMode() {
-    selectMode = false
-    selectedIds = []
+  function toggleSelectMode() {
+    selectMode = !selectMode
+    if (!selectMode) selectedIds = []
   }
   async function deleteSelected() {
     if (selectedIds.length === 0) return
@@ -169,7 +169,7 @@
       </button>
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
               style={selectMode ? 'background: var(--q-theme); border: 1px solid var(--q-theme); color: #fff;' : 'background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);'}
-              onclick={exitSelectMode}>
+              onclick={toggleSelectMode}>
         {selectMode ? '退出选择' : '批量'}
       </button>
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={openCreate}>
