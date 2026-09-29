@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: Felix2yu/.github/.github/workflows/reusable-test.yml@v1
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      go-dir: .
+      test-packages: ./internal/...
+      web-dir: web
+      web-install-flags: --legacy-peer-deps
+      codecov-disable-search: true
+
+  image:
+    needs: test
+    if: github.event_name != 'release'
+    permissions:
+      contents: read
+      packages: write
+    uses: Felix2yu/.github/.github/workflows/reusable-image.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/server
+      binary-name: qiansi
+      image-name: ghcr.io/felix2yu/qiansi
+      web-dir: web
+      web-install-flags: --legacy-peer-deps
+      # 前端不打进二进制：运行时由 QIANSI_WEB_DIR 指向 /app/web/dist，
+      # 产物统一摆到仓库根 dist/ 供 Dockerfile COPY
+      frontend-stage-command: |
+        mkdir -p dist
+        cp -R web/dist/. dist/
+
+  release:
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    uses: Felix2yu/.github/.github/workflows/reusable-release.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/server
+      binary-name: qiansi
+      web-dir: web
+      web-install-flags: --legacy-peer-deps
+      frontend-stage-command: |
+        mkdir -p dist
+        cp -R web/dist/. dist/
+      # 二进制不含前端，单独把静态资源打成 zip 一并发布
+      pre-build-command: python3 -c "import shutil; shutil.make_archive('dist/web-dist','zip','web/dist')"
+      extra-files: dist/web-dist.zip
