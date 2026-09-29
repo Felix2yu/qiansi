@@ -26,19 +26,29 @@
     const r = await API.get('/api/v1/relationships') as any
     people = r.people
     rels = r.relationships
-    draw()
   }
+
+  // chartDiv 要等 {#if} 走到有图的那一支才绑定上，load() 里同步画会拿到 null；
+  // 交给 effect，数据或容器就绪后再画。
+  $effect(() => {
+    if (chartDiv && people.length > 0) draw()
+  })
 
   function draw() {
     if (!chartDiv) return
     chart?.dispose()
     chart = echarts.init(chartDiv)
-    const nodes = people.map(p => ({ id: p.id, name: p.name, category: p.category_id || 0, symbolSize: 14 + p.grade * 4 }))
+    // node.category 是 categories 的下标而不是圈子 id；少了 categories 时节点会整个不画，
+    // 所以先把用到的圈子编号映射成连续下标，再按同一顺序生成 categories。
+    const catIds = Array.from(new Set(people.map(p => p.category_id || 0))).sort((a, b) => a - b)
+    const catIndex = new Map(catIds.map((c, i) => [c, i]))
+    const categories = catIds.map(c => ({ name: '圈子' + c }))
+    const nodes = people.map(p => ({ id: p.id, name: p.name, category: catIndex.get(p.category_id || 0)!, symbolSize: 14 + p.grade * 4 }))
     const links = rels.map(r => ({ source: r.from_person_id, target: r.to_person_id, label: { show: true, formatter: r.type, fontSize: 10, color: '#94a3b8' } }))
     chart.setOption({
       // editable 下 tooltip 会挡住拖拽的手柄，关掉
       tooltip: { show: false },
-      legend: [{ data: Array.from(new Set(people.map(p => p.category_id || 0))).map(c => ({ name: '圈子' + c })) }],
+      legend: [{ data: categories.map(c => c.name) }],
       series: [{
         type: 'graph', layout: 'force', roam: true, draggable: true,
         // 从一个节点拖到另一个节点即发起连线，落下后由 graphEdge 事件接手
@@ -48,7 +58,7 @@
         lineStyle: { color: 'source', curveness: 0.1, opacity: 0.7 },
         label: { show: true, fontSize: 12 },
         edgeLabel: { position: 'middle' },
-        data: nodes, links,
+        categories, data: nodes, links,
       }]
     })
     chart.on('graphEdge', (p: any) => {
