@@ -29,9 +29,9 @@ export type Person = {
   nickname?: string; gender?: string;
   birthday?: string; birthday_is_lunar?: boolean; avatar_attachment_id?: string;
   phone?: string; wechat?: string; location?: string; notes?: string;
-  grade: number; category_id?: number; archived?: boolean;
+  grade: number; category_ids?: number[]; categories?: PersonCategory[]; archived?: boolean;
   created_at: string; updated_at: string;
-  category_name?: string; intimacy?: number
+  intimacy?: number
 }
 export type Event = { id: string; title: string; type_id?: number; type_name?: string; type_color?: string; event_date: string; location?: string; locations?: string[]; has_gift?: boolean; gift?: string; summary?: string; created_at: string; updated_at: string; participants?: Person[]; expense_fen?: number; expense_person_id?: string; expenses?: Transaction[] }
 export type Memo = { id: string; person_id?: string; speaker: string; content: string; said_at: string; is_promise: boolean; due_date?: string; status: string; created_at: string }
@@ -39,6 +39,8 @@ export type Transaction = { id: string; person_id: string; kind: string; directi
 export type Anniversary = { id: string; person_id?: string; title: string; date: string; is_lunar: boolean; repeat_yearly: boolean; remind_days: string; created_at: string; person_name?: string; next_date?: string; days_until?: number | null }
 export type Reminder = { id: string; person_id?: string; ref_type: string; ref_id?: string; title: string; due_at: string; status: string; created_at: string; completed_at?: string; person_name?: string }
 export type Category = { id: number; name: string; color: string; icon: string; sort_order: number }
+/** 挂在人头上的圈子（读路径），颜色用来在列表和图谱上认圈子 */
+export type PersonCategory = { id: number; name: string; color: string }
 export type Tag = { id: number; name: string; color: string }
 export type EventType = { id: number; name: string; color: string; icon: string; is_default: boolean; sort_order: number }
 export type Dashboard = { total_people: number; total_events: number; upcoming_days7: number; due_today: number; lend_fen: number; borrow_fen: number; pending_promises: number }

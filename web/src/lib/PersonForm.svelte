@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import { API, type Person, type Category, type Tag } from './api'
   import PersonRelEditor from './PersonRelEditor.svelte'
 
@@ -22,7 +23,7 @@
   type Form = {
     family_name: string; given_name: string; nickname: string; gender: string; grade: number; birthday: string
     birthday_is_lunar: boolean; phone: string; wechat: string; location: string
-    notes: string; category_id: number
+    notes: string
   }
 
   // 复姓表：编辑只有单一显示名的旧数据时用于正确拆分
@@ -60,6 +61,7 @@
 
   let form = $state<Form>(emptyForm())
   let selectedTags = $state<number[]>([])
+  let selectedCats = $state<number[]>([])
   let saving = $state(false)
   // 同名 / 同手机号 / 同微信的疑似重复记录
   let dups = $state<Person[]>([])
@@ -81,7 +83,7 @@
   }
 
   function emptyForm(): Form {
-    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', category_id: 0 }
+    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '' }
   }
 
   // 人物对象变化（切换编辑目标）时重新灌入表单与标签
@@ -93,8 +95,11 @@
         nickname: p.nickname || '', gender: p.gender || '', grade: p.grade,
         birthday: p.birthday || '', birthday_is_lunar: !!p.birthday_is_lunar,
         phone: p.phone || '', wechat: p.wechat || '', location: p.location || '',
-        notes: p.notes || '', category_id: p.category_id || 0,
+        notes: p.notes || '',
       }
+      // untrack：这个 effect 里要回写 form，把 p.categories 也记成依赖会自触发，
+      // 弹窗一打开就无限重跑（表现为 taggings/of 请求风暴）。
+      selectedCats = untrack(() => (p.categories || []).map(c => c.id))
       // 旧数据没有姓/名结构：按启发式拆分回填，拆错可手动改
       if (!p.family_name && !p.given_name && p.name) {
         form = { ...form, ...splitName(p.name) }
@@ -103,6 +108,7 @@
     } else {
       form = emptyForm()
       selectedTags = []
+      selectedCats = []
     }
   })
 
@@ -117,6 +123,10 @@
 
   function toggleTag(id: number) {
     selectedTags = selectedTags.includes(id) ? selectedTags.filter(x => x !== id) : [...selectedTags, id]
+  }
+
+  function toggleCat(id: number) {
+    selectedCats = selectedCats.includes(id) ? selectedCats.filter(x => x !== id) : [...selectedCats, id]
   }
 
   // 合并：把疑似重复的那条并进当前正在编辑的人物
@@ -137,7 +147,8 @@
     saving = true
     try {
       const body: any = { ...form, name: composedName().trim() }
-      if (!body.category_id) delete body.category_id
+      // 圈子可多选，随整行 PUT 一起提交；空数组即「不归入任何圈子」
+      body.category_ids = selectedCats
       let saved: Person
       if (person?.id) {
         saved = await API.put(`/api/v1/people/${person.id}`, body) as Person
@@ -221,10 +232,22 @@
               onclick={() => form.grade = 0}>清除</button>
     </div>
   </div>
-  <select bind:value={form.category_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-    <option value={0}>不归入圈子</option>
-    {#each categories as c}<option value={c.id}>{c.name}</option>{/each}
-  </select>
+  <div>
+    <div class="text-xs mb-1" style="color: var(--q-muted);">圈子（可多选）</div>
+    {#if categories.length > 0}
+      <div class="flex flex-wrap gap-1">
+        {#each categories as c}
+          <button class="text-xs px-2 py-1 rounded-full transition"
+                  style={selectedCats.includes(c.id)
+                    ? `background: color-mix(in srgb, ${c.color} 22%, transparent); color: ${c.color}; border: 1px solid ${c.color};`
+                    : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
+                  onclick={() => toggleCat(c.id)}>{c.name}</button>
+        {/each}
+      </div>
+    {:else}
+      <p class="text-xs" style="color: var(--q-muted);">还没有圈子，去「设置 › 圈子（分组）」建一个。</p>
+    {/if}
+  </div>
   {#if tags.length > 0}
     <div>
       <div class="text-xs mb-1" style="color: var(--q-muted);">标签</div>

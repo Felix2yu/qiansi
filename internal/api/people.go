@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ func (a *API) registerPeople(r chi.Router) {
 		r.Get("/", a.peopleList)
 		r.Get("/count", a.peopleCount)
 		r.Post("/", a.peopleCreate)
+		r.Post("/bulk-categories", a.peopleBulkCategories)
 		r.Post("/import/vcard", a.peopleImportVCard)
 		r.Get("/export/vcard", a.peopleExportVCard)
 		r.Get("/{id}", a.peopleGet)
@@ -274,6 +276,29 @@ func (a *API) peopleDeleteBulk(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"deleted": deleted})
 }
 
+// peopleBulkCategories 批量把选中的人加进若干圈子：{"ids":[…],"category_ids":[…]}。
+// 只增不减——移出圈子仍回到各自的编辑弹窗，批量误删的代价太高。
+func (a *API) peopleBulkCategories(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs         []string `json:"ids"`
+		CategoryIDs []int    `json:"category_ids"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if len(body.IDs) == 0 || len(body.CategoryIDs) == 0 {
+		writeErr(w, 400, "ids 与 category_ids 均不能为空")
+		return
+	}
+	added, err := a.Store.PeopleAddCategories(r.Context(), body.IDs, body.CategoryIDs)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"added": added})
+}
+
 func (a *API) peopleTimeline(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	list, err := a.Store.PersonTimeline(r.Context(), id)
@@ -385,6 +410,10 @@ func (a *API) relCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.RelationshipCreate(r.Context(), &rel); err != nil {
+		if errors.Is(err, store.ErrRelationshipExists) {
+			writeErr(w, 409, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -404,6 +433,10 @@ func (a *API) relUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.RelationshipUpdate(r.Context(), &rel); err != nil {
+		if errors.Is(err, store.ErrRelationshipExists) {
+			writeErr(w, 409, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}

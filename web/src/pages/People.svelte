@@ -51,6 +51,24 @@
     selectMode = !selectMode
     if (!selectMode) selectedIds = []
   }
+  // 批量把选中的人加进一个圈子（只增不减，移出仍回单人编辑弹窗）
+  let bulkCat = $state(0)
+  async function addSelectedToCircle() {
+    if (selectedIds.length === 0 || bulkCat === 0) return
+    const name = categories.find(c => c.id === bulkCat)?.name || ''
+    try {
+      const res = await API.post<{ added: number }>('/api/v1/people/bulk-categories', {
+        ids: selectedIds, category_ids: [bulkCat],
+      })
+      bulkCat = 0
+      await load()
+      alert(res.added === selectedIds.length
+        ? `已把 ${res.added} 位加入「${name}」`
+        : `${selectedIds.length} 位里有 ${res.added} 位新加入「${name}」，其余原本就在圈子里`)
+    } catch (err: any) {
+      alert('加入圈子失败：' + (err?.message || err))
+    }
+  }
   async function deleteSelected() {
     if (selectedIds.length === 0) return
     if (!confirm(`确定删除选中的 ${selectedIds.length} 位联系人及其所有关联记录（往来/对话/记账/纪念日）？此操作不可恢复。`)) return
@@ -230,6 +248,15 @@
       </label>
       <span class="text-sm" style="color: var(--q-muted);">已选 {selectedIds.length} 位</span>
       <div class="flex-1"></div>
+      <select bind:value={bulkCat} class="px-3 py-1.5 rounded-lg text-sm outline-none"
+              style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+              disabled={selectedIds.length === 0}>
+        <option value={0}>加入圈子…</option>
+        {#each categories as c}<option value={c.id}>{c.name}</option>{/each}
+      </select>
+      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-theme); color: #fff;" disabled={selectedIds.length === 0 || bulkCat === 0} onclick={addSelectedToCircle}>
+        加入
+      </button>
       <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" disabled={selectedIds.length === 0} onclick={deleteSelected}>
         删除选中
       </button>
@@ -252,9 +279,13 @@
             <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold shrink-0" style="background: var(--q-theme);">{p.name.slice(0,1)}</div>
             <div class="flex-1 min-w-0">
               <div class="font-medium truncate">{p.name}</div>
-              {#if p.grade > 0 || p.category_name}
-                <div class="text-xs mt-0.5" style="color: var(--q-muted);">
-                  {#if p.grade > 0}{'♥'.repeat(p.grade)}{p.category_name && ` · ${p.category_name}`}{:else}{p.category_name || ''}{/if}
+              {#if p.grade > 0 || (p.categories?.length ?? 0) > 0}
+                <div class="flex flex-wrap items-center gap-1 mt-0.5 text-xs" style="color: var(--q-muted);">
+                  {#if p.grade > 0}<span class="shrink-0">{'♥'.repeat(p.grade)}</span>{/if}
+                  {#each p.categories ?? [] as c}
+                    <span class="px-1.5 py-0.5 rounded-full whitespace-nowrap"
+                          style={`background: color-mix(in srgb, ${c.color} 18%, transparent); color: ${c.color};`}>{c.name}</span>
+                  {/each}
                 </div>
               {/if}
               {#if p.notes}<div class="text-xs mt-1 line-clamp-2" style="color: var(--q-muted);">{p.notes}</div>{/if}

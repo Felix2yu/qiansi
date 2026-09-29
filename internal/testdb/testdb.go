@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -55,6 +56,13 @@ func migrate(t *testing.T, db *sql.DB) {
 		}
 		if _, err := db.Exec(string(data)); err != nil {
 			t.Fatalf("exec migration %s: %v", n, err)
+		}
+		// 版本号要按生产 RunMigrations 的方式登记：备份恢复末尾会再跑一次迁移，
+		// 库里没登记就会把已应用的迁移重放成 duplicate column / table already exists。
+		if ver, err := strconv.Atoi(strings.SplitN(n, "_", 2)[0]); err != nil {
+			t.Fatalf("parse version from %s: %v", n, err)
+		} else if _, err := db.Exec("INSERT INTO schema_version(version) VALUES(?)", ver); err != nil {
+			t.Fatalf("record version %d: %v", ver, err)
 		}
 	}
 }

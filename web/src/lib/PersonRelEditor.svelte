@@ -39,7 +39,9 @@
     loading = true
     try {
       const list = await API.get<Relationship[]>(`/api/v1/relationships/of/${pid}`)
-      rels = list || []
+      // 同一对的人可以并存几条不同类型的边，按对方名字排一下才看得出是连着同一个人
+      rels = (list || []).sort((a, b) =>
+        otherName(a).localeCompare(otherName(b), 'zh') || a.type.localeCompare(b.type, 'zh'))
     } catch {
       rels = []
     } finally {
@@ -116,7 +118,8 @@
   }
 
   async function remove(r: Relationship) {
-    if (!confirm(`删除与「${otherName(r)}」的关系？`)) return
+    // 同一对人间现在可以并存几条不同类型的边，只写名字会分不清删的是哪条
+    if (!confirm(`删除与「${otherName(r)}」的「${r.type}」关系？`)) return
     try {
       await API.delete(`/api/v1/relationships/${r.id}`)
       if (editingId === r.id) cancelEdit()

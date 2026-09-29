@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -319,13 +320,26 @@ type Relationship struct {
 	ToName     string `json:"to_name,omitempty"`
 }
 
+// ErrRelationshipExists 同一对人之间已经有同名的关系。
+var ErrRelationshipExists = errors.New("这对人之间已经有同名的关系了")
+
+// isUniqueRel 只认关系边唯一键撞了，别的外键/非空错误照常往上抛，
+// 免得把真故障伪装成「已存在」。
+func isUniqueRel(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed: relationships")
+}
+
 func (s *Store) RelationshipCreate(ctx context.Context, r *Relationship) error {
 	if r.ID == "" { r.ID = uuid.NewString() }
 	r.CreatedAt = nowUTC()
 	var remark any
 	if r.Remark != "" { remark = r.Remark } else { remark = nil }
-	_, err := s.DB.ExecContext(ctx, "INSERT OR REPLACE INTO relationships(id,from_person_id,to_person_id,type,remark,created_at) VALUES(?,?,?,?,?,?)",
+	// 用普通 INSERT：旧版是 INSERT OR REPLACE，同一对人再建一条会把前一条静默顶掉。
+	_, err := s.DB.ExecContext(ctx, "INSERT INTO relationships(id,from_person_id,to_person_id,type,remark,created_at) VALUES(?,?,?,?,?,?)",
 		r.ID, r.FromPerson, r.ToPerson, r.Type, remark, r.CreatedAt)
+	if isUniqueRel(err) {
+		return ErrRelationshipExists
+	}
 	return err
 }
 
@@ -339,6 +353,9 @@ func (s *Store) RelationshipUpdate(ctx context.Context, r *Relationship) error {
 	}
 	res, err := s.DB.ExecContext(ctx, "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
 		r.FromPerson, r.ToPerson, r.Type, remark, r.ID)
+	if isUniqueRel(err) {
+		return ErrRelationshipExists
+	}
 	if err != nil {
 		return err
 	}

@@ -45,6 +45,18 @@ func apiNames(t *testing.T, list []any) map[string]bool {
 	return out
 }
 
+// relById 从关系列表里按 id 取一条，取不到直接失败。
+func relById(t *testing.T, list []any, id string) map[string]any {
+	t.Helper()
+	for _, it := range list {
+		if m, ok := it.(map[string]any); ok && m["id"] == id {
+			return m
+		}
+	}
+	t.Fatalf("关系列表里没有 id=%s: %v", id, list)
+	return nil
+}
+
 // apiResultsByType 把 /api/v1/search 或建议列表按 type 归类。
 func apiResultsByType(list []any) map[string]int {
 	out := map[string]int{}
@@ -227,7 +239,7 @@ func TestAPIPeopleListFilters(t *testing.T) {
 	catID := int(decodeMap(t, s.do(http.MethodPost, "/api/v1/categories/", map[string]any{"name": "家人"}))["id"].(float64))
 	tagID := int(decodeMap(t, s.do(http.MethodPost, "/api/v1/tags/", map[string]any{"name": "高中"}))["id"].(float64))
 
-	apiCreatePersonMap(t, s, map[string]any{"name": "赵敏", "grade": 5, "category_id": catID, "notes": "周芷若的对手"})
+	apiCreatePersonMap(t, s, map[string]any{"name": "赵敏", "grade": 5, "category_ids": []any{catID}, "notes": "周芷若的对手"})
 	b := apiCreatePersonMap(t, s, map[string]any{"name": "张无忌", "grade": 2})
 	c := apiCreatePersonMap(t, s, map[string]any{"name": "小昭", "grade": 2})
 	cid := c["id"].(string)
@@ -659,33 +671,39 @@ func TestAPIPeopleRelationships(t *testing.T) {
 		"from_person_id": a, "to_person_id": "ghost", "type": "陌生人",
 	}), http.StatusInternalServerError)
 
-	// 同一对人重复创建走 INSERT OR REPLACE：替换后会拿到新的 id，仍只有一条
+	// 同一对人可以挂多种类型的关系；重复的同名关系不再静默顶掉前一条，而是 409
 	again := decodeMap(t, s.do(http.MethodPost, "/api/v1/relationships/", map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "老友",
 	}))
 	current := apiArray(s, "/api/v1/relationships/of/"+a)
-	if len(current) != 1 {
-		t.Fatalf("重复关系应被替换而非新增: %v", current)
+	if len(current) != 2 {
+		t.Fatalf("新增另一种类型应再多一条: %v", current)
 	}
-	if again["type"] != "老友" {
-		t.Fatalf("替换后 type = %v", again["type"])
-	}
-	rid = current[0].(map[string]any)["id"].(string)
+	apiWantError(t, http.MethodPost, "rel duplicate", s.do(http.MethodPost, "/api/v1/relationships/", map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": "同学",
+	}), http.StatusConflict, "已经有同名的关系")
+
+	// 后面按 rid 走单条更新流程，rid 取「老友」这条
+	rid = again["id"].(string)
 	if rid == "" {
-		t.Fatalf("替换后的关系无 id: %v", current)
+		t.Fatalf("新建的关系无 id: %v", again)
 	}
+	// 更新撞上也已存在的类型，同样报 409 而不是把那条顶掉
+	apiWantError(t, http.MethodPut, "rel update dup", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": "同学",
+	}), http.StatusConflict, "已经有同名的关系")
 
 	// 更新：改类型与备注，id 与两端不变
-	created := current[0].(map[string]any)["created_at"].(string)
+	created := relById(t, current, rid)["created_at"].(string)
 	apiWantStatus(t, http.MethodPut, "rel update", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "老同事", "remark": "同组",
 	}), http.StatusOK)
 	upd := apiArray(s, "/api/v1/relationships/of/"+a)
-	if len(upd) != 1 {
+	if len(upd) != 2 {
 		t.Fatalf("更新后条数 = %d: %v", len(upd), upd)
 	}
-	u0 := upd[0].(map[string]any)
-	if u0["id"] != rid || u0["type"] != "老同事" || u0["remark"] != "同组" {
+	u0 := relById(t, upd, rid)
+	if u0["type"] != "老同事" || u0["remark"] != "同组" {
 		t.Fatalf("更新未生效: %v", u0)
 	}
 	if u0["created_at"] != created {
@@ -695,7 +713,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "老同事",
 	})
-	if got := apiArray(s, "/api/v1/relationships/of/"+a)[0].(map[string]any); got["remark"] != nil {
+	if got := relById(t, apiArray(s, "/api/v1/relationships/of/"+a), rid); got["remark"] != nil {
 		t.Fatalf("空备注应为 nil: %v", got)
 	}
 	// 更新同样走校验
@@ -724,12 +742,19 @@ func TestAPIPeopleRelationships(t *testing.T) {
 		t.Fatalf("graph.people = %v", people)
 	}
 	rels := graph["relationships"].([]any)
-	if len(rels) != 1 {
+	if len(rels) != 2 {
 		t.Fatalf("graph.relationships = %v", rels)
 	}
 
-	// 删除
+	// 删除：只带走被点名的那条，另一条类型不受影响
 	apiWantStatus(t, http.MethodDelete, "rel delete", s.do(http.MethodDelete, "/api/v1/relationships/"+rid, nil), http.StatusNoContent)
+	left := apiArray(s, "/api/v1/relationships/of/"+a)
+	if len(left) != 1 || left[0].(map[string]any)["id"] == rid {
+		t.Fatalf("删除后应只剩另一种类型: %v", left)
+	}
+	for _, it := range left {
+		apiWantStatus(t, http.MethodDelete, "rel delete rest", s.do(http.MethodDelete, "/api/v1/relationships/"+it.(map[string]any)["id"].(string), nil), http.StatusNoContent)
+	}
 	if got := apiArray(s, "/api/v1/relationships/of/"+a); len(got) != 0 {
 		t.Fatalf("删除后 = %v", got)
 	}

@@ -267,8 +267,8 @@ func TestPeopleCreateDefaultsAndRoundTrip(t *testing.T) {
 		got.CreatedAt != p.CreatedAt {
 		t.Fatalf("PersonGet 回读不一致: %+v", got)
 	}
-	if got.CategoryID != nil || got.CategoryName != nil {
-		t.Fatalf("无圈子时 CategoryID/CategoryName 应为 nil: %+v %+v", got.CategoryID, got.CategoryName)
+	if len(got.Categories) != 0 {
+		t.Fatalf("无圈子时 Categories 应为空: %+v", got.Categories)
 	}
 	if got.BirthdayAnniversaryID != "" {
 		t.Fatalf("未生成纪念日时 BirthdayAnniversaryID 应为空，得到 %q", got.BirthdayAnniversaryID)
@@ -325,7 +325,7 @@ func TestPeopleUpdateAndNameParts(t *testing.T) {
 	p.Location = "北京"
 	p.Notes = "新备注"
 	p.Grade = 4
-	p.CategoryID = &cat.ID
+	p.CategoryIDs = []int{cat.ID}
 	p.Archived = true
 	p.XAbUID = "AB-2"
 	if err := s.PersonUpdate(ctx, p); err != nil {
@@ -340,11 +340,8 @@ func TestPeopleUpdateAndNameParts(t *testing.T) {
 		!got.BirthdayIsLunar || got.Wechat != "wx9" || got.Location != "北京" || got.Phone != "13900001111" {
 		t.Fatalf("更新未生效: %+v", got)
 	}
-	if got.CategoryID == nil || *got.CategoryID != cat.ID {
-		t.Fatalf("CategoryID 未写入: %+v", got.CategoryID)
-	}
-	if got.CategoryName == nil || *got.CategoryName != "家人" {
-		t.Fatalf("CategoryName 未 JOIN 出来: %+v", got.CategoryName)
+	if len(got.Categories) != 1 || got.Categories[0].ID != cat.ID || got.Categories[0].Name != "家人" {
+		t.Fatalf("圈子未写入: %+v", got.Categories)
 	}
 	if got.CreatedAt != createdAt {
 		t.Fatalf("created_at 不应被更新改写: %q -> %q", createdAt, got.CreatedAt)
@@ -353,14 +350,14 @@ func TestPeopleUpdateAndNameParts(t *testing.T) {
 		t.Fatalf("updated_at 应被刷新: %q", got.UpdatedAt)
 	}
 
-	// 置空 category_id（指针为 nil）
-	got.CategoryID = nil
+	// 圈子传空即清空（PUT 整行覆盖）
+	got.CategoryIDs = nil
 	if err := s.PersonUpdate(ctx, got); err != nil {
 		t.Fatalf("PersonUpdate(clear category): %v", err)
 	}
 	again, _ := s.PersonGet(ctx, p.ID)
-	if again.CategoryID != nil {
-		t.Fatalf("category_id 应被清空，得到 %v", *again.CategoryID)
+	if len(again.Categories) != 0 {
+		t.Fatalf("圈子应被清空，得到 %+v", again.Categories)
 	}
 
 	// 更新不存在的 ID：不报错，但没有行被改动
@@ -550,7 +547,7 @@ func TestPeopleDuplicatesBranches(t *testing.T) {
 
 	same := &Person{Name: "陈明", Nickname: "小明", Phone: "13811112222", Wechat: "chenming", Grade: 4}
 	pMustCreate(t, s, same)
-	same.CategoryID = &cat.ID
+	same.CategoryIDs = []int{cat.ID}
 	if err := s.PersonUpdate(ctx, same); err != nil {
 		t.Fatalf("PersonUpdate: %v", err)
 	}
@@ -562,8 +559,8 @@ func TestPeopleDuplicatesBranches(t *testing.T) {
 	pMustCreate(t, s, byWx)
 	// 空字符串列（NULL）：由原始 SQL 插入，验证 NullString 处理
 	pRaw(t, s, `INSERT INTO people(id,name,nickname,gender,birthday,avatar_attachment_id,phone,wechat,location,notes,
-		grade,category_id,archived,created_at,updated_at)
-		VALUES('nullrow','陈明',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,3,NULL,0,?,?)`,
+		grade,archived,created_at,updated_at)
+		VALUES('nullrow','陈明',NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,3,0,?,?)`,
 		"2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
 
 	// 全空输入 -> 空结果
@@ -611,12 +608,6 @@ func TestPeopleDuplicatesBranches(t *testing.T) {
 	if len(byNick) != 1 || byNick[0].ID != same.ID {
 		t.Fatalf("昵称匹配结果 = %v", pNames(byNick))
 	}
-	if byNick[0].CategoryName == nil || *byNick[0].CategoryName != "老同学" {
-		t.Fatalf("应 JOIN 出圈子名: %+v", byNick[0].CategoryName)
-	}
-	if byNick[0].CategoryID == nil || *byNick[0].CategoryID != cat.ID {
-		t.Fatalf("应带出 CategoryID: %+v", byNick[0].CategoryID)
-	}
 	if byNick[0].Nickname != "小明" || byNick[0].Phone != "13811112222" || byNick[0].Wechat != "chenming" {
 		t.Fatalf("可空列回读不一致: %+v", byNick[0])
 	}
@@ -628,7 +619,7 @@ func TestPeopleDuplicatesBranches(t *testing.T) {
 		}
 	}
 	if nullRow == nil || nullRow.Nickname != "" || nullRow.Phone != "" || nullRow.Wechat != "" ||
-		nullRow.CategoryID != nil || nullRow.CategoryName != nil || nullRow.Grade != 3 {
+		nullRow.Grade != 3 {
 		t.Fatalf("NULL 列处理不正确: %+v", nullRow)
 	}
 
@@ -781,6 +772,36 @@ func TestPeopleMergeMovesEverything(t *testing.T) {
 	// rel3 y->src 被改写成 y->tgt（tgt 无 y->tgt 时成功）
 	if got := pRawScanInt(t, s, "SELECT COUNT(*) FROM relationships WHERE id='rel3' AND to_person_id='tgt'"); got != 1 {
 		t.Errorf("rel3 的 to_person_id 应改为 tgt，得到 %d", got)
+	}
+}
+
+// 关系边改成「一对人可并存多种类型」后，合并只该并掉同名的那条，
+// 不同类型必须各自留下——旧 UNIQUE(from,to) 会把它们一起吞掉。
+func TestPeopleMergeKeepsDistinctRelationTypes(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+	pMustCreate(t, s, &Person{ID: "m1", Name: "甲"})
+	pMustCreate(t, s, &Person{ID: "m2", Name: "乙"})
+	pMustCreate(t, s, &Person{ID: "m3", Name: "丙"})
+
+	pRaw(t, s, "INSERT INTO relationships(id,from_person_id,to_person_id,type,created_at) VALUES('keep','m1','m3','老友',?)", nowUTC())
+	pRaw(t, s, "INSERT INTO relationships(id,from_person_id,to_person_id,type,created_at) VALUES('dup','m1','m3','同事',?)", nowUTC())
+	pRaw(t, s, "INSERT INTO relationships(id,from_person_id,to_person_id,type,created_at) VALUES('base','m2','m3','同事',?)", nowUTC())
+
+	if err := s.PersonMerge(ctx, "m1", "m2"); err != nil {
+		t.Fatalf("PersonMerge: %v", err)
+	}
+	if got := pRawScanInt(t, s, "SELECT COUNT(*) FROM relationships WHERE id='keep' AND from_person_id='m2' AND to_person_id='m3' AND type='老友'"); got != 1 {
+		t.Errorf("不同类型的边被合并吞掉了，keep 现存 %d", got)
+	}
+	if got := pRawScanInt(t, s, "SELECT COUNT(*) FROM relationships WHERE id='dup'"); got != 0 {
+		t.Errorf("与目标同名的边应被并掉，dup 现存 %d", got)
+	}
+	if got := pRawScanInt(t, s, "SELECT COUNT(*) FROM relationships WHERE from_person_id='m2' AND to_person_id='m3'"); got != 2 {
+		t.Errorf("m2→m3 应剩老友+同事两条，得到 %d", got)
+	}
+	if got := pRawScanInt(t, s, "SELECT COUNT(*) FROM relationships WHERE from_person_id='m2' AND to_person_id='m3' AND type='同事'"); got != 1 {
+		t.Errorf("同名的同事应只留一条，得到 %d", got)
 	}
 }
 
@@ -1053,7 +1074,7 @@ func TestPeopleListFiltersAndSort(t *testing.T) {
 	catID := cat.ID
 
 	// grade 5（圈子+标签）、grade 3、grade 1、archived
-	high := &Person{Name: "高强", Nickname: "阿强", Notes: "篮球搭子", Grade: 5, CategoryID: &catID}
+	high := &Person{Name: "高强", Nickname: "阿强", Notes: "篮球搭子", Grade: 5, CategoryIDs: []int{catID}}
 	pMustCreate(t, s, high)
 	mid := &Person{Name: "中敏", Phone: "666", Grade: 3}
 	pMustCreate(t, s, mid)
@@ -1082,14 +1103,13 @@ func TestPeopleListFiltersAndSort(t *testing.T) {
 	if got := pNames(all); strings.Join(got, ",") != "高强,中敏,低伟" {
 		t.Fatalf("默认排序/过滤不正确: %v", got)
 	}
-	if all[0].CategoryID == nil || *all[0].CategoryID != catID {
-		t.Errorf("应带出 category_id")
+	if len(all[0].Categories) != 1 || all[0].Categories[0].ID != catID {
+		t.Errorf("应带出圈子: %+v", all[0].Categories)
+	} else if all[0].Categories[0].Name != "球友" || all[0].Categories[0].Color != "#0f0" {
+		t.Errorf("圈子应带出名字与颜色: %+v", all[0].Categories[0])
 	}
-	if all[0].CategoryName == nil || *all[0].CategoryName != "球友" {
-		t.Errorf("应带出 category_name")
-	}
-	if all[1].CategoryID != nil || all[1].CategoryName != nil {
-		t.Errorf("无圈子应为 nil: %+v", all[1])
+	if len(all[1].Categories) != 0 {
+		t.Errorf("无圈子应为空: %+v", all[1])
 	}
 	if all[0].Grade != 5 || all[0].Nickname != "阿强" {
 		t.Errorf("字段回读不正确: %+v", all[0])
@@ -1447,8 +1467,8 @@ func TestPeopleCategoryCrudAndDeleteClearsPeople(t *testing.T) {
 		t.Fatalf("更新未持久化: %+v", list[1])
 	}
 
-	// 删除圈子并把人物置空
-	p := pMustCreate(t, s, &Person{ID: "cat-person", Name: "有圈子", CategoryID: &c1.ID})
+	// 删除圈子应连带解除成员关系（ON DELETE CASCADE）
+	p := pMustCreate(t, s, &Person{ID: "cat-person", Name: "有圈子", CategoryIDs: []int{c1.ID}})
 	if err := s.CategoryDelete(ctx, c1.ID); err != nil {
 		t.Fatalf("CategoryDelete: %v", err)
 	}
@@ -1459,8 +1479,8 @@ func TestPeopleCategoryCrudAndDeleteClearsPeople(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PersonGet: %v", err)
 	}
-	if after.CategoryID != nil || after.CategoryName != nil {
-		t.Fatalf("人物的圈子应被置空: %+v %+v", after.CategoryID, after.CategoryName)
+	if len(after.Categories) != 0 {
+		t.Fatalf("圈子删除后人物不应再挂该圈子: %+v", after.Categories)
 	}
 	if err := s.CategoryDelete(ctx, 987654); err != nil {
 		t.Fatalf("删除不存在的圈子不应报错: %v", err)
@@ -1739,8 +1759,8 @@ VALUES('bad-person','坏数据',NULL,1,0,?,?)`, "2024-01-01T00:00:00Z", "2024-01
 		t.Errorf("is_default 为 NULL 时 EventTypeList 应返回扫描错误")
 	}
 	// PersonDuplicates 的 grade 为 NULL 时也应报错（int 扫描不接受 NULL）
-	pRaw(t, s, `INSERT INTO people(id,name,nickname,phone,wechat,grade,category_id,archived,created_at,updated_at)
-VALUES('bad-grade','坏等级',NULL,NULL,NULL,NULL,NULL,0,?,?)`, "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
+	pRaw(t, s, `INSERT INTO people(id,name,nickname,phone,wechat,grade,archived,created_at,updated_at)
+VALUES('bad-grade','坏等级',NULL,NULL,NULL,NULL,0,?,?)`, "2024-01-01T00:00:00Z", "2024-01-01T00:00:00Z")
 	if _, err := s.PersonDuplicates(ctx, "坏等级", "", "", ""); err == nil {
 		t.Errorf("grade 为 NULL 时 PersonDuplicates 应返回扫描错误")
 	}

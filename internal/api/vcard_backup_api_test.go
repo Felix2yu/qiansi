@@ -878,19 +878,8 @@ func TestBackupList(t *testing.T) {
 	}
 }
 
-// vcardBackupSeedVersions 补齐 schema_version 记录：
-// testdb 直接执行迁移文件不写版本号，而生产库由 RunMigrations 写入 1..6；
-// 恢复流程末尾会跑 RunMigrations，缺版本号会重放 002+ 导致 duplicate column。
-func vcardBackupSeedVersions(t *testing.T, s *testServer) {
-	t.Helper()
-	if _, err := s.Store.DB.Exec("INSERT INTO schema_version(version) VALUES(1),(2),(3),(4),(5),(6)"); err != nil {
-		t.Fatalf("seed schema_version: %v", err)
-	}
-}
-
 func TestBackupRestoreHappyPath(t *testing.T) {
 	s := newTestServer(t)
-	vcardBackupSeedVersions(t, s)
 	vcardBackupMustCreatePerson(t, s, map[string]any{"name": "留存者", "phone": "13611111111"})
 	if r := s.do(http.MethodPost, "/api/v1/backup/snapshot", nil); r.Code != 200 {
 		t.Fatalf("snapshot => %s", r.Body.String())
@@ -945,7 +934,6 @@ func TestBackupRestoreHappyPath(t *testing.T) {
 	// snapshotDB 拷贝兜底路径：Backups 变成普通文件 → VACUUM INTO 失败 →
 	// checkpoint+打开真实 DBPath 成功 → os.Create 失败 → 500
 	second := newTestServer(t)
-	vcardBackupSeedVersions(t, second)
 	vcardBackupMustCreatePerson(t, second, map[string]any{"name": "兜底"})
 	body3, ct3 := vcardBackupMultipart(t, "b.db", snapshot)
 	if r := second.raw(http.MethodPost, "/api/v1/backup/restore", body3, ct3); r.Code != 200 {

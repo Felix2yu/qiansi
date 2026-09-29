@@ -345,8 +345,8 @@ func TestAPISettingsCategoriesCRUD(t *testing.T) {
 		t.Fatalf("update 未持久化: %v", c0)
 	}
 
-	// 挂到人身上后删除，人的 category_id 应被置空
-	rec = s.do(http.MethodPost, "/api/v1/people/", map[string]any{"name": "小明", "category_id": id})
+	// 挂到人身上后删除圈子，成员的圈子应被级联清掉
+	rec = s.do(http.MethodPost, "/api/v1/people/", map[string]any{"name": "小明", "category_ids": []any{id}})
 	apiWantStatus(t, http.MethodPost, "/api/v1/people/", rec, http.StatusOK)
 	person := decodeMap(t, rec)
 	personID := person["id"].(string)
@@ -354,8 +354,8 @@ func TestAPISettingsCategoriesCRUD(t *testing.T) {
 		t.Fatalf("person 未返回 id: %v", person)
 	}
 	detail := s.get("/api/v1/people/" + personID)
-	if got := detail["person"].(map[string]any)["category_name"]; got != "亲人" {
-		t.Fatalf("person 未带分类名: %v", got)
+	if cats, _ := detail["person"].(map[string]any)["categories"].([]any); len(cats) != 1 || cats[0].(map[string]any)["name"] != "亲人" {
+		t.Fatalf("person 未带圈子: %v", detail["person"])
 	}
 
 	rec = s.do(http.MethodDelete, "/api/v1/categories/"+itoa(id), nil)
@@ -365,8 +365,8 @@ func TestAPISettingsCategoriesCRUD(t *testing.T) {
 	}
 	getRec := s.do(http.MethodGet, "/api/v1/people/"+personID, nil)
 	apiWantStatus(t, http.MethodGet, "person get", getRec, http.StatusOK)
-	if cid := decodeMap(t, getRec)["person"].(map[string]any)["category_id"]; cid != nil {
-		t.Fatalf("删除分类后 category_id 应清空, got %v", cid)
+	if cats := decodeMap(t, getRec)["person"].(map[string]any)["categories"]; cats != nil {
+		t.Fatalf("删除圈子后 categories 应清空, got %v", cats)
 	}
 
 	// 非法 body / 未知 id

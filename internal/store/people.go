@@ -63,13 +63,15 @@ type Person struct {
 	Location           string  `json:"location,omitempty"`
 	Notes              string  `json:"notes,omitempty"`
 	Grade              int     `json:"grade"`
-	CategoryID         *int    `json:"category_id,omitempty"`
 	Archived           bool    `json:"archived"`
 	XAbUID             string  `json:"x_abuid,omitempty"`
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
-	CategoryName       *string `json:"category_name,omitempty"`
-	Intimacy           *int    `json:"intimacy,omitempty"`
+	// CategoryIDs 只用于写入（PUT 是整行覆盖，缺省即清空圈子）；
+	// Categories 只用于读取，带颜色供列表胶囊与图谱拼色。
+	CategoryIDs []int              `json:"category_ids,omitempty"`
+	Categories  []*PersonCategory  `json:"categories,omitempty"`
+	Intimacy    *int               `json:"intimacy,omitempty"`
 	// BirthdayAnniversaryID 指向由生日自动生成的纪念日，为空表示尚未生成。
 	BirthdayAnniversaryID string `json:"birthday_anniversary_id,omitempty"`
 }
@@ -80,19 +82,106 @@ func (s *Store) PersonCreate(ctx context.Context, p *Person) error {
 	}
 	p.CreatedAt = nowUTC()
 	p.UpdatedAt = p.CreatedAt
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,family_name,given_name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,x_abuid,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,family_name,given_name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,archived,x_abuid,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
-		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.CreatedAt, p.UpdatedAt)
-	return err
+		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.Archived, p.XAbUID, p.CreatedAt, p.UpdatedAt)
+	if err != nil {
+		return err
+	}
+	return s.replacePersonCategories(ctx, p.ID, p.CategoryIDs)
 }
 
 func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 	p.UpdatedAt = nowUTC()
-	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,category_id=?,archived=?,x_abuid=?,updated_at=? WHERE id=?`,
+	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,archived=?,x_abuid=?,updated_at=? WHERE id=?`,
 		p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
-		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.CategoryID, p.Archived, p.XAbUID, p.UpdatedAt, p.ID)
-	return err
+		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.Archived, p.XAbUID, p.UpdatedAt, p.ID)
+	if err != nil {
+		return err
+	}
+	return s.replacePersonCategories(ctx, p.ID, p.CategoryIDs)
+}
+
+// replacePersonCategories 用 ids 整体替换一个人的圈子（PUT 是整行覆盖，圈子同样按覆盖处理）。
+func (s *Store) replacePersonCategories(ctx context.Context, personID string, ids []int) error {
+	if _, err := s.DB.ExecContext(ctx, "DELETE FROM person_categories WHERE person_id=?", personID); err != nil {
+		return err
+	}
+	for _, id := range dedupeInts(ids) {
+		if _, err := s.DB.ExecContext(ctx, "INSERT OR IGNORE INTO person_categories(person_id,category_id) VALUES(?,?)", personID, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// PersonCategory 是读路径上挂在人身上的圈子，带颜色供列表胶囊与图谱拼色。
+type PersonCategory struct {
+	ID    int    `json:"id"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+}
+
+// categoriesFor 一次取回一批人的圈子。没有并进主查询的 JOIN：
+// 多对多之后一人出多行，主查询的 LIMIT/OFFSET 会按行数分页，每页人数就错了。
+// 排序固定按 sort_order/name，拼色的分段顺序才不会随查询而变。
+func (s *Store) categoriesFor(ctx context.Context, ids []string) (map[string][]*PersonCategory, error) {
+	out := map[string][]*PersonCategory{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT g.person_id,c.id,c.name,c.color
+FROM person_categories g JOIN categories c ON c.id=g.category_id
+WHERE g.person_id IN (`+ph+`) ORDER BY c.sort_order,c.name,c.id`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid string
+		c := &PersonCategory{}
+		if err := rows.Scan(&pid, &c.ID, &c.Name, &c.Color); err != nil {
+			return nil, err
+		}
+		out[pid] = append(out[pid], c)
+	}
+	return out, rows.Err()
+}
+
+// attachCategories 给一组人补上圈子。
+func (s *Store) attachCategories(ctx context.Context, list []*Person) error {
+	ids := make([]string, len(list))
+	for i, p := range list {
+		ids[i] = p.ID
+	}
+	m, err := s.categoriesFor(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, p := range list {
+		p.Categories = m[p.ID]
+	}
+	return nil
+}
+
+// dedupeInts 去掉 0 与重复值：前端用 0 表示「未归入圈子」。
+func dedupeInts(ids []int) []int {
+	out := []int{}
+	seen := map[int]bool{}
+	for _, id := range ids {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
 
 // PersonUpdateNameParts 只更新姓名三件套（显示名/姓/名），
@@ -175,8 +264,8 @@ func (s *Store) PersonDuplicates(ctx context.Context, name, phone, wechat, exclu
 	if len(conds) == 0 {
 		return []*Person{}, nil
 	}
-	q := `SELECT p.id,p.name,p.nickname,p.phone,p.wechat,p.grade,p.category_id,p.archived,c.name
-FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE (` + strings.Join(conds, " OR ") + ")"
+	q := `SELECT p.id,p.name,p.nickname,p.phone,p.wechat,p.grade,p.archived
+FROM people p WHERE (` + strings.Join(conds, " OR ") + ")"
 	if excludeID != "" {
 		q += " AND p.id<>?"
 		args = append(args, excludeID)
@@ -190,23 +279,26 @@ FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE (` + strings.Jo
 	out := []*Person{}
 	for rows.Next() {
 		p := &Person{}
-		var nick, ph, wc, cat sql.NullString
-		var catID sql.NullInt64
-		if err := rows.Scan(&p.ID, &p.Name, &nick, &ph, &wc, &p.Grade, &catID, &p.Archived, &cat); err != nil {
+		var nick, ph, wc sql.NullString
+		if err := rows.Scan(&p.ID, &p.Name, &nick, &ph, &wc, &p.Grade, &p.Archived); err != nil {
 			return nil, err
 		}
 		if nick.Valid { p.Nickname = nick.String }
 		if ph.Valid { p.Phone = ph.String }
 		if wc.Valid { p.Wechat = wc.String }
-		if catID.Valid { v := int(catID.Int64); p.CategoryID = &v }
-		if cat.Valid { v := cat.String; p.CategoryName = &v }
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachCategories(ctx, out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // PersonMerge 把 source 的关联数据全部迁到 target，然后删除 source。
-// 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、自定义字段、关系的两端。
+// 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、圈子、自定义字段、关系的两端。
 // 事件参与人用 INSERT OR IGNORE，避免同一事件里出现重复条目。
 // source 的生日纪念日不迁移（它代表 source 自身的生日，而 birthday 字段留在 target 不变），
 // 合并完成后按 target 自己的生日重新同步一次。
@@ -231,12 +323,15 @@ func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) erro
 		{"UPDATE anniversaries SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE reminders SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE OR IGNORE taggings SET target_id=? WHERE target_type='person' AND target_id=?", []any{targetID, sourceID}},
+		// 圈子可多个，交并集：target 已有的组合靠 OR IGNORE 跳过
+		{"INSERT OR IGNORE INTO person_categories(person_id,category_id) SELECT ?,category_id FROM person_categories WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE person_fields SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE OR IGNORE relationships SET from_person_id=? WHERE from_person_id=?", []any{targetID, sourceID}},
 		{"UPDATE OR IGNORE relationships SET to_person_id=? WHERE to_person_id=?", []any{targetID, sourceID}},
 		{"DELETE FROM relationships WHERE from_person_id=? OR to_person_id=?", []any{sourceID, sourceID}},
 		{"DELETE FROM event_participants WHERE person_id=?", []any{sourceID}},
 		{"DELETE FROM taggings WHERE target_type='person' AND target_id=?", []any{sourceID}},
+		{"DELETE FROM person_categories WHERE person_id=?", []any{sourceID}},
 		{"DELETE FROM people WHERE id=?", []any{sourceID}},
 	}
 	for _, st := range steps {
@@ -316,29 +411,22 @@ VALUES(?,?,?,?,?,1,'7,3,1,0',?, 'birthday')`,
 }
 
 func (s *Store) PersonGet(ctx context.Context, id string) (*Person, error) {
-	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name,p.birthday_anniversary_id
-FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE p.id=?`, id)
+	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.archived,p.x_abuid,p.created_at,p.updated_at,p.birthday_anniversary_id
+FROM people p WHERE p.id=?`, id)
 	p := &Person{}
 	var grade int
-	var cat sql.NullString
-	var catID sql.NullInt64
 	var birthdayAnniv sql.NullString
 	// 删除头像时 PersonDetachAttachments 会把该列写成 NULL，不能用裸 string 扫。
 	var avatar sql.NullString
 	if err := row.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &avatar,
-		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat, &birthdayAnniv); err != nil {
+		&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &birthdayAnniv); err != nil {
 		return nil, err
 	}
 	p.Grade = grade
 	p.AvatarAttachmentID = avatar.String
 	if birthdayAnniv.Valid { p.BirthdayAnniversaryID = birthdayAnniv.String }
-	if catID.Valid {
-		v := int(catID.Int64)
-		p.CategoryID = &v
-	}
-	if cat.Valid {
-		v := cat.String
-		p.CategoryName = &v
+	if err := s.attachCategories(ctx, []*Person{p}); err != nil {
+		return nil, err
 	}
 	return p, nil
 }
@@ -371,7 +459,7 @@ func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int
 		args = append(args, like, like, like)
 	}
 	if categoryID > 0 {
-		cond = append(cond, "p.category_id=?")
+		cond = append(cond, "p.id IN (SELECT person_id FROM person_categories WHERE category_id=?)")
 		args = append(args, categoryID)
 	}
 	if grade > 0 {
@@ -383,8 +471,10 @@ func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int
 		args = append(args, tagID)
 	}
 	where := strings.Join(cond, " AND ")
-	query := fmt.Sprintf(`SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.category_id,p.archived,p.x_abuid,p.created_at,p.updated_at,c.name
-FROM people p LEFT JOIN categories c ON p.category_id=c.id
+	// 圈子不在这个查询里取：多对多之后 JOIN 会一人出多行，
+	// 下面的 LIMIT/OFFSET 是按行分页的，每页人数就会被圈子数压掉。改成取完当页再批量补。
+	query := fmt.Sprintf(`SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.archived,p.x_abuid,p.created_at,p.updated_at
+FROM people p
 WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, limit, offset)
 	rows, err := s.DB.QueryContext(ctx, query, args...)
@@ -396,26 +486,22 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 	for rows.Next() {
 		p := &Person{}
 		var grade int
-		var cat sql.NullString
-		var catID sql.NullInt64
 		var avatar sql.NullString
 		if err := rows.Scan(&p.ID, &p.Name, &p.FamilyName, &p.GivenName, &p.Nickname, &p.Gender, &p.Birthday, &p.BirthdayIsLunar, &avatar,
-			&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &catID, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt, &cat); err != nil {
+			&p.Phone, &p.Wechat, &p.Location, &p.Notes, &grade, &p.Archived, &p.XAbUID, &p.CreatedAt, &p.UpdatedAt); err != nil {
 			return nil, err
 		}
 		p.Grade = grade
 		p.AvatarAttachmentID = avatar.String
-		if catID.Valid {
-			v := int(catID.Int64)
-			p.CategoryID = &v
-		}
-		if cat.Valid {
-			v := cat.String
-			p.CategoryName = &v
-		}
 		list = append(list, p)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.attachCategories(ctx, list); err != nil {
+		return nil, err
+	}
+	return list, nil
 }
 
 func (s *Store) PersonCount(ctx context.Context) (int, error) {
@@ -507,13 +593,65 @@ func (s *Store) CategoryUpsert(ctx context.Context, c *Category) error {
 	return err
 }
 
-// CategoryDelete 删除圈子，并把所属人物的圈子置空，避免留下悬空引用。
+// CategoryDelete 删除圈子。people 侧不再挂列，成员关系由
+// person_categories 的 ON DELETE CASCADE 一并清掉。
 func (s *Store) CategoryDelete(ctx context.Context, id int) error {
-	if _, err := s.DB.ExecContext(ctx, "UPDATE people SET category_id=NULL WHERE category_id=?", id); err != nil {
-		return err
-	}
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM categories WHERE id=?", id)
 	return err
+}
+
+// PeopleAddCategories 把一批人各加进若干个圈子，只增不减，已在圈子里的跳过。
+// ids 里的幽灵 id（选人后被别人删掉）由 JOIN people 自然过滤掉，
+// 返回值是真正新增的成员关系条数，供前端提示「其中 N 位原本已在」。
+func (s *Store) PeopleAddCategories(ctx context.Context, ids []string, categoryIDs []int) (int, error) {
+	ids = dedupeStrings(ids)
+	cats := dedupeInts(categoryIDs)
+	if len(ids) == 0 || len(cats) == 0 {
+		return 0, nil
+	}
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids)+1)
+	added := 0
+	for _, cat := range cats {
+		args = args[:0]
+		args = append(args, cat)
+		for _, id := range ids {
+			args = append(args, id)
+		}
+		r, err := tx.ExecContext(ctx, `INSERT INTO person_categories(person_id,category_id)
+SELECT p.id,? FROM people p WHERE p.id IN (`+ph+`) ON CONFLICT DO NOTHING`, args...)
+		if err != nil {
+			return 0, err
+		}
+		n, err := r.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		added += int(n)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return added, nil
+}
+
+// dedupeStrings 保序去重，并丢掉空串。
+func dedupeStrings(in []string) []string {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, v := range in {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 type Tag struct {

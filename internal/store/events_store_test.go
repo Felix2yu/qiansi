@@ -319,20 +319,53 @@ func TestEventStore_Relationships(t *testing.T) {
 	if r.ID == "" {
 		t.Fatalf("应生成 ID")
 	}
-	// INSERT OR REPLACE：同 from/to 再建一条应成功
-	r2 := &Relationship{ID: r.ID, FromPerson: a.ID, ToPerson: b.ID, Type: "好友"}
+	// 同一对人可以挂多种类型：旧版这里是 INSERT OR REPLACE，前一条会被静默顶掉
+	r2 := &Relationship{FromPerson: a.ID, ToPerson: b.ID, Type: "好友"}
 	if err := s.RelationshipCreate(ctx, r2); err != nil {
-		t.Fatalf("RelationshipCreate(replace): %v", err)
+		t.Fatalf("RelationshipCreate(另一种类型): %v", err)
+	}
+	if r2.ID == r.ID {
+		t.Fatalf("新建应拿到独立的 id: %s / %s", r.ID, r2.ID)
+	}
+	// 完全同名才拦
+	dup := &Relationship{FromPerson: a.ID, ToPerson: b.ID, Type: "同事"}
+	if err := s.RelationshipCreate(ctx, dup); !errors.Is(err, ErrRelationshipExists) {
+		t.Fatalf("重复关系应报 ErrRelationshipExists，得到 %v", err)
 	}
 	list, err := s.RelationshipList(ctx)
-	if err != nil || len(list) != 1 {
+	if err != nil || len(list) != 2 {
 		t.Fatalf("RelationshipList = %d (%v)", len(list), err)
 	}
-	if list[0].FromName != "张三" || list[0].ToName != "李四" || list[0].Remark != "" {
-		t.Fatalf("替换后关联/备注不符: %+v", list[0])
+	// 列表没有稳定排序，按类型取，别依赖插入顺序
+	byType := map[string]*Relationship{}
+	for _, rel := range list {
+		byType[rel.Type] = rel
+	}
+	tongshi, haoyou := byType["同事"], byType["好友"]
+	if tongshi == nil || haoyou == nil {
+		t.Fatalf("两条关系没都在: %+v", list)
+	}
+	if tongshi.FromName != "张三" || tongshi.ToName != "李四" || tongshi.Remark != "同项目组" {
+		t.Fatalf("关系姓名/备注不符: %+v", tongshi)
+	}
+	// 更新撞名同样要拦，且不能把原来那条改掉
+	haoyou.Type = "同事"
+	if err := s.RelationshipUpdate(ctx, haoyou); !errors.Is(err, ErrRelationshipExists) {
+		t.Fatalf("更新成已有类型应报 ErrRelationshipExists，得到 %v", err)
+	}
+	again, err := s.RelationshipList(ctx)
+	if err != nil || len(again) != 2 {
+		t.Fatalf("冲突的更新不该改条数: %d (%v)", len(again), err)
+	}
+	survived := map[string]bool{}
+	for _, rel := range again {
+		survived[rel.Type] = true
+	}
+	if !survived["同事"] || !survived["好友"] {
+		t.Fatalf("冲突的更新不该落库: %v", again)
 	}
 	of, err := s.RelationshipsOf(ctx, b.ID)
-	if err != nil || len(of) != 1 {
+	if err != nil || len(of) != 2 {
 		t.Fatalf("RelationshipsOf = %d (%v)", len(of), err)
 	}
 	noneOf, err := s.RelationshipsOf(ctx, "ghost")
@@ -340,8 +373,12 @@ func TestEventStore_Relationships(t *testing.T) {
 		t.Fatalf("未知人物 RelationshipsOf 应空: %v", err)
 	}
 	people, rels, err := s.RelationshipGraph(ctx)
-	if err != nil || len(people) != 2 || len(rels) != 1 {
+	if err != nil || len(people) != 2 || len(rels) != 2 {
 		t.Fatalf("RelationshipGraph: %v / %d / %d", err, len(people), len(rels))
+	}
+	// 后面的单条更新流程只留一条，免得计数绕来绕去
+	if err := s.RelationshipDelete(ctx, haoyou.ID); err != nil {
+		t.Fatalf("RelationshipDelete(好友): %v", err)
 	}
 	// 更新：类型、备注与两端都可改，ID 不变
 	if err := s.RelationshipUpdate(ctx, &Relationship{

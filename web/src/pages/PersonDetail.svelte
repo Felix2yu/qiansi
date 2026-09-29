@@ -18,7 +18,7 @@
     if (!p) return ''
     return [
       p.grade > 0 ? '♥'.repeat(p.grade) : '',
-      p.category_name || '',
+      (p.categories ?? []).map(c => c.name).join('·'),
       p.gender || '',
       p.birthday ? `生日 ${p.birthday}${p.birthday_is_lunar ? '（农历）' : ''}` : '',
     ].filter(Boolean).join(' · ')
