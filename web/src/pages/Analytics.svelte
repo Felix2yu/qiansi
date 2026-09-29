@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import * as echarts from 'echarts'
+  import * as echarts from 'echarts/core'
+  import { BarChart } from 'echarts/charts'
+  import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+  import { CanvasRenderer } from 'echarts/renderers'
   import { API, type GradeDist } from '../lib/api'
+
+  echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
   let monthChartDiv: HTMLDivElement | null = null
   let gradeChartDiv: HTMLDivElement | null = null

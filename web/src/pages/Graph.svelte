@@ -1,9 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import * as echarts from 'echarts'
+  import * as echarts from 'echarts/core'
+  import { GraphChart } from 'echarts/charts'
+  import { LegendComponent, TooltipComponent } from 'echarts/components'
+  import { CanvasRenderer } from 'echarts/renderers'
   import { API, RELATION_TYPES, type Person, type Relationship } from '../lib/api'
   import { navigate } from '../lib/router'
   import { Plus, X, Link2 } from '@lucide/svelte'
+
+  echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
 
   let people = $state<Person[]>([])
   let rels = $state<Relationship[]>([])

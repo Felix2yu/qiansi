@@ -11,10 +11,7 @@
   },
   "dependencies": {
     "@lucide/svelte": "^1.48.0",
-    "dayjs": "latest",
-    "echarts": "latest",
-    "echarts-wordcloud": "latest",
-    "html-to-image": "latest"
+    "echarts": "latest"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "latest",

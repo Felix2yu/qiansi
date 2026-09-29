@@ -2,18 +2,25 @@
   import { onMount } from 'svelte'
   import { route, navigate } from './lib/router'
   import { API, SEARCH_LABEL, type SearchResult } from './lib/api'
+  import type { Component } from 'svelte'
   import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search } from '@lucide/svelte'
   import Today from './pages/Today.svelte'
-  import People from './pages/People.svelte'
-  import PersonDetail from './pages/PersonDetail.svelte'
-  import Events from './pages/Events.svelte'
-  import Memos from './pages/Memos.svelte'
-  import Money from './pages/Money.svelte'
-  import Anniversaries from './pages/Anniversaries.svelte'
-  import Reminders from './pages/Reminders.svelte'
-  import Graph from './pages/Graph.svelte'
-  import Analytics from './pages/Analytics.svelte'
-  import SettingsPage from './pages/Settings.svelte'
+
+  // 只有首页静态引入：其余页面各自成块，用到才下载（关系图/统计带 echarts，最重）
+  const PAGES: Record<string, () => Promise<{ default: Component<any> }>> = {
+    People: () => import('./pages/People.svelte'),
+    PeopleNew: () => import('./pages/People.svelte'),
+    PersonDetail: () => import('./pages/PersonDetail.svelte'),
+    Events: () => import('./pages/Events.svelte'),
+    Timeline: () => import('./pages/Events.svelte'),
+    Memos: () => import('./pages/Memos.svelte'),
+    Money: () => import('./pages/Money.svelte'),
+    Anniversaries: () => import('./pages/Anniversaries.svelte'),
+    Reminders: () => import('./pages/Reminders.svelte'),
+    Graph: () => import('./pages/Graph.svelte'),
+    Analytics: () => import('./pages/Analytics.svelte'),
+    Settings: () => import('./pages/Settings.svelte'),
+  }
 
   const navItems = [
     { label: '今日', path: '/', icon: Home },
@@ -87,6 +94,16 @@
     }
     return map[p] || 'Today'
   }
+
+  const cur = $derived(current())
+  const pageKey = $derived(typeof cur === 'string' ? cur : 'PersonDetail')
+  const pages = $state<Record<string, Component<any> | null>>({})
+
+  $effect(() => {
+    const key = pageKey
+    if (pages[key] || !PAGES[key]) return
+    PAGES[key]().then(m => { pages[key] = m.default })
+  })
 </script>
 
 <div class="min-h-screen flex">
@@ -126,7 +143,7 @@
         <a href={it.path}
            class="flex items-center gap-3 px-5 py-2 text-sm transition-colors"
            style="color: var(--q-text); {isActive(it.path) ? 'background: color-mix(in srgb, var(--q-theme) 12%, transparent);' : ''}"
-           onclick={() => location.pathname !== it.path && (history.pushState({}, '', it.path), window.dispatchEvent(new PopStateEvent('popstate')))}
+           onclick={(e) => { e.preventDefault(); if (location.pathname === it.path) return; history.pushState({}, '', it.path); window.dispatchEvent(new PopStateEvent('popstate')) }}
            >
           <Icon size={18} />
           <span>{it.label}</span>
@@ -160,23 +177,22 @@
   <!-- main -->
   <main class="flex-1 min-w-0 pt-12 md:pt-0">
     <div class="max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-8">
-      {#if typeof current() === 'string'}
-        {#if current() === 'Today'}<Today />
-        {:else if current() === 'People'}<People />
-        {:else if current() === 'PeopleNew'}<People mode="new" />
-        {:else if current() === 'Events'}<Events />
-        {:else if current() === 'Memos'}<Memos />
-        {:else if current() === 'Money'}<Money />
-        {:else if current() === 'Anniversaries'}<Anniversaries />
-        {:else if current() === 'Reminders'}<Reminders />
-        {:else if current() === 'Timeline'}<Events onlyTimeline={true} />
-        {:else if current() === 'Graph'}<Graph />
-        {:else if current() === 'Analytics'}<Analytics />
-        {:else if current() === 'Settings'}<SettingsPage />
-        {:else}<Today />
+      {#if cur === 'Today'}
+        <Today />
+      {:else if typeof cur === 'string'}
+        {#if pages[cur]}
+          {@const Page = pages[cur]}
+          {#if cur === 'PeopleNew'}<Page mode="new" />
+          {:else if cur === 'Timeline'}<Page onlyTimeline={true} />
+          {:else}<Page />{/if}
+        {:else}
+          <div class="text-center py-16" style="color: var(--q-muted);">加载中…</div>
         {/if}
+      {:else if pages.PersonDetail}
+        {@const Page = pages.PersonDetail}
+        <Page id={cur.id} />
       {:else}
-        <PersonDetail id={(current() as any).id} />
+        <div class="text-center py-16" style="color: var(--q-muted);">加载中…</div>
       {/if}
     </div>
   </main>

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -97,16 +98,25 @@ func spaHandler(cfg *config.Config) http.HandlerFunc {
 			log.Printf("[web] serving SPA from %s", c)
 			fs := http.Dir(c)
 			fileServer := http.FileServer(fs)
+			indexFile := filepath.Join(c, "index.html")
 			return func(w http.ResponseWriter, r *http.Request) {
 				path := r.URL.Path
 				f, err := fs.Open(path)
 				if err == nil {
 					f.Close()
+					// /assets/ 下的产物文件名带内容 hash，改版即换名，可以放心让浏览器永久缓存；
+					// 其余（含 index.html）必须每次校验，否则前端更新发不出去。
+					if strings.HasPrefix(path, "/assets/") {
+						w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+					} else {
+						w.Header().Set("Cache-Control", "no-cache")
+					}
 					fileServer.ServeHTTP(w, r)
 					return
 				}
 				// fallback to index.html for SPA routes
-				http.ServeFile(w, r, filepath.Join(c, "index.html"))
+				w.Header().Set("Cache-Control", "no-cache")
+				http.ServeFile(w, r, indexFile)
 			}
 		}
 	}

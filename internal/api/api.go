@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/qiansi/app/internal/config"
 	"github.com/qiansi/app/internal/store"
@@ -32,6 +33,9 @@ func New(s *store.Store, cfg *config.Config) *API {
 		AllowCredentials: false,
 	}))
 	r.Use(api.recoverer)
+	// 文本类响应统一 gzip：前端产物去掉压缩后是 MB 级，公网访问时这是主要耗时。
+	// 只压缩文本类型，图片等已压缩的内容不受影响。
+	r.Use(middleware.Compress(5))
 	r.Use(api.authGuard)
 
 	r.Get("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
