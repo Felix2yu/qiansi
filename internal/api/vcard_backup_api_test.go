@@ -254,6 +254,60 @@ func TestVCardAPIImportDuplicateByNamePhone(t *testing.T) {
 	}
 }
 
+// 导入带 BDAY 的卡片应自动生成生日纪念日（与手工新建联系人一致），重复导入不重复建
+func TestVCardAPIImportCreatesBirthdayAnniversary(t *testing.T) {
+	s := newTestServer(t)
+	text := "BEGIN:VCARD\nVERSION:3.0\nFN:赵六\nBDAY:19920708\nEND:VCARD\n" +
+		"BEGIN:VCARD\nVERSION:3.0\nFN:孙七\nEND:VCARD"
+	rec := s.do(http.MethodPost, "/api/v1/people/import/vcard", map[string]any{"text": text})
+	res := decodeMap(t, rec)
+	if res["imported"] != float64(2) {
+		t.Fatalf("应导入 2 人: %v", res)
+	}
+	ids := map[string]string{}
+	for _, item := range res["people"].([]any) {
+		m, _ := item.(map[string]any)
+		name, _ := m["name"].(string)
+		id, _ := m["id"].(string)
+		ids[name] = id
+		if name == "赵六" {
+			if annivID, _ := m["birthday_anniversary_id"].(string); annivID == "" {
+				t.Errorf("导入响应应回写 birthday_anniversary_id: %v", m)
+			}
+		}
+	}
+	if ids["赵六"] == "" || ids["孙七"] == "" {
+		t.Fatalf("未取到导入的联系人 ID: %v", ids)
+	}
+
+	var n int
+	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='1992-07-08' AND is_lunar=0", ids["赵六"]).Scan(&n); err != nil {
+		t.Fatalf("query anniversaries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("生日应生成 1 条纪念日，得到 %d", n)
+	}
+	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["孙七"]).Scan(&n); err != nil {
+		t.Fatalf("query anniversaries: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("无生日不应生成纪念日，得到 %d", n)
+	}
+
+	// 重复导入走跳过分支：不新建联系人，也不重复生成纪念日
+	rec2 := s.do(http.MethodPost, "/api/v1/people/import/vcard", map[string]any{"text": text})
+	res2 := decodeMap(t, rec2)
+	if res2["imported"] != float64(0) || res2["skipped"] != float64(2) {
+		t.Fatalf("重复导入应全部跳过: %v", res2)
+	}
+	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["赵六"]).Scan(&n); err != nil {
+		t.Fatalf("query anniversaries: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("重复导入后仍应只有 1 条生日纪念日，得到 %d", n)
+	}
+}
+
 // 导入请求的错误分支：空文本 / 非法 JSON / 无 BEGIN / 纯姓名缺失卡片 / 超大请求体
 func TestVCardAPIImportErrors(t *testing.T) {
 	s := newTestServer(t)

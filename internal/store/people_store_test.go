@@ -801,6 +801,84 @@ func TestPeopleMergeRollbackOnError(t *testing.T) {
 	}
 }
 
+// 合并双方都有生日时：source 的生日纪念日不能跟着迁移，否则 target 会收到两条生日提醒；
+// target 自己的关联保持有效，手动纪念日照常迁移。
+func TestPeopleMergeDropsSourceBirthdayAnniversary(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+
+	src := pMustCreate(t, s, &Person{ID: "src2", Name: "甲", Birthday: "1991-03-05"})
+	tgt := pMustCreate(t, s, &Person{ID: "tgt2", Name: "乙", Birthday: "1990-01-01"})
+	for _, p := range []*Person{src, tgt} {
+		if err := s.SyncBirthdayAnniversary(ctx, p); err != nil {
+			t.Fatalf("同步 %s 生日: %v", p.Name, err)
+		}
+	}
+	pRaw(t, s, "INSERT INTO anniversaries(id,person_id,title,date,created_at) VALUES('an2',?,'纪念日','2024-01-01',?)", src.ID, nowUTC())
+
+	if err := s.PersonMerge(ctx, src.ID, tgt.ID); err != nil {
+		t.Fatalf("PersonMerge: %v", err)
+	}
+
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE source='birthday'"); n != 1 {
+		t.Fatalf("生日纪念日应只剩 target 一条，得到 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE id=?", src.BirthdayAnniversaryID); n != 0 {
+		t.Fatalf("source 的生日纪念日应被删除，剩余 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE id=? AND person_id=? AND date='1990-01-01'", tgt.BirthdayAnniversaryID, tgt.ID); n != 1 {
+		t.Fatalf("target 的生日纪念日应保留并归属 target")
+	}
+	if got := pRawScanStr(t, s, "SELECT birthday_anniversary_id FROM people WHERE id=?", tgt.ID); got != tgt.BirthdayAnniversaryID {
+		t.Fatalf("target 的关联应保持自己的纪念日，得到 %q 期望 %q", got, tgt.BirthdayAnniversaryID)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE id='an2' AND person_id=?", tgt.ID); n != 1 {
+		t.Fatalf("手动纪念日应迁移到 target")
+	}
+}
+
+// target 只有 birthday 却从未生成纪念日（例如直接写库的老数据）：合并后按 target 的生日补一条。
+func TestPeopleMergeRebuildsTargetBirthday(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+
+	src := pMustCreate(t, s, &Person{ID: "src3", Name: "甲", Birthday: "1991-03-05"})
+	if err := s.SyncBirthdayAnniversary(ctx, src); err != nil {
+		t.Fatalf("同步 source 生日: %v", err)
+	}
+	tgt := &Person{ID: "tgt3", Name: "乙", Birthday: "1990-01-01"}
+	pMustCreate(t, s, tgt)
+
+	if err := s.PersonMerge(ctx, src.ID, tgt.ID); err != nil {
+		t.Fatalf("PersonMerge: %v", err)
+	}
+
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE source='birthday' AND person_id=?", tgt.ID); n != 1 {
+		t.Fatalf("应补建 target 的生日纪念日，得到 %d", n)
+	}
+	if got := pRawScanStr(t, s, "SELECT date FROM anniversaries WHERE person_id=? AND source='birthday'", tgt.ID); got != "1990-01-01" {
+		t.Fatalf("补建的日期应取 target 的生日，得到 %q", got)
+	}
+	if got := pRawScanStr(t, s, "SELECT IFNULL(birthday_anniversary_id,'<NULL>') FROM people WHERE id=?", tgt.ID); got == "<NULL>" {
+		t.Fatalf("应回写 target 的 birthday_anniversary_id")
+	}
+	// target 无生日：source 的生日纪念日直接消失，不留幽灵提醒
+	plain := pMustCreate(t, s, &Person{ID: "tgt4", Name: "丙"})
+	src4 := pMustCreate(t, s, &Person{ID: "src4", Name: "丁", Birthday: "1992-02-02"})
+	if err := s.SyncBirthdayAnniversary(ctx, src4); err != nil {
+		t.Fatalf("同步 source4 生日: %v", err)
+	}
+	if err := s.PersonMerge(ctx, src4.ID, plain.ID); err != nil {
+		t.Fatalf("PersonMerge: %v", err)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE id=?", src4.BirthdayAnniversaryID); n != 0 {
+		t.Fatalf("target 无生日时 source 的生日纪念日应被删除，剩余 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", plain.ID); n != 0 {
+		t.Fatalf("target 不应留下任何纪念日，得到 %d", n)
+	}
+}
+
 // ===== SyncBirthdayAnniversary =====
 
 func TestPeopleSyncBirthdayAnniversary(t *testing.T) {

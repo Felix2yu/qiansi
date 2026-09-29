@@ -208,6 +208,8 @@ FROM people p LEFT JOIN categories c ON p.category_id=c.id WHERE (` + strings.Jo
 // PersonMerge 把 source 的关联数据全部迁到 target，然后删除 source。
 // 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、自定义字段、关系的两端。
 // 事件参与人用 INSERT OR IGNORE，避免同一事件里出现重复条目。
+// source 的生日纪念日不迁移（它代表 source 自身的生日，而 birthday 字段留在 target 不变），
+// 合并完成后按 target 自己的生日重新同步一次。
 func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) error {
 	if sourceID == "" || targetID == "" || sourceID == targetID {
 		return errors.New("需要两个不同的联系人")
@@ -224,6 +226,8 @@ func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) erro
 		{"INSERT OR IGNORE INTO event_participants(event_id,person_id) SELECT event_id,? FROM event_participants WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE memos SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE transactions SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		// 生日纪念日跟着 source 的 birthday 走，而 birthday 不参与合并，先删掉避免与 target 的重复提醒
+		{"DELETE FROM anniversaries WHERE source='birthday' AND (person_id=? OR id=(SELECT birthday_anniversary_id FROM people WHERE id=?))", []any{sourceID, sourceID}},
 		{"UPDATE anniversaries SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE reminders SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE OR IGNORE taggings SET target_id=? WHERE target_type='person' AND target_id=?", []any{targetID, sourceID}},
@@ -240,7 +244,20 @@ func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) erro
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// 合并后 target 的生日关联可能失效（例如 target 只有 birthday 却从未生成纪念日），
+	// 按 target 自身的生日补同步。必须在提交之后：Sync 走独立连接，
+	// 而单连接池下未提交的事务会与之互等。
+	t, err := s.PersonGet(ctx, targetID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil // target 本就不存在，前面的语句都是 0 行
+		}
+		return err
+	}
+	return s.SyncBirthdayAnniversary(ctx, t)
 }
 
 // SyncBirthdayAnniversary 让「人物生日」与「纪念日」保持双向一致，

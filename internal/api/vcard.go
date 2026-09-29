@@ -649,6 +649,11 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 500, fmt.Sprintf("导入「%s」失败: %v", p.Name, err))
 			return
 		}
+		// BDAY 也要进入纪念日与提醒：手工新建走 peopleCreate 同步，导入路径同样补齐
+		if err := a.Store.SyncBirthdayAnniversary(ctx, p); err != nil {
+			writeErr(w, 500, fmt.Sprintf("同步「%s」生日纪念日失败: %v", p.Name, err))
+			return
+		}
 		if p.XAbUID != "" {
 			uidToID[p.XAbUID] = p.ID
 		}
