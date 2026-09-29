@@ -3,7 +3,7 @@
   import { API, type Person, type Category, type Tag } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import { navigate } from '../lib/router'
-  import { Search, Plus, Trash2, X, Upload, Download } from '@lucide/svelte'
+  import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
 
   let { mode = 'list' }: { mode?: string } = $props()
 
@@ -13,6 +13,19 @@
   let tags = $state<Tag[]>([])
   let selectedCat = $state<number>(0)
   let selectedTag = $state<number>(0)
+  // 归档的人默认不在列表里，靠这个筛选翻出来找回
+  let onlyArchived = $state(false)
+  function toggleArchived() {
+    onlyArchived = !onlyArchived
+    selectMode = false
+    selectedIds = []
+    load()
+  }
+  function tabStyle(active: boolean) {
+    return active
+      ? 'background: var(--q-theme); color: #fff;'
+      : 'color: var(--q-muted);'
+  }
   let showForm = $state(false)
   let editing = $state<Person | null>(null)
   let importing = $state(false)
@@ -69,8 +82,9 @@
 
   async function load(reset = true) {
     if (reset) page = 0
+    const archived = onlyArchived ? '&archived=only' : ''
     const batch = await API.get(
-      `/api/v1/people?q=${encodeURIComponent(q)}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
+      `/api/v1/people?q=${encodeURIComponent(q)}${archived}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
     ) as Person[]
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
@@ -105,6 +119,11 @@
       await API.delete(`/api/v1/people/${p.id}`); await load()
       selectedIds = selectedIds.filter((id) => id !== p.id)
     }
+  }
+  async function unarchive(p: Person) {
+    await API.delete(`/api/v1/people/${p.id}/archive`)
+    await load()
+    selectedIds = selectedIds.filter((id) => id !== p.id)
   }
 
   async function importVCard(e: Event) {
@@ -151,34 +170,40 @@
 
 <div class="space-y-4">
   <header class="flex items-center justify-between gap-3">
-    <div>
+    <div class="min-w-0">
       <h1 class="text-2xl font-semibold">人物</h1>
-      <p class="text-sm mt-1" style="color: var(--q-muted);">管理你的联系人档案</p>
+      <p class="text-sm mt-1 truncate" style="color: var(--q-muted);">{onlyArchived ? '归档只是隐藏，取消归档即可找回' : '管理你的联系人档案'}</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 shrink-0">
       <input type="file" accept=".vcf,.vcard,text/vcard,text/x-vcard" class="hidden" bind:this={vcardInput} onchange={importVCard} />
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap disabled:opacity-50"
               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
               disabled={importing} onclick={exportVCard}>
         <Download size={14} /> 导出 vCard
       </button>
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap disabled:opacity-50"
               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
               disabled={importing} onclick={() => vcardInput?.click()}>
         <Upload size={14} /> {importing ? '导入中…' : '导入 vCard'}
       </button>
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap disabled:opacity-50"
               style={selectMode ? 'background: var(--q-theme); border: 1px solid var(--q-theme); color: #fff;' : 'background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);'}
               onclick={toggleSelectMode}>
         {selectMode ? '退出选择' : '批量'}
       </button>
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={openCreate}>
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm whitespace-nowrap text-white" style="background: var(--q-theme);" onclick={openCreate}>
         <Plus size={14} /> 新建
       </button>
     </div>
   </header>
 
   <div class="flex flex-wrap gap-2">
+    <div class="flex rounded-lg p-0.5 shrink-0" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+      <button class="px-3 py-1.5 rounded-md text-sm whitespace-nowrap"
+              style={tabStyle(!onlyArchived)} onclick={() => { if (onlyArchived) toggleArchived() }}>联系人</button>
+      <button class="px-3 py-1.5 rounded-md text-sm whitespace-nowrap"
+              style={tabStyle(onlyArchived)} onclick={() => { if (!onlyArchived) toggleArchived() }}>已归档</button>
+    </div>
     <div class="relative flex-1 min-w-[200px]">
       <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
       <input class="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none" placeholder="搜索…"
@@ -227,20 +252,27 @@
             <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold shrink-0" style="background: var(--q-theme);">{p.name.slice(0,1)}</div>
             <div class="flex-1 min-w-0">
               <div class="font-medium truncate">{p.name}</div>
-              <div class="text-xs mt-0.5" style="color: var(--q-muted);">
-                {#if p.grade > 0}{'♥'.repeat(p.grade)}{:else}{'♡'.repeat(5)}{/if}{p.category_name && ` · ${p.category_name}`}
-              </div>
+              {#if p.grade > 0 || p.category_name}
+                <div class="text-xs mt-0.5" style="color: var(--q-muted);">
+                  {#if p.grade > 0}{'♥'.repeat(p.grade)}{p.category_name && ` · ${p.category_name}`}{:else}{p.category_name || ''}{/if}
+                </div>
+              {/if}
               {#if p.notes}<div class="text-xs mt-1 line-clamp-2" style="color: var(--q-muted);">{p.notes}</div>{/if}
             </div>
           </a>
           <div class="flex gap-1">
+            {#if onlyArchived}
+              <button class="p-1 rounded hover:bg-black/5 dark:hover:bg-white/10" onclick={() => unarchive(p)} title="取消归档"><Undo2 size={14} /></button>
+            {/if}
             <button class="p-1 rounded hover:bg-black/5 dark:hover:bg-white/10" onclick={() => openEdit(p)} title="编辑">✎</button>
             <button class="p-1 rounded hover:bg-black/5 dark:hover:bg-white/10" onclick={() => remove(p)} title="删除"><Trash2 size={14} /></button>
           </div>
         </div>
       </div>
     {:else}
-      <div class="col-span-full text-center py-12 text-sm" style="color: var(--q-muted);">暂无联系人，点击右上角新建，或导入 vCard 通讯录文件</div>
+      <div class="col-span-full text-center py-12 text-sm" style="color: var(--q-muted);">
+        {#if onlyArchived}没有已归档的联系人{:else}暂无联系人，点击右上角新建，或导入 vCard 通讯录文件{/if}
+      </div>
     {/each}
   </div>
   {#if hasMore}
