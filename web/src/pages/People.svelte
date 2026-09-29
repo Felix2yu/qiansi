@@ -228,7 +228,7 @@
             <div class="flex-1 min-w-0">
               <div class="font-medium truncate">{p.name}</div>
               <div class="text-xs mt-0.5" style="color: var(--q-muted);">
-                Grade {'★'.repeat(p.grade)}{p.category_name && ` · ${p.category_name}`}
+                {#if p.grade > 0}{'♥'.repeat(p.grade)}{:else}{'♡'.repeat(5)}{/if}{p.category_name && ` · ${p.category_name}`}
               </div>
               {#if p.notes}<div class="text-xs mt-1 line-clamp-2" style="color: var(--q-muted);">{p.notes}</div>{/if}
             </div>

@@ -217,7 +217,7 @@
           {#if person.archived}<span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--q-bg); color: var(--q-muted);">已归档</span>{/if}
         </div>
         <div class="mt-1 text-sm" style="color: var(--q-muted);">
-          Grade {'★'.repeat(person.grade)}{person.category_name && ` · ${person.category_name}`}
+          {person.grade > 0 ? '♥'.repeat(person.grade) : '♡'.repeat(5)}{person.category_name && ` · ${person.category_name}`}
           {person.gender && ` · ${person.gender}`}
           {person.birthday && ` · 生日 ${person.birthday}${person.birthday_is_lunar ? '（农历）' : ''}`}
         </div>

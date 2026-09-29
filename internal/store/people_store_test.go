@@ -226,7 +226,7 @@ func TestPeopleCreateDefaultsAndRoundTrip(t *testing.T) {
 	ctx := pctx(t)
 	s := newTestStore(t)
 
-	// grade=0 时默认 3；ID 为空时自动生成 uuid
+	// grade 不再默认赋值（0 = 未设置亲密度）；ID 为空时自动生成 uuid
 	p := &Person{
 		Name:            "张三丰",
 		FamilyName:      "张",
@@ -248,8 +248,8 @@ func TestPeopleCreateDefaultsAndRoundTrip(t *testing.T) {
 	if p.ID == "" || len(p.ID) < 32 {
 		t.Fatalf("应自动生成 uuid，得到 %q", p.ID)
 	}
-	if p.Grade != 3 {
-		t.Fatalf("grade 默认应为 3，得到 %d", p.Grade)
+	if p.Grade != 0 {
+		t.Fatalf("grade 默认应为 0（未设置亲密度），得到 %d", p.Grade)
 	}
 	if p.CreatedAt == "" || p.UpdatedAt != p.CreatedAt {
 		t.Fatalf("created_at/updated_at 应被写入且相同: %q %q", p.CreatedAt, p.UpdatedAt)
@@ -262,7 +262,7 @@ func TestPeopleCreateDefaultsAndRoundTrip(t *testing.T) {
 	if got.Name != "张三丰" || got.FamilyName != "张" || got.GivenName != "三丰" ||
 		got.Nickname != "三哥" || got.Gender != "male" || got.Birthday != "1990-05-06" ||
 		!got.BirthdayIsLunar || got.Phone != "13800000000" || got.Wechat != "zsf_wx" ||
-		got.Location != "杭州" || got.Notes != "武当山同事" || got.Grade != 3 ||
+		got.Location != "杭州" || got.Notes != "武当山同事" || got.Grade != 0 ||
 		got.Archived || got.XAbUID != "ABUID-1" || got.ID != p.ID ||
 		got.CreatedAt != p.CreatedAt {
 		t.Fatalf("PersonGet 回读不一致: %+v", got)

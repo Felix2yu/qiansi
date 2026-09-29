@@ -1141,7 +1141,7 @@ type PersonIntimacy struct {
 func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonIntimacy, error) {
 	p, err := s.PersonGet(ctx, personID)
 	if err != nil { return nil, err }
-	grade := 3
+	grade := 0
 	if p != nil { grade = p.Grade }
 	// Recent event count
 	var recentCount int

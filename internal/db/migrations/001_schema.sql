@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS people (
     wechat TEXT,
     location TEXT,
     notes TEXT,
-    grade INTEGER DEFAULT 3,
+    grade INTEGER DEFAULT 0,
     category_id INTEGER,
     archived INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,

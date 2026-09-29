@@ -90,9 +90,9 @@ func TestAPIPeopleCreateNameFallbacks(t *testing.T) {
 		})
 	}
 
-	// 默认 grade=3，显式 grade 生效
+	// 默认 grade=0（未设置亲密度），显式 grade 生效
 	def := apiCreatePersonMap(t, s, map[string]any{"name": "默认等级"})
-	if int(def["grade"].(float64)) != 3 {
+	if int(def["grade"].(float64)) != 0 {
 		t.Fatalf("默认 grade = %v", def["grade"])
 	}
 	custom := apiCreatePersonMap(t, s, map[string]any{"name": "高等级", "grade": 5})

@@ -40,9 +40,9 @@
     gradeChart.setOption({
       tooltip: {},
       grid: { left: 40, right: 20, top: 20, bottom: 30 },
-      xAxis: { type: 'category', data: rows.map(r => '★'.repeat(r.grade)) },
+      xAxis: { type: 'category', data: rows.map(r => r.grade > 0 ? '♥'.repeat(r.grade) : '未设置') },
       yAxis: { type: 'value' },
-      series: [{ type: 'bar', data: rows.map(r => ({ value: r.count, itemStyle: { color: colors[r.grade-1] || '#3b82f6' } })) }],
+      series: [{ type: 'bar', data: rows.map(r => ({ value: r.count, itemStyle: { color: r.grade > 0 ? (colors[r.grade-1] || '#3b82f6') : '#cbd5e1' } })) }],
     })
   }
   function onResize() { monthChart?.resize(); gradeChart?.resize() }

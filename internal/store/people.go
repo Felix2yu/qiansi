@@ -80,9 +80,6 @@ func (s *Store) PersonCreate(ctx context.Context, p *Person) error {
 	}
 	p.CreatedAt = nowUTC()
 	p.UpdatedAt = p.CreatedAt
-	if p.Grade == 0 {
-		p.Grade = 3
-	}
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO people(id,name,family_name,given_name,nickname,gender,birthday,birthday_is_lunar,avatar_attachment_id,phone,wechat,location,notes,grade,category_id,archived,x_abuid,created_at,updated_at)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		p.ID, p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,

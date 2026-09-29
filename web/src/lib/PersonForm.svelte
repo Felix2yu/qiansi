@@ -77,7 +77,7 @@
   }
 
   function emptyForm(): Form {
-    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 3, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', category_id: 0 }
+    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', category_id: 0 }
   }
 
   // 人物对象变化（切换编辑目标）时重新灌入表单与标签
@@ -205,13 +205,16 @@
   <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="位置"
          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.location} />
   <div>
-    <div class="text-xs mb-1" style="color: var(--q-muted);">亲密度分级 1–5</div>
+    <div class="text-xs mb-1" style="color: var(--q-muted);">亲密度 1–5{form.grade === 0 ? '（当前未设置）' : ''}</div>
     <div class="flex gap-1">
       {#each [1,2,3,4,5] as g}
         <button class="w-8 h-8 rounded-md text-sm font-semibold transition"
                 style={form.grade >= g ? 'background: var(--q-theme); color: white;' : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
                 onclick={() => form.grade = g}>{g}</button>
       {/each}
+      <button class="h-8 px-2 rounded-md text-sm transition" title="清除亲密度"
+              style="background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);"
+              onclick={() => form.grade = 0}>清除</button>
     </div>
   </div>
   <select bind:value={form.category_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">

@@ -809,11 +809,11 @@ func TestBackupList(t *testing.T) {
 }
 
 // vcardBackupSeedVersions 补齐 schema_version 记录：
-// testdb 直接执行迁移文件不写版本号，而生产库由 RunMigrations 写入 1..5；
+// testdb 直接执行迁移文件不写版本号，而生产库由 RunMigrations 写入 1..6；
 // 恢复流程末尾会跑 RunMigrations，缺版本号会重放 002+ 导致 duplicate column。
 func vcardBackupSeedVersions(t *testing.T, s *testServer) {
 	t.Helper()
-	if _, err := s.Store.DB.Exec("INSERT INTO schema_version(version) VALUES(1),(2),(3),(4),(5)"); err != nil {
+	if _, err := s.Store.DB.Exec("INSERT INTO schema_version(version) VALUES(1),(2),(3),(4),(5),(6)"); err != nil {
 		t.Fatalf("seed schema_version: %v", err)
 	}
 }
