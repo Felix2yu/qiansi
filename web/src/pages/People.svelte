@@ -260,7 +260,7 @@
         <h2 class="font-semibold">{editing ? '编辑' : '新建'}联系人</h2>
         <button class="p-1 rounded" onclick={() => showForm = false}><X size={18} /></button>
       </div>
-      <PersonForm person={editing} {categories} {tags} onsave={onSaved} oncancel={() => (showForm = false)} />
+      <PersonForm person={editing} {categories} {tags} onsave={onSaved} onrelchange={() => load()} oncancel={() => (showForm = false)} />
     </div>
   </div>
 {/if}

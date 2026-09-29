@@ -1,5 +1,6 @@
 <script lang="ts">
   import { API, type Person, type Category, type Tag } from './api'
+  import PersonRelEditor from './PersonRelEditor.svelte'
 
   let {
     person = null,
@@ -7,12 +8,15 @@
     tags = [],
     onsave,
     oncancel,
+    onrelchange,
   }: {
     person?: Person | null
     categories?: Category[]
     tags?: Tag[]
     onsave?: (saved: Person) => void
     oncancel?: () => void
+    /** 关系变动时只刷新外层数据，不走 onsave，免得弹窗被关掉 */
+    onrelchange?: () => void
   } = $props()
 
   type Form = {
@@ -237,6 +241,14 @@
   {/if}
   <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" placeholder="备注、爱好、口味…"
             style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.notes}></textarea>
+
+  <!-- 关系挂在独立的 relationships 表上，只有已存在的联系人才能配关系 -->
+  {#if person?.id}
+    <div class="pt-3 mt-1" style="border-top: 1px solid var(--q-border);">
+      <h3 class="text-sm font-medium mb-2">关系</h3>
+      <PersonRelEditor personId={person.id} onchange={() => onrelchange?.()} />
+    </div>
+  {/if}
 </div>
 
 <div class="flex justify-end gap-2 mt-5">

@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, RELATION_TYPES, TIMELINE_LABEL, todayLocal, toFen,
+  import { API, TIMELINE_LABEL, todayLocal, toFen,
            type Person, type TimelineItem, type Category, type Tag,
-           type PersonField, type Relationship, type TrendPoint } from '../lib/api'
+           type PersonField, type TrendPoint } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
+  import PersonRelEditor from '../lib/PersonRelEditor.svelte'
   import { navigate } from '../lib/router'
   import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload } from '@lucide/svelte'
 
@@ -15,13 +16,9 @@
   let tags = $state<Tag[]>([])
   let ownedTags = $state<Tag[]>([])
   let fields = $state<PersonField[]>([])
-  let rels = $state<Relationship[]>([])
   let loading = $state(true)
   let showEdit = $state(false)
-  let showRelForm = $state(false)
-  let relForm = $state({ to_person_id: '', type: RELATION_TYPES[0], remark: '' })
   let newField = $state({ label: '', value: '' })
-  let peopleOptions = $state<Person[]>([])
   let words = $state<{ word: string; count: number }[]>([])
   let avatarInput: HTMLInputElement | undefined = $state()
   let uploadingAvatar = $state(false)
@@ -29,10 +26,6 @@
   let quick = $state<'' | 'event' | 'money' | 'memo'>('')
   let quickText = $state('')
   let quickAmount = $state('')
-
-  onMount(() => {
-    API.get<Person[]>('/api/v1/people?limit=500').then(l => (peopleOptions = l)).catch(() => {})
-  })
 
   async function loadWords() {
     try {
@@ -113,20 +106,18 @@
       const r = await API.get(`/api/v1/people/${id}`) as any
       person = r.person
       fields = (r.fields || []) as PersonField[]
-      const [tl, inti, cats, tg, owned, rl] = await Promise.all([
+      const [tl, inti, cats, tg, owned] = await Promise.all([
         API.get(`/api/v1/people/${id}/timeline`) as Promise<TimelineItem[]>,
         API.get(`/api/v1/people/${id}/intimacy`) as Promise<any>,
         API.get('/api/v1/categories') as Promise<Category[]>,
         API.get('/api/v1/tags') as Promise<Tag[]>,
         API.get(`/api/v1/taggings/of?target_type=person&target_id=${id}`) as Promise<Tag[]>,
-        API.get(`/api/v1/relationships/of/${id}`) as Promise<Relationship[]>,
       ])
       timeline = tl
       intimacy = inti
       categories = cats
       tags = tg
       ownedTags = owned || []
-      rels = rl || []
       loadWords()
     } finally { loading = false }
   }
@@ -151,34 +142,11 @@
     fields = fields.filter(f => f.id !== fid)
   }
 
-  async function addRel() {
-    if (!relForm.to_person_id) { alert('请选择对方'); return }
-    try {
-      await API.post('/api/v1/relationships', {
-        from_person_id: id, to_person_id: relForm.to_person_id,
-        type: relForm.type, remark: relForm.remark,
-      })
-      showRelForm = false
-      relForm = { to_person_id: '', type: RELATION_TYPES[0], remark: '' }
-      rels = await API.get(`/api/v1/relationships/of/${id}`) as Relationship[]
-    } catch (err: any) {
-      alert('添加失败：' + (err?.message || err))
-    }
-  }
-  async function removeRel(rid: string) {
-    if (!confirm('删除这条关系？')) return
-    await API.delete(`/api/v1/relationships/${rid}`)
-    rels = await API.get(`/api/v1/relationships/of/${id}`) as Relationship[]
-  }
-
   // 兼容两种存法：完整 URL（/uploads/x）或裸的 stored_name
   function avatarSrc(v: string) {
     return v.startsWith('/') || v.startsWith('http') ? v : '/uploads/' + v
   }
 
-  function otherName(r: Relationship) {
-    return r.from_person_id === id ? (r.to_name || '?') : (r.from_name || '?')
-  }
   function trendPoints(): TrendPoint[] {
     return (intimacy?.trend || []).filter(p => typeof p?.score === 'number')
   }
@@ -297,39 +265,8 @@
     </section>
 
     <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-medium">关系</h2>
-        <button class="flex items-center gap-1 text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => (showRelForm = !showRelForm)}>
-          <Plus size={12} /> 添加关系
-        </button>
-      </div>
-      {#if showRelForm}
-        <div class="grid grid-cols-3 gap-2 mb-3">
-          <select bind:value={relForm.to_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-            <option value="">选择对方</option>
-            {#each peopleOptions as p}<option value={p.id}>{p.name}</option>{/each}
-          </select>
-          <select bind:value={relForm.type} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-            {#each RELATION_TYPES as t}<option value={t}>{t}</option>{/each}
-          </select>
-          <div class="flex gap-2">
-            <input bind:value={relForm.remark} placeholder="备注（可选）" class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-            <button class="px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={addRel}>保存</button>
-          </div>
-        </div>
-      {/if}
-      <ul class="space-y-1">
-        {#each rels as r}
-          <li class="flex items-center gap-2 text-sm px-2 py-1 rounded-md" style="background: var(--q-bg);">
-            <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--q-surface); color: var(--q-muted);">{r.type}</span>
-            <span>{otherName(r)}</span>
-            {#if r.remark}<span style="color: var(--q-muted);">· {r.remark}</span>{/if}
-            <button class="ml-auto" style="color: var(--q-muted);" onclick={() => removeRel(r.id)}><Trash2 size={14} /></button>
-          </li>
-        {:else}
-          <li class="text-sm" style="color: var(--q-muted);">还没有维护关系</li>
-        {/each}
-      </ul>
+      <h2 class="text-sm font-medium mb-3">关系</h2>
+      <PersonRelEditor personId={id} />
     </section>
 
     {#if words.length > 0}
@@ -379,7 +316,7 @@
         <h2 class="font-semibold">编辑联系人</h2>
         <button onclick={() => (showEdit = false)}><X size={18} /></button>
       </div>
-      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load() }} oncancel={() => (showEdit = false)} />
+      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load() }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
     </div>
   </div>
 {/if}
