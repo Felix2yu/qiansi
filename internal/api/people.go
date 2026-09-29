@@ -332,6 +332,7 @@ func (a *API) registerRelationships(r chi.Router) {
 		r.Get("/", a.graph)
 		r.Get("/of/{id}", a.relsOf)
 		r.Post("/", a.relCreate)
+		r.Put("/{id}", a.relUpdate)
 		r.Delete("/{id}", a.relDelete)
 	})
 }
@@ -346,25 +347,50 @@ func (a *API) relsOf(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, list)
 }
 
+// 关系的双方与类型校验，创建与更新共用；返回空串表示通过
+func validateRel(rel *store.Relationship) string {
+	if rel.FromPerson == "" || rel.ToPerson == "" {
+		return "需要指定关系的双方"
+	}
+	if rel.FromPerson == rel.ToPerson {
+		return "不能与自己建立关系"
+	}
+	if strings.TrimSpace(rel.Type) == "" {
+		return "type required"
+	}
+	return ""
+}
+
 func (a *API) relCreate(w http.ResponseWriter, r *http.Request) {
 	var rel store.Relationship
 	if err := decode(r, &rel); err != nil {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if rel.FromPerson == "" || rel.ToPerson == "" {
-		writeErr(w, 400, "需要指定关系的双方")
-		return
-	}
-	if rel.FromPerson == rel.ToPerson {
-		writeErr(w, 400, "不能与自己建立关系")
-		return
-	}
-	if strings.TrimSpace(rel.Type) == "" {
-		writeErr(w, 400, "type required")
+	if msg := validateRel(&rel); msg != "" {
+		writeErr(w, 400, msg)
 		return
 	}
 	if err := a.Store.RelationshipCreate(r.Context(), &rel); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, rel)
+}
+
+// relUpdate 以 URL 里的 id 为准，body 只提供要改的字段
+func (a *API) relUpdate(w http.ResponseWriter, r *http.Request) {
+	var rel store.Relationship
+	if err := decode(r, &rel); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	rel.ID = chi.URLParam(r, "id")
+	if msg := validateRel(&rel); msg != "" {
+		writeErr(w, 400, msg)
+		return
+	}
+	if err := a.Store.RelationshipUpdate(r.Context(), &rel); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}

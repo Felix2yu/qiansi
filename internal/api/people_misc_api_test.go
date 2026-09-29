@@ -647,6 +647,45 @@ func TestAPIPeopleRelationships(t *testing.T) {
 		t.Fatalf("替换后的关系无 id: %v", current)
 	}
 
+	// 更新：改类型与备注，id 与两端不变
+	created := current[0].(map[string]any)["created_at"].(string)
+	apiWantStatus(t, http.MethodPut, "rel update", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": "老同事", "remark": "同组",
+	}), http.StatusOK)
+	upd := apiArray(s, "/api/v1/relationships/of/"+a)
+	if len(upd) != 1 {
+		t.Fatalf("更新后条数 = %d: %v", len(upd), upd)
+	}
+	u0 := upd[0].(map[string]any)
+	if u0["id"] != rid || u0["type"] != "老同事" || u0["remark"] != "同组" {
+		t.Fatalf("更新未生效: %v", u0)
+	}
+	if u0["created_at"] != created {
+		t.Fatalf("更新不应改 created_at: %v / %v", u0["created_at"], created)
+	}
+	// 备注置空 => 落库为 NULL，列表里不返回 remark
+	s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": "老同事",
+	})
+	if got := apiArray(s, "/api/v1/relationships/of/"+a)[0].(map[string]any); got["remark"] != nil {
+		t.Fatalf("空备注应为 nil: %v", got)
+	}
+	// 更新同样走校验
+	apiWantError(t, http.MethodPut, "rel update self", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"from_person_id": a, "to_person_id": a, "type": "同学",
+	}), http.StatusBadRequest, "不能与自己建立关系")
+	apiWantError(t, http.MethodPut, "rel update no type", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": " ",
+	}), http.StatusBadRequest, "type required")
+	apiWantError(t, http.MethodPut, "rel update missing side", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
+		"type": "同学",
+	}), http.StatusBadRequest, "需要指定关系的双方")
+	apiWantStatus(t, http.MethodPut, "rel update bad json", s.raw(http.MethodPut, "/api/v1/relationships/"+rid, []byte("not-json"), "application/json"), http.StatusBadRequest)
+	// body 里的 id 不作数，以 URL 为准
+	apiWantStatus(t, http.MethodPut, "rel update ghost", s.do(http.MethodPut, "/api/v1/relationships/ghost", map[string]any{
+		"from_person_id": a, "to_person_id": b, "type": "陌生人",
+	}), http.StatusInternalServerError)
+
 	// 图
 	graph := s.get("/api/v1/relationships/")
 	people, ok := graph["people"].([]any)
@@ -819,6 +858,7 @@ func TestAPIPeopleDBErrors(t *testing.T) {
 		{"duplicates", http.MethodGet, "/api/v1/people/duplicates?name=x", nil, http.StatusInternalServerError},
 		{"rels of", http.MethodGet, "/api/v1/relationships/of/1", nil, http.StatusInternalServerError},
 		{"rels create", http.MethodPost, "/api/v1/relationships/", map[string]any{"from_person_id": "1", "to_person_id": "2", "type": "t"}, http.StatusInternalServerError},
+		{"rels update", http.MethodPut, "/api/v1/relationships/1", map[string]any{"from_person_id": "1", "to_person_id": "2", "type": "t"}, http.StatusInternalServerError},
 		{"rels delete", http.MethodDelete, "/api/v1/relationships/1", nil, http.StatusInternalServerError},
 		{"graph", http.MethodGet, "/api/v1/relationships/", nil, http.StatusInternalServerError},
 	}

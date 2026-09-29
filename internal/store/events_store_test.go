@@ -343,6 +343,30 @@ func TestEventStore_Relationships(t *testing.T) {
 	if err != nil || len(people) != 2 || len(rels) != 1 {
 		t.Fatalf("RelationshipGraph: %v / %d / %d", err, len(people), len(rels))
 	}
+	// 更新：类型、备注与两端都可改，ID 不变
+	if err := s.RelationshipUpdate(ctx, &Relationship{
+		ID: r.ID, FromPerson: b.ID, ToPerson: a.ID, Type: "老友", Remark: "重逢",
+	}); err != nil {
+		t.Fatalf("RelationshipUpdate: %v", err)
+	}
+	got, err := s.RelationshipList(ctx)
+	if err != nil || len(got) != 1 {
+		t.Fatalf("更新后 = %d (%v)", len(got), err)
+	}
+	if got[0].Type != "老友" || got[0].Remark != "重逢" || got[0].FromName != "李四" || got[0].ToName != "张三" {
+		t.Fatalf("更新后内容不符: %+v", got[0])
+	}
+	// 备注置空落库为 NULL
+	if err := s.RelationshipUpdate(ctx, &Relationship{ID: r.ID, FromPerson: a.ID, ToPerson: b.ID, Type: "同事"}); err != nil {
+		t.Fatalf("RelationshipUpdate(清备注): %v", err)
+	}
+	if l, _ := s.RelationshipList(ctx); l[0].Remark != "" {
+		t.Fatalf("清空备注失败: %+v", l[0])
+	}
+	// 更新不存在的 id => sql.ErrNoRows
+	if err := s.RelationshipUpdate(ctx, &Relationship{ID: "ghost", FromPerson: a.ID, ToPerson: b.ID, Type: "t"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("更新未知关系错误 = %v，期望 sql.ErrNoRows", err)
+	}
 	if err := s.RelationshipDelete(ctx, r.ID); err != nil {
 		t.Fatalf("RelationshipDelete: %v", err)
 	}
@@ -1251,6 +1275,7 @@ func TestEventStore_ClosedDBErrors(t *testing.T) {
 	wantErr("MemoList", err)
 
 	wantErr("RelationshipCreate", s.RelationshipCreate(ctx, &Relationship{ID: "r", FromPerson: "a", ToPerson: "b", Type: "t"}))
+	wantErr("RelationshipUpdate", s.RelationshipUpdate(ctx, &Relationship{ID: "r", FromPerson: "a", ToPerson: "b", Type: "t"}))
 	wantErr("RelationshipDelete", s.RelationshipDelete(ctx, "r"))
 	_, err = s.RelationshipList(ctx)
 	wantErr("RelationshipList", err)

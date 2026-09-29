@@ -329,6 +329,25 @@ func (s *Store) RelationshipCreate(ctx context.Context, r *Relationship) error {
 	return err
 }
 
+// RelationshipUpdate 改两端、类型与备注；ID 不变，created_at 保持原值
+func (s *Store) RelationshipUpdate(ctx context.Context, r *Relationship) error {
+	var remark any
+	if r.Remark != "" {
+		remark = r.Remark
+	} else {
+		remark = nil
+	}
+	res, err := s.DB.ExecContext(ctx, "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
+		r.FromPerson, r.ToPerson, r.Type, remark, r.ID)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (s *Store) RelationshipDelete(ctx context.Context, id string) error {
 	_, err := s.DB.ExecContext(ctx, "DELETE FROM relationships WHERE id=?", id)
 	return err
