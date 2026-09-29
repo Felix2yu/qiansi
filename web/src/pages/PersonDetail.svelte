@@ -8,7 +8,7 @@
   import EventForm from '../lib/EventForm.svelte'
   import { navigate } from '../lib/router'
   import { self, setSelf, loadSelf } from '../lib/self.svelte'
-  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck } from '@lucide/svelte'
+  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
   let person = $state<Person | null>(null)
@@ -32,6 +32,9 @@
   let loading = $state(true)
   let showEdit = $state(false)
   let newField = $state({ label: '', value: '' })
+  let editingFieldId = $state('')
+  let fieldForm = $state({ label: '', value: '' })
+  let busyField = $state(false)
   let words = $state<{ word: string; count: number }[]>([])
   let avatarInput: HTMLInputElement | undefined = $state()
   let uploadingAvatar = $state(false)
@@ -106,6 +109,17 @@
     } finally {
       input.value = ''
       uploadingAvatar = false
+    }
+  }
+
+  // 之前只能换头像不能摘，传错了也没法回到首字占位
+  async function removeAvatar() {
+    if (!person) return
+    try {
+      await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: '' })
+      await load()
+    } catch (err: any) {
+      alert('移除头像失败：' + (err?.message || err))
     }
   }
 
@@ -185,14 +199,40 @@
 
   async function addField() {
     if (!newField.label.trim()) return
-    const saved = await API.post(`/api/v1/people/${id}/fields`, { label: newField.label.trim(), value: newField.value.trim() }) as PersonField
-    fields = [...fields, saved]
-    newField = { label: '', value: '' }
+    try {
+      const saved = await API.post(`/api/v1/people/${id}/fields`, { label: newField.label.trim(), value: newField.value.trim() }) as PersonField
+      fields = [...fields, saved]
+      newField = { label: '', value: '' }
+    } catch (err: any) {
+      alert('添加失败：' + (err?.message || err))
+    }
+  }
+  // 带 id 提交就是更新（后端 ON CONFLICT(id) DO UPDATE），否则改一个字只能删了重建
+  function startEditField(f: PersonField) {
+    editingFieldId = f.id
+    fieldForm = { label: f.label, value: f.value || '' }
+  }
+  async function saveField(f: PersonField) {
+    if (!fieldForm.label.trim()) { alert('字段名不能为空'); return }
+    busyField = true
+    try {
+      const saved = await API.post(`/api/v1/people/${id}/fields`,
+        { id: f.id, label: fieldForm.label.trim(), value: fieldForm.value.trim(), sort_order: f.sort_order ?? 0 }) as PersonField
+      fields = fields.map(x => x.id === saved.id ? saved : x)
+      editingFieldId = ''
+    } catch (err: any) {
+      alert('保存失败：' + (err?.message || err))
+    } finally { busyField = false }
   }
   async function removeField(fid: string) {
     if (!confirm('删除这个自定义字段？')) return
-    await API.delete(`/api/v1/people/${id}/fields/${fid}`)
-    fields = fields.filter(f => f.id !== fid)
+    try {
+      await API.delete(`/api/v1/people/${id}/fields/${fid}`)
+      if (editingFieldId === fid) editingFieldId = ''
+      fields = fields.filter(f => f.id !== fid)
+    } catch (err: any) {
+      alert('删除失败：' + (err?.message || err))
+    }
   }
 
   // 兼容两种存法：完整 URL（/uploads/x）或裸的 stored_name
@@ -256,6 +296,9 @@
       <div class="flex flex-col gap-1">
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="编辑" onclick={() => (showEdit = true)}><Edit3 size={16} /></button>
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title={person.archived ? '取消归档' : '归档'} onclick={toggleArchive}><Archive size={16} /></button>
+        {#if person.avatar_attachment_id}
+          <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="移除头像" onclick={removeAvatar}><ImageOff size={16} /></button>
+        {/if}
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" style={self.id === id ? 'color: var(--q-theme);' : ''}
                 title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'} onclick={toggleSelf}><UserCheck size={16} /></button>
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="删除" onclick={remove}><Trash2 size={16} /></button>
@@ -301,19 +344,35 @@
     <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <h2 class="text-sm font-medium mb-3">自定义字段</h2>
       <ul class="space-y-1 mb-3">
-        {#each fields as f}
-          <li class="flex items-center gap-2 text-sm px-2 py-1 rounded-md" style="background: var(--q-bg);">
-            <span style="color: var(--q-muted);">{f.label}</span>
-            <span class="truncate">{f.value || '—'}</span>
-            <button class="ml-auto" style="color: var(--q-muted);" onclick={() => removeField(f.id)}><Trash2 size={14} /></button>
+        {#each fields as f (f.id)}
+          <li class="text-sm px-2 py-1 rounded-md" style="background: var(--q-bg);">
+            {#if editingFieldId === f.id}
+              <div class="flex flex-wrap items-center gap-2">
+                <input bind:value={fieldForm.label} placeholder="字段名" class="w-24 px-2 py-1 rounded-lg text-xs outline-none"
+                       style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+                <input bind:value={fieldForm.value} placeholder="值" class="flex-1 min-w-24 px-2 py-1 rounded-lg text-xs outline-none"
+                       style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+                <button class="p-1 rounded disabled:opacity-60" style="color: var(--q-theme);" title="保存" disabled={busyField} onclick={() => saveField(f)}><Check size={14} /></button>
+                <button class="p-1 rounded" style="color: var(--q-muted);" title="取消" onclick={() => (editingFieldId = '')}><X size={14} /></button>
+              </div>
+            {:else}
+              <div class="flex items-center gap-2">
+                <span style="color: var(--q-muted);">{f.label}</span>
+                <span class="truncate">{f.value || '—'}</span>
+                <span class="ml-auto flex items-center gap-1 shrink-0">
+                  <button class="p-0.5" style="color: var(--q-muted);" title="编辑" onclick={() => startEditField(f)}><Pencil size={14} /></button>
+                  <button class="p-0.5" style="color: var(--q-muted);" title="删除" onclick={() => removeField(f.id)}><Trash2 size={14} /></button>
+                </span>
+              </div>
+            {/if}
           </li>
         {:else}
           <li class="text-sm" style="color: var(--q-muted);">还没有自定义字段</li>
         {/each}
       </ul>
       <div class="flex gap-2">
-        <input bind:value={newField.label} placeholder="字段名（如 口味）" class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-        <input bind:value={newField.value} placeholder="值" class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
+        <input bind:value={newField.label} placeholder="字段名（如 口味）" class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" onkeydown={(e) => e.key === 'Enter' && addField()} />
+        <input bind:value={newField.value} placeholder="值" class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" onkeydown={(e) => e.key === 'Enter' && addField()} />
         <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={addField}><Plus size={14} /> 添加</button>
       </div>
     </section>

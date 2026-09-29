@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, type Category, type Tag, type EventType, type BackupItem } from '../lib/api'
-  import { Plus, Trash2, Download, Upload, Palette, Moon, Sun, Bell } from '@lucide/svelte'
+  import TermList from '../lib/TermList.svelte'
+  import { Download, Upload, Palette, Moon, Sun, Bell } from '@lucide/svelte'
 
   let settings = $state<Record<string, string>>({})
   let appriseUrls = $state('')
@@ -12,9 +13,6 @@
   let categories = $state<Category[]>([])
   let tags = $state<Tag[]>([])
   let eventTypes = $state<EventType[]>([])
-  let newCat = $state<Category>({ id: 0, name: '', color: '#6366f1', icon: 'circle', sort_order: 0 })
-  let newTag = $state<Tag>({ id: 0, name: '', color: '#6366f1' })
-  let newType = $state<EventType>({ id: 0, name: '', color: '#6366f1', icon: 'calendar', is_default: false, sort_order: 0 })
   let backups = $state<BackupItem[]>([])
   let restoreInput: HTMLInputElement | undefined = $state()
   let restoring = $state(false)
@@ -111,16 +109,6 @@
       restoring = false
     }
   }
-
-  async function addCategory() { if (!newCat.name.trim()) return
-    await API.post('/api/v1/categories', newCat); newCat = { id: 0, name: '', color: '#6366f1', icon: 'circle', sort_order: 0 }; await load() }
-  async function addTag() { if (!newTag.name.trim()) return
-    await API.post('/api/v1/tags', newTag); newTag = { id: 0, name: '', color: '#6366f1' }; await load() }
-  async function addType() { if (!newType.name.trim()) return
-    await API.post('/api/v1/event-types', newType); newType = { id: 0, name: '', color: '#6366f1', icon: 'calendar', is_default: false, sort_order: 0 }; await load() }
-  async function delCategory(id: number) { if (confirm('删除圈子？')) { await API.delete(`/api/v1/categories/${id}`); await load() } }
-  async function delTag(id: number) { if (confirm('删除标签？')) { await API.delete(`/api/v1/tags/${id}`); await load() } }
-  async function delType(id: number) { if (confirm('删除类型？')) { await API.delete(`/api/v1/event-types/${id}`); await load() } }
 </script>
 <div class="space-y-6">
   <header><h1 class="text-2xl font-semibold">设置</h1><p class="text-sm mt-1" style="color: var(--q-muted);">偏好、数据、通知渠道</p></header>
@@ -141,54 +129,21 @@
   <!-- 圈子 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">圈子（分组）</h2>
-    <ul class="space-y-1 mb-3">
-      {#each categories as c}
-        <li class="flex items-center gap-2 text-sm px-2 py-1 rounded-md" style="background: var(--q-bg);">
-          <span class="w-3 h-3 rounded-full" style="background: {c.color};"></span>{c.name}
-          <button class="ml-auto text-xs" style="color: var(--q-muted);" onclick={() => delCategory(c.id)}><Trash2 size={14} /></button>
-        </li>
-      {/each}
-    </ul>
-    <div class="flex gap-2">
-      <input bind:value={newCat.name} class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="圈子名" />
-      <input type="color" bind:value={newCat.color} class="w-10 h-10 rounded-lg border" />
-      <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={addCategory}><Plus size={14} /> 添加</button>
-    </div>
+    <TermList items={categories} endpoint="/api/v1/categories" noun="圈子" placeholder="圈子名"
+              defaults={{ icon: 'circle', sort_order: 0 }} onchange={load} />
   </section>
 
   <!-- 标签 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">标签</h2>
-    <ul class="flex flex-wrap gap-2 mb-3">
-      {#each tags as t}
-        <li class="flex items-center gap-1 text-xs px-2 py-1 rounded-full" style="background: color-mix(in srgb, {t.color} 15%, transparent); color: {t.color};">
-          {t.name} <button onclick={() => delTag(t.id)}><Trash2 size={12} /></button>
-        </li>
-      {/each}
-    </ul>
-    <div class="flex gap-2">
-      <input bind:value={newTag.name} class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="标签名" />
-      <input type="color" bind:value={newTag.color} class="w-10 h-10 rounded-lg border" />
-      <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={addTag}><Plus size={14} /> 添加</button>
-    </div>
+    <TermList items={tags} endpoint="/api/v1/tags" noun="标签" placeholder="标签名" pill onchange={load} />
   </section>
 
   <!-- 事件类型 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">往来事件类型</h2>
-    <ul class="space-y-1 mb-3">
-      {#each eventTypes as e}
-        <li class="flex items-center gap-2 text-sm px-2 py-1 rounded-md" style="background: var(--q-bg);">
-          <span class="w-3 h-3 rounded-full" style="background: {e.color};"></span>{e.name}
-          <button class="ml-auto text-xs" style="color: var(--q-muted);" onclick={() => delType(e.id)}><Trash2 size={14} /></button>
-        </li>
-      {/each}
-    </ul>
-    <div class="flex gap-2">
-      <input bind:value={newType.name} class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="类型名" />
-      <input type="color" bind:value={newType.color} class="w-10 h-10 rounded-lg border" />
-      <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={addType}><Plus size={14} /> 添加</button>
-    </div>
+    <TermList items={eventTypes} endpoint="/api/v1/event-types" noun="类型" placeholder="类型名"
+              defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={load} />
   </section>
 
   <!-- 通知 -->
