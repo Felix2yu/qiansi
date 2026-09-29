@@ -6,6 +6,7 @@
   import { CanvasRenderer } from 'echarts/renderers'
   import { API, RELATION_TYPES, type Person, type Relationship } from '../lib/api'
   import { navigate } from '../lib/router'
+  import { self, loadSelf, selfFirst, personLabel } from '../lib/self.svelte'
   import { Plus, X, Link2 } from '@lucide/svelte'
 
   echarts.use([GraphChart, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -24,6 +25,7 @@
 
   async function load() {
     const r = await API.get('/api/v1/relationships') as any
+    await loadSelf()
     people = r.people
     rels = r.relationships
   }
@@ -43,8 +45,29 @@
     const catIds = Array.from(new Set(people.map(p => p.category_id || 0))).sort((a, b) => a - b)
     const catIndex = new Map(catIds.map((c, i) => [c, i]))
     const categories = catIds.map(c => ({ name: '圈子' + c }))
-    const nodes = people.map(p => ({ id: p.id, name: p.name, category: catIndex.get(p.category_id || 0)!, symbolSize: 14 + p.grade * 4 }))
-    const links = rels.map(r => ({ source: r.from_person_id, target: r.to_person_id, label: { show: true, formatter: r.type, fontSize: 10, color: '#94a3b8' } }))
+    // 端点被归档的人不在 nodes 里，那条边会指向不存在的节点，得先滤掉
+    const ids = new Set(people.map(p => p.id))
+    // 本人用琥珀色而不是主题色：跟其他节点同色就谈不上高亮了
+    const accent = '#f59e0b'
+    const nodes = people.map(p => {
+      const me = p.id === self.id
+      return {
+        id: p.id, name: me ? `我 · ${p.name}` : p.name,
+        category: catIndex.get(p.category_id || 0)!,
+        symbolSize: me ? 46 : 14 + p.grade * 4,
+        ...(me && { itemStyle: { color: accent, borderColor: '#fff', borderWidth: 2 }, label: { fontWeight: 'bold' } }),
+      }
+    })
+    const links = rels
+      .filter(r => ids.has(r.from_person_id) && ids.has(r.to_person_id))
+      .map(r => {
+        const mine = !!self.id && (r.from_person_id === self.id || r.to_person_id === self.id)
+        return {
+          source: r.from_person_id, target: r.to_person_id,
+          lineStyle: mine ? { color: accent, width: 2.5, opacity: 1 } : { opacity: 0.3 },
+          label: { show: true, formatter: r.type, fontSize: 10, color: mine ? accent : '#94a3b8' },
+        }
+      })
     chart.setOption({
       // editable 下 tooltip 会挡住拖拽的手柄，关掉
       tooltip: { show: false },
@@ -56,7 +79,7 @@
         force: { repulsion: 250, edgeLength: 120 },
         emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
         lineStyle: { color: 'source', curveness: 0.1, opacity: 0.7 },
-        label: { show: true, fontSize: 12 },
+        label: { show: true, fontSize: 12, position: 'bottom' },
         edgeLabel: { position: 'middle' },
         categories, data: nodes, links,
       }]
@@ -78,6 +101,8 @@
   }
 
   function openForm(from = '', to = '') {
+    // 单人应用，从按钮新建的关系默认就是我跟别人
+    if (!from && !to) from = self.id
     form = { from_person_id: from, to_person_id: to, type: RELATION_TYPES[0], remark: '' }
     pending = from && to ? { from, to } : null
     showForm = true
@@ -109,7 +134,7 @@
   <header class="flex flex-wrap items-start justify-between gap-3">
     <div>
       <h1 class="text-2xl font-semibold">关系图</h1>
-      <p class="text-sm mt-1" style="color: var(--q-muted);">点击节点进入详情维护关系</p>
+      <p class="text-sm mt-1" style="color: var(--q-muted);">点击节点进入详情维护关系 · 在人物详情里设为本人后，图会高亮你和你的连线</p>
     </div>
     <button class="flex items-center gap-1 px-3 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={() => openForm()}>
       <Plus size={14} /> 添加关系
@@ -142,11 +167,11 @@
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.from_person_id} disabled={!!pending} class="w-full px-3 py-2 rounded-lg text-sm outline-none disabled:opacity-60" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
             <option value="">甲方…</option>
-            {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+            {#each selfFirst(people, form.to_person_id) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
           </select>
           <select bind:value={form.to_person_id} disabled={!!pending} class="w-full px-3 py-2 rounded-lg text-sm outline-none disabled:opacity-60" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
             <option value="">乙方…</option>
-            {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+            {#each selfFirst(people, form.from_person_id) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
           </select>
         </div>
         <select bind:value={form.type} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">

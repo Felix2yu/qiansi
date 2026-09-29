@@ -7,10 +7,22 @@
   import PersonRelEditor from '../lib/PersonRelEditor.svelte'
   import EventForm from '../lib/EventForm.svelte'
   import { navigate } from '../lib/router'
-  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload } from '@lucide/svelte'
+  import { self, setSelf, loadSelf } from '../lib/self.svelte'
+  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
   let person = $state<Person | null>(null)
+  // 没设亲密度就不排五个空心号，元信息按实际有的字段拼
+  const metaLine = $derived.by(() => {
+    const p = person
+    if (!p) return ''
+    return [
+      p.grade > 0 ? '♥'.repeat(p.grade) : '',
+      p.category_name || '',
+      p.gender || '',
+      p.birthday ? `生日 ${p.birthday}${p.birthday_is_lunar ? '（农历）' : ''}` : '',
+    ].filter(Boolean).join(' · ')
+  })
   let timeline = $state<TimelineItem[]>([])
   let intimacy = $state<{ current_score: number; trend: TrendPoint[] } | null>(null)
   let categories = $state<Category[]>([])
@@ -104,6 +116,17 @@
     await load()
   }
 
+  // 本人只能有一个，再设别人等于把指针挪过去
+  async function toggleSelf() {
+    const next = self.id === id ? '' : id
+    try {
+      await API.post('/api/v1/settings/bulk', { self_person_id: next })
+      setSelf(next)
+    } catch (err: any) {
+      alert('设置失败：' + (err?.message || err))
+    }
+  }
+
   async function submitQuick() {
     if (!quick) return
     const text = quickText.trim()
@@ -141,6 +164,7 @@
         API.get('/api/v1/categories') as Promise<Category[]>,
         API.get('/api/v1/tags') as Promise<Tag[]>,
         API.get(`/api/v1/taggings/of?target_type=person&target_id=${id}`) as Promise<Tag[]>,
+        loadSelf(true),
       ])
       timeline = tl
       intimacy = inti
@@ -211,13 +235,12 @@
       <div class="flex-1 min-w-0">
         <div class="flex items-center gap-2">
           <h1 class="text-xl font-semibold">{person.name}</h1>
+          {#if self.id === person.id}<span class="text-xs px-2 py-0.5 rounded-full text-white" style="background: var(--q-theme);">本人</span>{/if}
           {#if person.archived}<span class="text-xs px-2 py-0.5 rounded-full" style="background: var(--q-bg); color: var(--q-muted);">已归档</span>{/if}
         </div>
-        <div class="mt-1 text-sm" style="color: var(--q-muted);">
-          {person.grade > 0 ? '♥'.repeat(person.grade) : '♡'.repeat(5)}{person.category_name && ` · ${person.category_name}`}
-          {person.gender && ` · ${person.gender}`}
-          {person.birthday && ` · 生日 ${person.birthday}${person.birthday_is_lunar ? '（农历）' : ''}`}
-        </div>
+        {#if metaLine}
+          <div class="mt-1 text-sm" style="color: var(--q-muted);">{metaLine}</div>
+        {/if}
         {#if person.phone}<div class="text-sm mt-0.5" style="color: var(--q-muted);">📱 {person.phone}</div>{/if}
         {#if person.wechat}<div class="text-sm" style="color: var(--q-muted);">💬 {person.wechat}</div>{/if}
         {#if person.location}<div class="text-sm" style="color: var(--q-muted);">📍 {person.location}</div>{/if}
@@ -233,6 +256,8 @@
       <div class="flex flex-col gap-1">
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="编辑" onclick={() => (showEdit = true)}><Edit3 size={16} /></button>
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title={person.archived ? '取消归档' : '归档'} onclick={toggleArchive}><Archive size={16} /></button>
+        <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" style={self.id === id ? 'color: var(--q-theme);' : ''}
+                title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'} onclick={toggleSelf}><UserCheck size={16} /></button>
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="删除" onclick={remove}><Trash2 size={16} /></button>
       </div>
     </div>
