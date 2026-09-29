@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +22,7 @@ func (a *API) registerPeople(r chi.Router) {
 		r.Get("/{id}", a.peopleGet)
 		r.Put("/{id}", a.peopleUpdate)
 		r.Delete("/{id}", a.peopleDelete)
+		r.Delete("/", a.peopleDeleteBulk)
 		r.Get("/{id}/timeline", a.peopleTimeline)
 		r.Get("/{id}/intimacy", a.peopleIntimacy)
 		r.Get("/{id}/wordcloud", a.peopleWordCloud)
@@ -186,18 +189,15 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 
-// peopleDelete 删除联系人。外键已开启，关联记录会级联清理；
-// 附件不在级联范围内，需要显式摘掉引用并删除磁盘文件，否则留下孤儿。
-func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	atts, err := a.Store.PersonDetachAttachments(r.Context(), id)
+// deletePersonFull 删除联系人及其头像附件文件；关联记录（往来/对话/记账/
+// 纪念日/提醒/标签/关系/自定义字段）由外键 ON DELETE CASCADE 级联清理。
+func (a *API) deletePersonFull(ctx context.Context, id string) error {
+	atts, err := a.Store.PersonDetachAttachments(ctx, id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
+		return err
 	}
-	if err := a.Store.PersonDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
-		return
+	if err := a.Store.PersonDelete(ctx, id); err != nil {
+		return err
 	}
 	for _, att := range atts {
 		if att == nil {
@@ -207,9 +207,58 @@ func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
 		if filepath.Clean(p) == p {
 			_ = os.Remove(p)
 		}
-		_, _ = a.Store.DB.ExecContext(r.Context(), "DELETE FROM attachments WHERE id=?", att.ID)
+		_, _ = a.Store.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
+	}
+	return nil
+}
+
+func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if err := a.deletePersonFull(r.Context(), id); err != nil {
+		writeErr(w, 500, err.Error())
+		return
 	}
 	w.WriteHeader(204)
+}
+
+// peopleDeleteBulk 批量/清空删除联系人。请求体 {"ids":[...]}：
+//   - 提供 id 列表：删除这些联系人（按 X-ABUID 重导入时可再建，不丢 vCard 来源）
+//   - ids 为空或字段缺失：清空全部联系人（含已归档）
+//
+// 关联数据同样由外键级联清理，头像文件一并删除。
+func (a *API) peopleDeleteBulk(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		IDs []string `json:"ids"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	ctx := r.Context()
+	ids := body.IDs
+	if len(ids) == 0 {
+		all, err := a.Store.PersonList(ctx, "", 0, 0, true, 0, 1<<30, 0)
+		if err != nil {
+			writeErr(w, 500, "加载联系人失败: "+err.Error())
+			return
+		}
+		ids = make([]string, 0, len(all))
+		for _, p := range all {
+			ids = append(ids, p.ID)
+		}
+	}
+	deleted := 0
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if err := a.deletePersonFull(ctx, id); err != nil {
+			writeErr(w, 500, fmt.Sprintf("删除联系人失败: %v", err))
+			return
+		}
+		deleted++
+	}
+	writeJSON(w, 200, map[string]any{"deleted": deleted})
 }
 
 func (a *API) peopleTimeline(w http.ResponseWriter, r *http.Request) {

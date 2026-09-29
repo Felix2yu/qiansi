@@ -20,7 +20,7 @@ export const API = (() => {
     get: <T>(p: string) => req<T>(p),
     post: <T>(p: string, body: any) => req<T>(p, { method: 'POST', headers: headers(), body: JSON.stringify(body) }),
     put: <T>(p: string, body: any) => req<T>(p, { method: 'PUT', headers: headers(), body: JSON.stringify(body) }),
-    delete: <T>(p: string) => req<T>(p, { method: 'DELETE' }),
+    delete: <T>(p: string, body?: any) => req<T>(p, { method: 'DELETE', ...(body ? { headers: headers(), body: JSON.stringify(body) } : {}) }),
   }
 })()
 

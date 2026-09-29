@@ -18,6 +18,50 @@
   let importing = $state(false)
   let vcardInput: HTMLInputElement | undefined = $state()
 
+  // 批量选择态
+  let selectMode = $state(false)
+  let selectedIds = $state<string[]>([])
+  function toggleSelect(id: string) {
+    selectedIds = selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]
+  }
+  function allVisibleSelected() {
+    return list.length > 0 && list.every((p) => selectedIds.includes(p.id))
+  }
+  function toggleAll() {
+    if (allVisibleSelected()) {
+      selectedIds = []
+    } else {
+      selectedIds = [...new Set([...selectedIds, ...list.map((p) => p.id)])]
+    }
+  }
+  function exitSelectMode() {
+    selectMode = false
+    selectedIds = []
+  }
+  async function deleteSelected() {
+    if (selectedIds.length === 0) return
+    if (!confirm(`确定删除选中的 ${selectedIds.length} 位联系人及其所有关联记录（往来/对话/记账/纪念日）？此操作不可恢复。`)) return
+    try {
+      const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: selectedIds })
+      selectedIds = []
+      await load()
+      alert(`已删除 ${res.deleted} 位联系人`)
+    } catch (err: any) {
+      alert('删除失败：' + (err?.message || err))
+    }
+  }
+  async function clearAll() {
+    if (!confirm('确定清空全部联系人吗？此操作不可恢复，会一并删除所有往来、对话、记账与纪念日等关联数据。\n建议先点「导出 vCard」备份，再清空后重新导入。')) return
+    try {
+      const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
+      selectedIds = []
+      await load()
+      alert(`已清空 ${res.deleted} 位联系人`)
+    } catch (err: any) {
+      alert('清空失败：' + (err?.message || err))
+    }
+  }
+
   // 分页：一次取一页，避免数据量上来后被静默截断
   const PAGE = 60
   let page = $state(0)
@@ -59,6 +103,7 @@
   async function remove(p: Person) {
     if (confirm(`删除联系人「${p.name}」及其所有关联记录？`)) {
       await API.delete(`/api/v1/people/${p.id}`); await load()
+      selectedIds = selectedIds.filter((id) => id !== p.id)
     }
   }
 
@@ -122,6 +167,11 @@
               disabled={importing} onclick={() => vcardInput?.click()}>
         <Upload size={14} /> {importing ? '导入中…' : '导入 vCard'}
       </button>
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+              style={selectMode ? 'background: var(--q-theme); border: 1px solid var(--q-theme); color: #fff;' : 'background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);'}
+              onclick={exitSelectMode}>
+        {selectMode ? '退出选择' : '批量'}
+      </button>
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={openCreate}>
         <Plus size={14} /> 新建
       </button>
@@ -147,13 +197,33 @@
     </select>
   </div>
 
+  {#if selectMode}
+    <div class="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+      <label class="flex items-center gap-1.5 text-sm cursor-pointer select-none" style="color: var(--q-text);">
+        <input type="checkbox" checked={allVisibleSelected()} onchange={toggleAll} />
+        全选本页
+      </label>
+      <span class="text-sm" style="color: var(--q-muted);">已选 {selectedIds.length} 位</span>
+      <div class="flex-1"></div>
+      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" disabled={selectedIds.length === 0} onclick={deleteSelected}>
+        删除选中
+      </button>
+      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: #dc2626;" onclick={clearAll}>
+        清空全部
+      </button>
+    </div>
+  {/if}
+
   <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
     {#each list as p}
       <div class="rounded-xl p-4 transition hover:-translate-y-0.5"
            style="background: var(--q-surface); border: 1px solid var(--q-border);">
         <div class="flex items-start gap-3">
+          {#if selectMode}
+            <input type="checkbox" class="mt-2.5 shrink-0" checked={selectedIds.includes(p.id)} onchange={() => toggleSelect(p.id)} />
+          {/if}
           <a href={`/people/${p.id}`} class="flex items-start gap-3 flex-1 min-w-0"
-             onclick={(e) => { e.preventDefault(); navigate(`/people/${p.id}`) }}>
+             onclick={(e) => { e.preventDefault(); if (selectMode) { toggleSelect(p.id) } else { navigate(`/people/${p.id}`) } }}>
             <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold shrink-0" style="background: var(--q-theme);">{p.name.slice(0,1)}</div>
             <div class="flex-1 min-w-0">
               <div class="font-medium truncate">{p.name}</div>
