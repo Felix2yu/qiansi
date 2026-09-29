@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { API, yuan, todayLocal, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
   import EventForm from '../lib/EventForm.svelte'
+  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { Plus, X, Search } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
@@ -47,7 +48,7 @@
     if (filterQuery.trim()) qs.set('q', filterQuery.trim())
     const [batch, ty, pe, tl] = await Promise.all([
       API.get(`/api/v1/events?${qs}`), API.get('/api/v1/event-types'),
-      API.get('/api/v1/people?limit=500'), API.get('/api/v1/dashboard/timeline?limit=200'),
+      API.get('/api/v1/people?limit=500'), API.get('/api/v1/dashboard/timeline?limit=200'), loadSelf(),
     ]) as any
     hasMore = (batch || []).length === PAGE
     list = reset ? batch : [...list, ...batch]
@@ -110,7 +111,7 @@
       <select bind:value={filterPerson} onchange={() => load()} class="px-3 py-2 rounded-lg text-sm outline-none"
               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
         <option value="">全部参与人</option>
-        {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+        {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
       </select>
       <div class="relative flex-1 min-w-[180px]">
         <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
@@ -139,7 +140,7 @@
               {e.type_name && `[${e.type_name}] `}
               {new Date(e.event_date).toLocaleDateString()}
               {locText(e) && ` · ${locText(e)}`}
-              {e.participants && e.participants.length > 0 && ` · ${e.participants.map(p => p.name).join(', ')}`}
+              {e.participants && e.participants.length > 0 && ` · ${selfFirst(e.participants).map(p => personLabel(p)).join(', ')}`}
             </div>
             <div class="flex flex-wrap gap-1.5 mt-1.5">
               {#if e.has_gift}

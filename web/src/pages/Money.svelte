@@ -3,6 +3,7 @@
   import { API, yuan, toFen, todayLocal, KIND_LABEL, DIRECTION_LABEL,
            type Transaction, type Person, type Event, type Repayment } from '../lib/api'
   import { Plus, X, Trash2 } from '@lucide/svelte'
+  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
 
   let list = $state<Transaction[]>([])
   let people = $state<Person[]>([])
@@ -30,7 +31,7 @@
     if (reset) page = 0
     const [batch, pe, ev] = await Promise.all([
       API.get(`/api/v1/transactions?limit=${PAGE}&offset=${page * PAGE}`),
-      API.get('/api/v1/people?limit=500'), API.get('/api/v1/events?limit=100')
+      API.get('/api/v1/people?limit=500'), API.get('/api/v1/events?limit=100'), loadSelf(),
     ]) as any
     hasMore = (batch || []).length === PAGE
     list = reset ? batch : [...list, ...batch]
@@ -78,7 +79,7 @@
 
   async function remove(id: string) { if (confirm('删除这笔记录？')) { await API.delete(`/api/v1/transactions/${id}`); await load() } }
 
-  function personName(id: string) { return people.find(p => p.id === id)?.name || '?' }
+  function personName(id: string) { const p = people.find(x => x.id === id); return p ? personLabel(p) : '?' }
   function remaining(t: Transaction) { return Math.max(0, t.amount_fen - (t.repaid_fen || 0)) }
 
   async function openRepay(t: Transaction) {
@@ -180,7 +181,7 @@
       <div class="flex items-center justify-between mb-4"><h2 class="font-semibold">{editId ? '编辑' : '新建'}</h2><button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button></div>
       <div class="space-y-3">
         <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">选择联系人</option>{#each people as p}<option value={p.id}>{p.name}</option>{/each}
+          <option value="">选择联系人</option>{#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.kind} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { API, MEMO_STATUS_LABEL, todayLocal, type Memo, type Person } from '../lib/api'
   import { Plus, X } from '@lucide/svelte'
+  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
 
   let list = $state<Memo[]>([])
   let people = $state<Person[]>([])
@@ -22,7 +23,7 @@
     if (reset) page = 0
     const [batch, pe] = await Promise.all([
       API.get(`/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`),
-      API.get('/api/v1/people?limit=500'),
+      API.get('/api/v1/people?limit=500'), loadSelf(),
     ]) as any
     hasMore = (batch || []).length === PAGE
     list = reset ? batch : [...list, ...batch]
@@ -68,7 +69,10 @@
   }
   async function mark(m: Memo, status: string) { m.status = status; await API.put(`/api/v1/memos/${m.id}`, m); await load() }
   async function remove(id: string) { if (confirm('删除？')) { await API.delete(`/api/v1/memos/${id}`); await load() } }
-  function personName(id?: string) { return people.find(p => p.id === id)?.name || '（未关联）' }
+  function personName(id?: string) {
+    const p = people.find(x => x.id === id)
+    return p ? personLabel(p) : '（未关联）'
+  }
 </script>
 <div class="space-y-4">
   <header class="flex items-center justify-between">
@@ -127,7 +131,7 @@
       <div class="space-y-3">
         <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
           <option value="">选择联系人（可选）</option>
-          {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+          {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.speaker} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, todayLocal, REF_TYPE_LABEL, type Reminder, type Person } from '../lib/api'
+  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { Plus, X, Check } from '@lucide/svelte'
 
   let list = $state<Reminder[]>([])
@@ -18,7 +19,7 @@
   async function load() {
     ;[list, people] = await Promise.all([
       API.get(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`) as Promise<Reminder[]>,
-      API.get('/api/v1/people?limit=500') as Promise<Person[]>,
+      API.get('/api/v1/people?limit=500') as Promise<Person[]>, loadSelf(),
     ])
   }
   onMount(load)
@@ -144,7 +145,7 @@
         <input type="date" bind:value={form.due_at} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
         <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
           <option value="">关联联系人（可选）</option>
-          {#each people as p}<option value={p.id}>{p.name}</option>{/each}
+          {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
       </div>
       <div class="flex justify-end gap-2 mt-5">

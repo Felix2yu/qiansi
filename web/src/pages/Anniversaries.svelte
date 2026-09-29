@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, todayLocal, type Anniversary, type Person } from '../lib/api'
+  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Anniversary[]>([])
@@ -14,7 +15,7 @@
   }
 
   async function load() {
-    ;[list, people] = await Promise.all([API.get('/api/v1/anniversaries'), API.get('/api/v1/people?limit=500')]) as any
+    ;[list, people] = await Promise.all([API.get('/api/v1/anniversaries'), API.get('/api/v1/people?limit=500'), loadSelf()]) as any
   }
   onMount(load)
 
@@ -113,7 +114,7 @@
       <div class="flex items-center justify-between mb-4"><h2 class="font-semibold">{editId ? '编辑纪念日' : '新建纪念日'}</h2><button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button></div>
       <div class="space-y-3">
         <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">自属（倒数日）</option>{#each people as p}<option value={p.id}>{p.name}</option>{/each}
+          <option value="">自属（倒数日）</option>{#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
         <input bind:value={form.title} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="标题（如：妈妈生日）" />
         <input type="date" bind:value={form.date} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />

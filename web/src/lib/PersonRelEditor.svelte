@@ -1,5 +1,6 @@
 <script lang="ts">
   import { API, RELATION_TYPES, type Person, type Relationship } from './api'
+  import { self, loadSelf, selfFirst, isSelf, personLabel } from './self.svelte'
   import { Trash2, Plus, Pencil, X, Check } from '@lucide/svelte'
 
   // 关系维护：以 personId 为中心列出全部关系，支持添加、行内改类型/备注、删除
@@ -53,11 +54,21 @@
   }
 
   function candidates(excludeId: string) {
-    return options.filter(p => p.id !== excludeId)
+    return selfFirst(options, excludeId)
   }
 
   function otherName(r: Relationship) {
-    return r.from_person_id === personId ? (r.to_name || '?') : (r.from_name || '?')
+    const otherId = r.from_person_id === personId ? r.to_person_id : r.from_person_id
+    const name = r.from_person_id === personId ? (r.to_name || '?') : (r.from_name || '?')
+    return isSelf(otherId) ? `我 · ${name}` : name
+  }
+
+  async function openAdd() {
+    showAdd = true
+    if (!people) await loadOptions()
+    await loadSelf()
+    // 给别人补关系时，最常见的另一端就是我自己
+    if (!addForm.to_person_id && self.id && self.id !== personId) addForm.to_person_id = self.id
   }
 
   // 关系是有向的，from 永远是当前人物；换人只改备注与类型
@@ -124,7 +135,7 @@
     </span>
     {#if !showAdd}
       <button class="flex items-center gap-1 text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);"
-              onclick={async () => { showAdd = true; if (!people) await loadOptions() }}>
+              onclick={openAdd}>
         <Plus size={12} /> 添加关系
       </button>
     {/if}
@@ -135,7 +146,7 @@
       <div class="grid grid-cols-2 gap-2">
         <select bind:value={addForm.to_person_id} class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
           <option value="">选择对方…</option>
-          {#each candidates(personId) as p}<option value={p.id}>{p.name}</option>{/each}
+          {#each candidates(personId) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
         <select bind:value={addForm.type} class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
           {#each RELATION_TYPES as t}<option value={t}>{t}</option>{/each}

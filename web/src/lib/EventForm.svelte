@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import { API, todayLocal, type Event, type EventType, type Person } from './api'
+  import { selfFirst, personLabel, loadSelf, isSelf } from './self.svelte'
   import { Trash2, Search } from '@lucide/svelte'
 
   let {
@@ -63,6 +64,7 @@
 
   // 父级没传数据时自行拉取，避免每个调用方都写一遍（只看初始值，故用 untrack）
   untrack(() => {
+    void loadSelf()
     if (!types) void API.get('/api/v1/event-types').then(r => (localTypes = r as EventType[])).catch(() => {})
     if (!people) void API.get('/api/v1/people?limit=500').then(r => (localPeople = r as Person[])).catch(() => {})
   })
@@ -94,8 +96,8 @@
 
   const matchedPeople = $derived(
     peopleQuery.trim()
-      ? peopleList.filter(p => p.name.includes(peopleQuery.trim()) || (p.nickname || '').includes(peopleQuery.trim()))
-      : peopleList
+      ? selfFirst(peopleList.filter(p => p.name.includes(peopleQuery.trim()) || (p.nickname || '').includes(peopleQuery.trim())))
+      : selfFirst(peopleList)
   )
   const participants = $derived(peopleList.filter(p => form.participant_ids.includes(p.id)))
 
@@ -201,8 +203,8 @@
       <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="开销（元，可空）" bind:value={form.expense_yuan} />
       <select bind:value={form.expense_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
         <option value="">开销归属（默认首位参与人）</option>
-        {#each participants as p}<option value={p.id}>{p.name}（参与人）</option>{/each}
-        {#each peopleList.filter(p => !form.participant_ids.includes(p.id)) as p}<option value={p.id}>{p.name}</option>{/each}
+        {#each selfFirst(participants) as p}<option value={p.id}>{personLabel(p)}（参与人）</option>{/each}
+        {#each selfFirst(peopleList.filter(p => !form.participant_ids.includes(p.id))) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
       </select>
     </div>
 
@@ -222,8 +224,10 @@
           <button class="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition"
                   style={form.participant_ids.includes(p.id)
                     ? 'background: var(--q-theme); color: white; border: 1px solid var(--q-theme);'
-                    : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
-                  onclick={() => toggleParticipant(p.id)}>{p.name}</button>
+                    : isSelf(p.id)
+                      ? 'background: var(--q-bg); color: #f59e0b; border: 1px solid #f59e0b;'
+                      : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
+                  onclick={() => toggleParticipant(p.id)}>{personLabel(p)}</button>
         {:else}
           <span class="text-xs" style="color: var(--q-muted);">没有匹配的联系人</span>
         {/each}
