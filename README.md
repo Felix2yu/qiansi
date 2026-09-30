@@ -73,7 +73,7 @@ data/
 
 ```bash
 # 前端
-cd web && npm install && npx vite build && cd ..
+cd web && pnpm install && pnpm exec vite build && cd ..
 
 # 启动（自动建库、跑 migration，从 web/dist 提供 SPA）
 go run ./cmd/server

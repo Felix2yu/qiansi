@@ -126,7 +126,7 @@ func spaHandler(cfg *config.Config) http.HandlerFunc {
 <body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:8vh auto;padding:0 24px;color:#333">
 <h1 style="margin-bottom:8px">牵丝</h1>
 <p style="color:#666">后端 API 已启动，前端 SPA 尚未构建。</p>
-<p><code>cd web &amp;&amp; npm i &amp;&amp; npm run build</code> 然后重启即可。</p>
+<p><code>cd web &amp;&amp; pnpm install &amp;&amp; pnpm run build</code> 然后重启即可。</p>
 <p>当前后端已在 <a href="/api/v1/health">/api/v1/health</a> 提供服务。</p>
 </body></html>`))
 	}
