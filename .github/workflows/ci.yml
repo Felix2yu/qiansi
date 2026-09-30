@@ -28,7 +28,6 @@ jobs:
       go-dir: .
       test-packages: ./internal/...
       web-dir: web
-      web-install-flags: --legacy-peer-deps
       codecov-disable-search: true
 
   image:
@@ -43,7 +42,6 @@ jobs:
       binary-name: qiansi
       image-name: ghcr.io/felix2yu/qiansi
       web-dir: web
-      web-install-flags: --legacy-peer-deps
       # 前端不打进二进制：运行时由 QIANSI_WEB_DIR 指向 /app/web/dist，
       # 产物统一摆到仓库根 dist/ 供 Dockerfile COPY
       frontend-stage-command: |
@@ -60,7 +58,6 @@ jobs:
       main-package: ./cmd/server
       binary-name: qiansi
       web-dir: web
-      web-install-flags: --legacy-peer-deps
       frontend-stage-command: |
         mkdir -p dist
         cp -R web/dist/. dist/
