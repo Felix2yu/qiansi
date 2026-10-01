@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, yuan, todayLocal, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
+  import { API, TIMELINE_LABEL, yuan, todayLocal, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
   import EventForm from '../lib/EventForm.svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { Plus, X, Search } from '@lucide/svelte'
@@ -101,7 +101,7 @@
 {:else}<div class="w-2 h-2 rounded-full mt-2" style="background: #6366f1;"></div>{/if}
           <div class="flex-1 min-w-0">
             <div class="text-sm">{t.title}</div>
-            <div class="text-xs mt-0.5" style="color: var(--q-muted);">{t.type}{t.person_name ? ' · ' + t.person_name : ''} · {new Date(t.date).toLocaleDateString()}</div>
+            <div class="text-xs mt-0.5" style="color: var(--q-muted);">{TIMELINE_LABEL[t.type] || t.type}{t.person_name ? ' · ' + t.person_name : ''} · {new Date(t.date).toLocaleDateString()}</div>
           </div>
         </li>
       {/each}
