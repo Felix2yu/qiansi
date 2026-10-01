@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { untrack } from 'svelte'
+  import { untrack, onMount } from 'svelte'
   import { API, type Person, type Category, type Tag } from './api'
+  import { selfFirst, personLabel } from './self.svelte'
   import PersonRelEditor from './PersonRelEditor.svelte'
 
   let {
@@ -24,6 +25,8 @@
     family_name: string; given_name: string; nickname: string; gender: string; grade: number; birthday: string
     birthday_is_lunar: boolean; phone: string; wechat: string; location: string
     notes: string
+    /** 通过谁认识；空串 = 与我直接认识 */
+    introduced_by_person_id: string
   }
 
   // 复姓表：编辑只有单一显示名的旧数据时用于正确拆分
@@ -83,27 +86,38 @@
   }
 
   function emptyForm(): Form {
-    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '' }
+    return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', introduced_by_person_id: '' }
   }
+
+  // 引荐人候选：新建时也要能选，所以弹窗一挂载就拉全量名单（与关系编辑器同一接口）
+  let peopleOptions = $state<Person[]>([])
+  onMount(async () => {
+    try { peopleOptions = await API.get<Person[]>('/api/v1/people?limit=500') } catch { peopleOptions = [] }
+  })
+  // 不能把自己设为自己的引荐人；其余人按「本人优先」排序
+  const introducerOptions = $derived(selfFirst(peopleOptions, person?.id ?? ''))
 
   // 人物对象变化（切换编辑目标）时重新灌入表单与标签
   $effect(() => {
     const p = person
     if (p) {
-      form = {
+      const filled: Form = {
         family_name: p.family_name || '', given_name: p.given_name || '',
         nickname: p.nickname || '', gender: p.gender || '', grade: p.grade,
         birthday: p.birthday || '', birthday_is_lunar: !!p.birthday_is_lunar,
         phone: p.phone || '', wechat: p.wechat || '', location: p.location || '',
-        notes: p.notes || '',
+        notes: p.notes || '', introduced_by_person_id: p.introduced_by_person_id || '',
       }
-      // untrack：这个 effect 里要回写 form，把 p.categories 也记成依赖会自触发，
+      // untrack：这个 effect 里要回写 selectedCats，把 p.categories 也记成依赖会自触发，
       // 弹窗一打开就无限重跑（表现为 taggings/of 请求风暴）。
       selectedCats = untrack(() => (p.categories || []).map(c => c.id))
-      // 旧数据没有姓/名结构：按启发式拆分回填，拆错可手动改
+      // 旧数据没有姓/名结构：按启发式拆分回填，拆错可手动改。
+      // 直接合并进新对象：{ ...form, ... } 会把 form 读成依赖又回写 form，
+      // 对没有姓/名拆分的人无限自触发（effect_update_depth_exceeded + 请求风暴）。
       if (!p.family_name && !p.given_name && p.name) {
-        form = { ...form, ...splitName(p.name) }
+        Object.assign(filled, splitName(p.name))
       }
+      form = filled
       loadTags(p.id)
     } else {
       form = emptyForm()
@@ -262,6 +276,15 @@
       </div>
     </div>
   {/if}
+  <div>
+    <div class="text-xs mb-1" style="color: var(--q-muted);">通过谁认识（引荐人，留空 = 直接认识）</div>
+    <select bind:value={form.introduced_by_person_id}
+            class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+      <option value="">直接认识</option>
+      {#each introducerOptions as p}<option value={p.id}>{personLabel(p)}</option>{/each}
+    </select>
+    <p class="text-xs mt-1" style="color: var(--q-muted);">多层关系（同学的对象的闺蜜…）可在关系图上用「引荐链」一次录入。</p>
+  </div>
   <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" placeholder="备注、爱好、口味…"
             style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.notes}></textarea>
 

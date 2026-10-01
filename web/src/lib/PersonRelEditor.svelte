@@ -17,12 +17,19 @@
 
   let rels = $state<Relationship[]>([])
   let options = $state<Person[]>([])
+  // 历史上已用过的关系类型（闺蜜、对象、挚友…），与预设合并后喂给 datalist
+  let usedTypes = $state<string[]>([])
   let loading = $state(true)
   let showAdd = $state(false)
   let addForm = $state({ to_person_id: '', type: RELATION_TYPES[0], remark: '' })
   let editingId = $state('')
   let editForm = $state({ type: RELATION_TYPES[0], remark: '' })
   let busy = $state(false)
+
+  // 同一页面可能挂两个编辑器（详情区 + 编辑弹窗），datalist id 按人物区分避免重复
+  const listId = $derived(`rel-type-options-${personId}`)
+  const typeOptions = $derived(
+    Array.from(new Set([...RELATION_TYPES, ...usedTypes, ...rels.map(r => r.type).filter(Boolean)])))
 
   // 人物或候选人变化时重新拉取；只依赖这两个，避免自己改 rels 时反复请求
   $effect(() => {
@@ -38,15 +45,17 @@
   async function load(pid = personId) {
     loading = true
     try {
-      const list = await API.get<Relationship[]>(`/api/v1/relationships/of/${pid}`)
+      const [list, types] = await Promise.all([
+        API.get<Relationship[]>(`/api/v1/relationships/of/${pid}`),
+        API.get<string[]>('/api/v1/relationships/types').catch(() => []),
+      ])
       // 同一对的人可以并存几条不同类型的边，按对方名字排一下才看得出是连着同一个人
       rels = (list || []).sort((a, b) =>
         otherName(a).localeCompare(otherName(b), 'zh') || a.type.localeCompare(b.type, 'zh'))
+      usedTypes = types || []
     } catch {
       rels = []
-    } finally {
-      loading = false
-    }
+    } finally { loading = false }
   }
 
   async function loadOptions() {
@@ -75,13 +84,15 @@
 
   // 关系是有向的，from 永远是当前人物；换人只改备注与类型
   async function add() {
+    const type = addForm.type.trim()
     if (!addForm.to_person_id) { alert('请选择对方'); return }
     if (addForm.to_person_id === personId) { alert('不能与自己建立关系'); return }
+    if (!type) { alert('请填写关系类型'); return }
     busy = true
     try {
       await API.post('/api/v1/relationships', {
         from_person_id: personId, to_person_id: addForm.to_person_id,
-        type: addForm.type, remark: addForm.remark,
+        type, remark: addForm.remark,
       })
       showAdd = false
       addForm = { to_person_id: '', type: RELATION_TYPES[0], remark: '' }
@@ -103,11 +114,13 @@
   }
 
   async function saveEdit(r: Relationship) {
+    const type = editForm.type.trim()
+    if (!type) { alert('请填写关系类型'); return }
     busy = true
     try {
       await API.put(`/api/v1/relationships/${r.id}`, {
         from_person_id: r.from_person_id, to_person_id: r.to_person_id,
-        type: editForm.type, remark: editForm.remark,
+        type, remark: editForm.remark,
       })
       cancelEdit()
       await load()
@@ -131,6 +144,10 @@
   }
 </script>
 
+<datalist id={listId}>
+  {#each typeOptions as t}<option value={t}></option>{/each}
+</datalist>
+
 <div class="space-y-3">
   <div class="flex items-center justify-between">
     <span class="text-xs" style="color: var(--q-muted);">
@@ -151,9 +168,8 @@
           <option value="">选择对方…</option>
           {#each candidates(personId) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
         </select>
-        <select bind:value={addForm.type} class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
-          {#each RELATION_TYPES as t}<option value={t}>{t}</option>{/each}
-        </select>
+        <input list={listId} bind:value={addForm.type} placeholder="关系类型（可自定义）"
+               class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
       </div>
       <div class="flex gap-2">
         <input bind:value={addForm.remark} placeholder="备注（可选）" class="flex-1 px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
@@ -170,9 +186,8 @@
         {#if editingId === r.id}
           <div class="flex flex-wrap items-center gap-2">
             <span class="text-xs" style="color: var(--q-muted);">{otherName(r)}</span>
-            <select bind:value={editForm.type} class="px-2 py-1 rounded-lg text-xs outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
-              {#each RELATION_TYPES as t}<option value={t}>{t}</option>{/each}
-            </select>
+            <input list={listId} bind:value={editForm.type} placeholder="关系类型"
+                   class="w-28 px-2 py-1 rounded-lg text-xs outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
             <input bind:value={editForm.remark} placeholder="备注" class="flex-1 min-w-24 px-2 py-1 rounded-lg text-xs outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
             <button class="p-1 rounded disabled:opacity-60" style="color: var(--q-theme);" title="保存" disabled={busy} onclick={() => saveEdit(r)}><Check size={14} /></button>
             <button class="p-1 rounded" style="color: var(--q-muted);" title="取消" onclick={cancelEdit}><X size={14} /></button>

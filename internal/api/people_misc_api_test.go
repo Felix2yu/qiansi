@@ -1513,3 +1513,37 @@ func apiPeopleRowCount(t *testing.T, s *testServer) int {
 	}
 	return n
 }
+
+// TestIntroducedByAPI 引荐人非法输入在 API 层就是 400，而不是 500；
+// 合法引荐人落库并在详情里带回姓名。
+func TestIntroducedByAPI(t *testing.T) {
+	s := newTestServer(t)
+
+	a := apiCreatePersonMap(t, s, map[string]any{"name": "同学甲"})
+	b := apiCreatePersonMap(t, s, map[string]any{"name": "闺蜜乙", "introduced_by_person_id": a["id"]})
+	if b["introduced_by_person_id"] != a["id"] {
+		t.Fatalf("创建响应应带回引荐人: %v", b["introduced_by_person_id"])
+	}
+	detail := s.get("/api/v1/people/" + b["id"].(string))["person"].(map[string]any)
+	if detail["introduced_by_person_id"] != a["id"] || detail["introduced_by_name"] != "同学甲" {
+		t.Fatalf("详情引荐人回读不符: %v / %v", detail["introduced_by_person_id"], detail["introduced_by_name"])
+	}
+
+	// 指向不存在的人 → 400
+	apiWantError(t, http.MethodPost, "intro missing", s.do(http.MethodPost, "/api/v1/people/",
+		map[string]any{"name": "幽灵引荐", "introduced_by_person_id": "ghost"}), http.StatusBadRequest, "引荐人不存在")
+	// 引荐人是自己 → 400
+	apiWantError(t, http.MethodPut, "intro self", s.do(http.MethodPut, "/api/v1/people/"+a["id"].(string),
+		map[string]any{"name": "同学甲", "introduced_by_person_id": a["id"]}), http.StatusBadRequest, "循环")
+
+	// 关系图 payload 带 tags 字段
+	graph := s.get("/api/v1/relationships/")
+	if _, ok := graph["tags"].(map[string]any); !ok {
+		t.Fatalf("关系图应返回 tags map: %v", graph)
+	}
+	// 已用类型接口
+	types := apiArray(s, "/api/v1/relationships/types")
+	if len(types) != 0 {
+		t.Fatalf("还没建边，类型应为空: %v", types)
+	}
+}

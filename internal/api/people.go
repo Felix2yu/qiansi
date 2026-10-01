@@ -155,6 +155,10 @@ func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.PersonCreate(r.Context(), &p); err != nil {
+		if errors.Is(err, store.ErrIntroMissing) || errors.Is(err, store.ErrIntroCycle) {
+			writeErr(w, 400, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -193,6 +197,10 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.PersonUpdate(r.Context(), &p); err != nil {
+		if errors.Is(err, store.ErrIntroMissing) || errors.Is(err, store.ErrIntroCycle) {
+			writeErr(w, 400, err.Error())
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
@@ -368,6 +376,7 @@ func (a *API) personFieldDelete(w http.ResponseWriter, r *http.Request) {
 func (a *API) registerRelationships(r chi.Router) {
 	r.Route("/api/v1/relationships", func(r chi.Router) {
 		r.Get("/", a.graph)
+		r.Get("/types", a.relTypes)
 		r.Get("/of/{id}", a.relsOf)
 		r.Post("/", a.relCreate)
 		r.Put("/{id}", a.relUpdate)
@@ -452,12 +461,22 @@ func (a *API) relDelete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-// graph also returns nodes
-func (a *API) graph(w http.ResponseWriter, r *http.Request) {
-	people, rels, err := a.Store.RelationshipGraph(r.Context())
+// relTypes 返回关系边已使用的类型，供前端自定义类型输入框补历史候选
+func (a *API) relTypes(w http.ResponseWriter, r *http.Request) {
+	types, err := a.Store.RelationshipTypes(r.Context())
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	writeJSON(w, 200, map[string]any{"people": people, "relationships": rels})
+	writeJSON(w, 200, types)
+}
+
+// graph also returns nodes and their tags
+func (a *API) graph(w http.ResponseWriter, r *http.Request) {
+	people, rels, tags, err := a.Store.RelationshipGraph(r.Context())
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]any{"people": people, "relationships": rels, "tags": tags})
 }

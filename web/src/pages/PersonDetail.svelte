@@ -1,14 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, TIMELINE_LABEL, todayLocal, toFen,
-           type Person, type TimelineItem, type Category, type Tag,
+           type Person, type Relationship, type TimelineItem, type Category, type Tag,
            type PersonField, type TrendPoint } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import PersonRelEditor from '../lib/PersonRelEditor.svelte'
   import EventForm from '../lib/EventForm.svelte'
   import { navigate } from '../lib/router'
-  import { self, setSelf, loadSelf } from '../lib/self.svelte'
-  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check } from '@lucide/svelte'
+  import { self, setSelf, loadSelf, personLabel } from '../lib/self.svelte'
+  import { introChain, relTypeMap, pairTypesOf } from '../lib/graphLayout'
+  import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check, Route } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
   let person = $state<Person | null>(null)
@@ -47,6 +48,9 @@
   let eventEditId = $state('')
   // 预填对象引用保持稳定，表单组件只在打开时读取，变动会重置已填内容
   let eventPreset = $state<{ event_date?: string; participant_ids?: string[] }>({})
+  // 认识路径卡片要用全量人物与关系沿 introduced_by 往回追
+  let graphPeople = $state<Person[]>([])
+  let graphRels = $state<Relationship[]>([])
 
   function openEventForm(editId = '') {
     eventPreset = { event_date: todayLocal(), participant_ids: [id] }
@@ -172,12 +176,13 @@
       const r = await API.get(`/api/v1/people/${id}`) as any
       person = r.person
       fields = (r.fields || []) as PersonField[]
-      const [tl, inti, cats, tg, owned] = await Promise.all([
+      const [tl, inti, cats, tg, owned, graph] = await Promise.all([
         API.get(`/api/v1/people/${id}/timeline`) as Promise<TimelineItem[]>,
         API.get(`/api/v1/people/${id}/intimacy`) as Promise<any>,
         API.get('/api/v1/categories') as Promise<Category[]>,
         API.get('/api/v1/tags') as Promise<Tag[]>,
         API.get(`/api/v1/taggings/of?target_type=person&target_id=${id}`) as Promise<Tag[]>,
+        API.get('/api/v1/relationships') as Promise<{ people: Person[]; relationships: Relationship[] }>,
         loadSelf(true),
       ])
       timeline = tl
@@ -185,6 +190,8 @@
       categories = cats
       tags = tg
       ownedTags = owned || []
+      graphPeople = graph.people || []
+      graphRels = graph.relationships || []
       loadWords()
     } finally { loading = false }
   }
@@ -251,6 +258,18 @@
     const max = Math.max(...pts.map(p => p.score))
     return pts.map((p, i) => `${(i / (pts.length - 1)) * 200},${70 - ((p.score - min) / Math.max(1, max - min)) * 60}`).join(' ')
   })
+
+  // 认识路径：沿 introduced_by 往回追，还原「我 —同学→ A —对象→ B → 此人」
+  const intro = $derived.by(() => {
+    if (!self.id || !person || graphPeople.length === 0) return null
+    return introChain(self.id, person.id, graphPeople, graphRels)
+  })
+  const personById = $derived(new Map(graphPeople.map(p => [p.id, p])))
+  // 如今与此人的直达关系（经人认识后又成为挚友，就是另一条「我 —挚友→ 此人」）
+  const directTypes = $derived.by(() => {
+    if (!self.id || !person) return []
+    return pairTypesOf(relTypeMap(graphRels), self.id, person.id)
+  })
 </script>
 
 {#if loading}
@@ -304,6 +323,50 @@
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="删除" onclick={remove}><Trash2 size={16} /></button>
       </div>
     </div>
+
+    {#if intro && intro.chainIds.length > 1}
+      <!-- 认识路径：我 —关系→ 引荐人 … → 此人；深链到关系图聚焦同一条链 -->
+      <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-sm font-medium flex items-center gap-1"><Route size={14} /> 认识路径</h2>
+          <button class="text-xs px-2 py-1 rounded-md flex items-center gap-1"
+                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+                  onclick={() => navigate(`/graph?focus=${id}`)}>
+            <Route size={12} /> 在关系图中查看
+          </button>
+        </div>
+        <div class="flex flex-wrap items-center gap-y-2 text-sm">
+          {#each intro.chainIds as cid, i}
+            {#if i > 0}
+              <span class="mx-1.5 text-xs whitespace-nowrap" style="color: var(--q-muted);">
+                —{intro.edgeTypes[i - 1] || '认识'}→
+              </span>
+            {/if}
+            {#if cid === id}
+              <span class="px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
+                    style="background: color-mix(in srgb, var(--q-theme) 14%, transparent); color: var(--q-theme);">
+                {personById.get(cid) ? personLabel(personById.get(cid)!) : '?'}
+              </span>
+            {:else}
+              <button class="underline whitespace-nowrap" style="color: var(--q-text);"
+                      onclick={() => navigate(`/people/${cid}`)}>
+                {personById.get(cid) ? personLabel(personById.get(cid)!) : '已删除的人'}
+              </button>
+            {/if}
+          {/each}
+        </div>
+        {#if directTypes.length > 0}
+          <p class="text-xs mt-2" style="color: var(--q-muted);">现在你们也是：{directTypes.join('、')}</p>
+        {/if}
+        {#if intro.broken}
+          <p class="text-xs mt-2" style="color: #b45309;">引荐人记录指向了已删除的人，可在编辑资料里重新选择。</p>
+        {:else if intro.cyclic}
+          <p class="text-xs mt-2" style="color: #b45309;">引荐人记录出现了环，请在编辑资料里修正。</p>
+        {:else if !intro.reachesSelf}
+          <p class="text-xs mt-2" style="color: var(--q-muted);">这条引荐链还没连到你本人，可在编辑资料里继续补全引荐人。</p>
+        {/if}
+      </section>
+    {/if}
 
     <!-- 快捷记录：不离开详情页就能补一条记录 -->
     <section class="rounded-xl p-4" style="background: var(--q-surface); border: 1px solid var(--q-border);">

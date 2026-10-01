@@ -31,7 +31,13 @@ export type Person = {
   phone?: string; wechat?: string; location?: string; notes?: string;
   grade: number; category_ids?: number[]; categories?: PersonCategory[]; archived?: boolean;
   created_at: string; updated_at: string;
-  intimacy?: number
+  intimacy?: number;
+  /** 认识来源：通过谁认识；空 = 与我直接认识 */
+  introduced_by_person_id?: string;
+  /** 仅详情接口带回引荐人姓名 */
+  introduced_by_name?: string;
+  /** 仅关系图接口批量带回 */
+  tags?: Tag[];
 }
 export type Event = { id: string; title: string; type_id?: number; type_name?: string; type_color?: string; event_date: string; location?: string; locations?: string[]; has_gift?: boolean; gift?: string; summary?: string; created_at: string; updated_at: string; participants?: Person[]; expense_fen?: number; expense_person_id?: string; expenses?: Transaction[] }
 export type Memo = { id: string; person_id?: string; speaker: string; content: string; said_at: string; is_promise: boolean; due_date?: string; status: string; created_at: string }

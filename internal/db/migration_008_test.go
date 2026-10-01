@@ -116,7 +116,7 @@ func TestMigration008KeepsRelationshipEdges(t *testing.T) {
 		}
 	}
 
-	if got := getVersion(ctx, d); got != 8 {
-		t.Fatalf("schema_version = %d，期望跑到 008", got)
+	if got := getVersion(ctx, d); got < 8 {
+		t.Fatalf("schema_version = %d，期望至少跑到 008", got)
 	}
 }

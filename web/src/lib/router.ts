@@ -5,7 +5,9 @@ export type Route = { path: string; params: Record<string, string>; query: Recor
 export const route = writable<Route>(parse(location))
 
 function parse(loc: Location): Route {
-  const [p, qs = ''] = loc.pathname.split('?')
+  // 查询串在 location.search 里；pathname 永远不含 '?'，从它身上切只会拿到空串
+  const p = loc.pathname
+  const qs = loc.search.replace(/^\?/, '')
   const query: Record<string, string> = {}
   for (const kv of qs.split('&')) {
     if (!kv) continue

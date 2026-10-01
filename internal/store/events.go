@@ -1282,12 +1282,37 @@ WHERE r.from_person_id=? OR r.to_person_id=?`, personID, personID)
 	return list, rows.Err()
 }
 
-func (s *Store) RelationshipGraph(ctx context.Context) ([]*Person, []*Relationship, error) {
+// RelationshipTypes 列出关系边里已经用过的全部类型，
+// 给前端的类型 combobox 做历史候选（预置枚举之外的自定义类型也在里面）。
+func (s *Store) RelationshipTypes(ctx context.Context) ([]string, error) {
+	rows, err := s.DB.QueryContext(ctx, "SELECT DISTINCT type FROM relationships WHERE type<>'' ORDER BY type")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) RelationshipGraph(ctx context.Context) ([]*Person, []*Relationship, map[string][]*Tag, error) {
 	people, err := s.PersonList(ctx, "", 0, 0, false, 0, 500, 0)
-	if err != nil { return nil, nil, err }
+	if err != nil { return nil, nil, nil, err }
 	rels, err := s.RelationshipList(ctx)
-	if err != nil { return nil, nil, err }
-	return people, rels, nil
+	if err != nil { return nil, nil, nil, err }
+	ids := make([]string, len(people))
+	for i, p := range people {
+		ids[i] = p.ID
+	}
+	tags, err := s.TagsFor(ctx, ids)
+	if err != nil { return nil, nil, nil, err }
+	return people, rels, tags, nil
 }
 
 // ===== Attachments =====

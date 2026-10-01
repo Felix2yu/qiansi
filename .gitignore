@@ -1,5 +1,6 @@
 # build artifacts
 dist/
+bin/
 *.log
 
 # data volume (runtime-created, see config.go MkdirAll)

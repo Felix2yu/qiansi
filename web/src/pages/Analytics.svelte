@@ -26,8 +26,10 @@
     monthChart?.dispose()
     monthChart = echarts.init(monthChartDiv)
     monthChart.setOption({
-      tooltip: {}, legend: { data: ['往来', '金钱', '对话'] },
-      grid: { left: 40, right: 20, top: 40, bottom: 30 },
+      tooltip: {},
+      // legend 必须显式放顶部并预留足够 grid.top，ECharts 默认会把它塞到底部挤 x 轴日期
+      legend: { top: 4, left: 'center', itemWidth: 12, itemHeight: 10, textStyle: { fontSize: 12 } },
+      grid: { left: 40, right: 20, top: 36, bottom: 32 },
       xAxis: { type: 'category', data: rows.map(r => r.month) },
       yAxis: { type: 'value' },
       series: [
