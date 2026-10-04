@@ -360,9 +360,9 @@ func TestPeopleUpdateAndNameParts(t *testing.T) {
 		t.Fatalf("圈子应被清空，得到 %+v", again.Categories)
 	}
 
-	// 更新不存在的 ID：不报错，但没有行被改动
-	if err := s.PersonUpdate(ctx, &Person{ID: "ghost", Name: "x"}); err != nil {
-		t.Fatalf("PersonUpdate(不存在) 不应报错: %v", err)
+	// 更新不存在的 ID：影响 0 行 → ErrNoRows（API 侧翻译为 404，不能再静默成功）
+	if err := s.PersonUpdate(ctx, &Person{ID: "ghost", Name: "x"}); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("PersonUpdate(不存在) 应 ErrNoRows: %v", err)
 	}
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM people WHERE id='ghost'"); n != 0 {
 		t.Fatalf("不应插入新行")
@@ -465,9 +465,9 @@ func TestPeopleDeleteAndCascade(t *testing.T) {
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", p.ID); n != 0 {
 		t.Fatalf("纪念日应随人物级联删除，剩余 %d", n)
 	}
-	// 删不存在的 ID 不报错
-	if err := s.PersonDelete(ctx, "never-existed"); err != nil {
-		t.Fatalf("PersonDelete(不存在) 不应报错: %v", err)
+	// 删不存在的 ID → ErrNoRows
+	if err := s.PersonDelete(ctx, "never-existed"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("PersonDelete(不存在) 应 ErrNoRows: %v", err)
 	}
 	if err := s.PersonDelete(pCancelledCtx(), p.ID); err == nil {
 		t.Errorf("已取消的 ctx 应返回错误")
@@ -1399,8 +1399,8 @@ func TestPeopleFieldUpsertListDelete(t *testing.T) {
 	if len(left) != 2 {
 		t.Fatalf("删除后应剩 2 条，得到 %d", len(left))
 	}
-	if err := s.PersonFieldDelete(ctx, "不存在"); err != nil {
-		t.Fatalf("删除不存在不应报错: %v", err)
+	if err := s.PersonFieldDelete(ctx, "不存在"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("删除不存在应 ErrNoRows: %v", err)
 	}
 
 	// 外键约束：未知 person_id 应报错
@@ -1482,8 +1482,8 @@ func TestPeopleCategoryCrudAndDeleteClearsPeople(t *testing.T) {
 	if len(after.Categories) != 0 {
 		t.Fatalf("圈子删除后人物不应再挂该圈子: %+v", after.Categories)
 	}
-	if err := s.CategoryDelete(ctx, 987654); err != nil {
-		t.Fatalf("删除不存在的圈子不应报错: %v", err)
+	if err := s.CategoryDelete(ctx, 987654); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("删除不存在的圈子应 ErrNoRows: %v", err)
 	}
 
 	if _, err := s.CategoryList(pCancelledCtx()); err == nil {
@@ -1590,8 +1590,8 @@ func TestPeopleTagCrudAndTagging(t *testing.T) {
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM tags WHERE id=?", t1.ID); n != 0 {
 		t.Fatalf("标签本体未删除")
 	}
-	if err := s.TagDelete(ctx, 987654); err != nil {
-		t.Fatalf("删除不存在标签不应报错: %v", err)
+	if err := s.TagDelete(ctx, 987654); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("删除不存在标签应 ErrNoRows: %v", err)
 	}
 
 	if _, err := s.TagList(pCancelledCtx()); err == nil {
@@ -1665,8 +1665,8 @@ func TestPeopleEventTypeCrud(t *testing.T) {
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM event_types WHERE id=?", e1.ID); n != 0 {
 		t.Fatalf("类型未删除")
 	}
-	if err := s.EventTypeDelete(ctx, 999999); err != nil {
-		t.Fatalf("删除不存在不应报错: %v", err)
+	if err := s.EventTypeDelete(ctx, 999999); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("删除不存在应 ErrNoRows: %v", err)
 	}
 
 	if _, err := s.EventTypeList(pCancelledCtx()); err == nil {

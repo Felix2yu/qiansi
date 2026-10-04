@@ -45,6 +45,16 @@ func evAPIStr(m map[string]any, key string) string {
 	return v
 }
 
+// evAPICount 直接跑一条计数查询：验证失败的那次写入有没有整体回滚。
+func evAPICount(t *testing.T, ts *testServer, query string) int {
+	t.Helper()
+	var n int
+	if err := ts.Store.DB.QueryRow(query).Scan(&n); err != nil {
+		t.Fatalf("COUNT %s: %v", query, err)
+	}
+	return n
+}
+
 func evAPIDate(offsetDays int) string {
 	return time.Now().AddDate(0, 0, offsetDays).Format("2006-01-02")
 }
@@ -73,23 +83,27 @@ func TestAPIRecords_EventFullLifecycle(t *testing.T) {
 	if rec.Code != 400 {
 		t.Fatalf("开销无归属应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// 非法参与人 → store FK 错误 → 500
+	// 非法参与人 → store FK 错误 → 400（入参问题，不是服务器故障）
 	rec = ts.do(http.MethodPost, "/api/v1/events/", map[string]any{
 		"title": "坏参与人", "event_date": "2026-05-01", "participant_ids": []string{"ghost"},
 	})
-	if rec.Code != 500 {
-		t.Fatalf("非法参与人应 500, got %d", rec.Code)
+	if rec.Code != 400 {
+		t.Fatalf("非法参与人应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// expense_person_id 指向不存在的人（无参与人）→ 事件保存但记账失败 → 500
+	// 开销归属人不存在：事件与开销同事务，两者都不落库，而不是「事件已保存、开销失败」
+	before := evAPICount(t, ts, "SELECT COUNT(*) FROM events")
 	rec = ts.do(http.MethodPost, "/api/v1/events/", map[string]any{
 		"title": "归属人不存在", "event_date": "2026-05-01",
 		"expense_fen": 100, "expense_person_id": "ghost",
 	})
-	if rec.Code != 500 {
-		t.Fatalf("开销记账失败应 500, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != 400 {
+		t.Fatalf("开销归属人不存在应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "开销记账失败") {
-		t.Fatalf("500 信息应说明开销失败: %s", rec.Body.String())
+	if got := evAPICount(t, ts, "SELECT COUNT(*) FROM events"); got != before {
+		t.Fatalf("开销失败不应留下事件: %d -> %d", before, got)
+	}
+	if got := evAPICount(t, ts, "SELECT COUNT(*) FROM transactions WHERE title='归属人不存在'"); got != 0 {
+		t.Fatalf("开销失败不应留下往来: %d 条", got)
 	}
 
 	// 正常创建：多地点去重清洗 + 开销自动关联交易
@@ -135,10 +149,10 @@ func TestAPIRecords_EventFullLifecycle(t *testing.T) {
 	txID := evAPIStr(exp0, "id")
 
 	// 列表：全量 / person_id / q
-	// 注意：前面「归属人不存在」用例的事件本身已入库（只是记账失败），所以是 2 条
+	// 「归属人不存在」那次写入整体回滚了，所以只剩下面正常创建的 1 条
 	all := evAPIList(t, ts.do(http.MethodGet, "/api/v1/events/?limit=10", nil))
-	if len(all) != 2 {
-		t.Fatalf("events 列表 = %d, 期望 2", len(all))
+	if len(all) != 1 {
+		t.Fatalf("events 列表 = %d, 期望 1", len(all))
 	}
 	byPerson := evAPIList(t, ts.do(http.MethodGet, "/api/v1/events/?person_id="+p1, nil))
 	if len(byPerson) != 1 {
@@ -157,7 +171,7 @@ func TestAPIRecords_EventFullLifecycle(t *testing.T) {
 		t.Fatalf("无匹配应空")
 	}
 	// limit 非法字符串 → 走默认值
-	if l := evAPIList(t, ts.do(http.MethodGet, "/api/v1/events/?limit=abc&offset=xyz", nil)); len(l) != 2 {
+	if l := evAPIList(t, ts.do(http.MethodGet, "/api/v1/events/?limit=abc&offset=xyz", nil)); len(l) != 1 {
 		t.Fatalf("非法 limit 应回落默认值: %d 条", len(l))
 	}
 
@@ -221,9 +235,9 @@ func TestAPIRecords_EventFullLifecycle(t *testing.T) {
 	if rec := ts.do(http.MethodGet, "/api/v1/events/"+id, nil); rec.Code != 404 {
 		t.Fatalf("删除后应 404, got %d", rec.Code)
 	}
-	// 删除未知事件 → 无错误，204
-	if rec := ts.do(http.MethodDelete, "/api/v1/events/ghost", nil); rec.Code != 204 {
-		t.Fatalf("删除未知事件应 204, got %d", rec.Code)
+	// 删除未知事件 → 404
+	if rec := ts.do(http.MethodDelete, "/api/v1/events/ghost", nil); rec.Code != 404 {
+		t.Fatalf("删除未知事件应 404, got %d", rec.Code)
 	}
 }
 
@@ -266,11 +280,11 @@ func TestAPIRecords_Memos(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/memos/", []byte("nope"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400, got %d", rec.Code)
 	}
-	// 非法人物 → 500
+	// 非法人物 → 外键失败 400
 	if rec := ts.do(http.MethodPost, "/api/v1/memos/", map[string]any{
 		"content": "x", "said_at": "2026-05-01T10:00:00", "person_id": "ghost",
-	}); rec.Code != 500 {
-		t.Fatalf("非法 person 应 500, got %d", rec.Code)
+	}); rec.Code != 400 {
+		t.Fatalf("非法 person 应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// 正常
 	rec := ts.do(http.MethodPost, "/api/v1/memos/", map[string]any{
@@ -348,11 +362,11 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/transactions/", []byte("{"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400, got %d", rec.Code)
 	}
-	// 非法人物 → 500
+	// 非法人物 → 外键失败 400
 	if rec := ts.do(http.MethodPost, "/api/v1/transactions/", map[string]any{
 		"person_id": "ghost", "direction": "out", "amount_fen": 100, "occurred_at": "2026-05-01",
-	}); rec.Code != 500 {
-		t.Fatalf("非法 person 交易应 500, got %d", rec.Code)
+	}); rec.Code != 400 {
+		t.Fatalf("非法 person 交易应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// 借款 1000（未结），带 due_date 与事件关联
@@ -419,8 +433,8 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/transactions/"+txID+"/repayments", []byte("bad"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 还款应 400")
 	}
-	if rec := ts.do(http.MethodPost, "/api/v1/transactions/ghost/repayments", map[string]any{"amount_fen": 1}); rec.Code != 500 {
-		t.Fatalf("未知交易还款应 500, got %d", rec.Code)
+	if rec := ts.do(http.MethodPost, "/api/v1/transactions/ghost/repayments", map[string]any{"amount_fen": 1}); rec.Code != 400 {
+		t.Fatalf("未知交易还款应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// 还款列表
@@ -459,9 +473,9 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if len(evAPIList(t, ts.do(http.MethodGet, "/api/v1/transactions/"+txID+"/repayments", nil))) != 0 {
 		t.Fatalf("还款列表应空")
 	}
-	// 删除未知还款/未知交易 → resyncSettled 静默跳过 → 204
-	if rec := ts.do(http.MethodDelete, "/api/v1/transactions/ghost/repayments/ghost", nil); rec.Code != 204 {
-		t.Fatalf("未知还款删除应 204, got %d", rec.Code)
+	// 删除未知还款 → 404；未知交易下的还款本就不存在
+	if rec := ts.do(http.MethodDelete, "/api/v1/transactions/ghost/repayments/ghost", nil); rec.Code != 404 {
+		t.Fatalf("未知还款删除应 404, got %d", rec.Code)
 	}
 
 	// 更新交易金额 → 200，再验证持久化
@@ -510,11 +524,11 @@ func TestAPIRecords_Anniversaries(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/anniversaries/", []byte("{"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400")
 	}
-	// 非法人物 → 500
+	// 非法人物 → 外键失败 400
 	if rec := ts.do(http.MethodPost, "/api/v1/anniversaries/", map[string]any{
 		"title": "x", "date": "2026-05-20", "person_id": "ghost",
-	}); rec.Code != 500 {
-		t.Fatalf("非法 person 纪念日应 500, got %d", rec.Code)
+	}); rec.Code != 400 {
+		t.Fatalf("非法 person 纪念日应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	rec := ts.do(http.MethodPost, "/api/v1/anniversaries/", map[string]any{
@@ -590,11 +604,11 @@ func TestAPIRecords_Reminders(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/reminders/", []byte(".."), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400")
 	}
-	// 非法人物 → 500
+	// 非法人物 → 外键失败 400
 	if rec := ts.do(http.MethodPost, "/api/v1/reminders/", map[string]any{
 		"title": "x", "due_at": "2026-05-01T09:00:00", "person_id": "ghost",
-	}); rec.Code != 500 {
-		t.Fatalf("非法 person 提醒应 500, got %d", rec.Code)
+	}); rec.Code != 400 {
+		t.Fatalf("非法 person 提醒应 400, got %d: %s", rec.Code, rec.Body.String())
 	}
 
 	// 近期待办（+2 天）与远期（+40 天）
@@ -682,9 +696,9 @@ func TestAPIRecords_Reminders(t *testing.T) {
 			t.Fatalf("done 后不应出现在 upcoming")
 		}
 	}
-	// 未知 id done → 204（影响 0 行不报错）
-	if rec := ts.do(http.MethodPost, "/api/v1/reminders/ghost/done", nil); rec.Code != 204 {
-		t.Fatalf("未知提醒 done 应 204, got %d", rec.Code)
+	// 未知 id done → 404，写 0 行不能当成「已标记完成」
+	if rec := ts.do(http.MethodPost, "/api/v1/reminders/ghost/done", nil); rec.Code != 404 {
+		t.Fatalf("未知提醒 done 应 404, got %d", rec.Code)
 	}
 
 	// 删除

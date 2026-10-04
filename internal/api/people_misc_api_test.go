@@ -203,8 +203,8 @@ func TestAPIPeopleGetUpdateDelete(t *testing.T) {
 	// 更新校验
 	apiWantError(t, http.MethodPut, "people update", s.do(http.MethodPut, "/api/v1/people/"+id, map[string]any{"name": ""}), http.StatusBadRequest, "name required")
 	apiWantStatus(t, http.MethodPut, "people update", s.raw(http.MethodPut, "/api/v1/people/"+id, []byte("bad"), "application/json"), http.StatusBadRequest)
-	// 更新不存在的 id：SQL 不报错，返回 200
-	apiWantStatus(t, http.MethodPut, "people update unknown", s.do(http.MethodPut, "/api/v1/people/ghost-id", map[string]any{"name": "幽灵"}), http.StatusOK)
+	// 更新不存在的 id：写 0 行不再是「改成功了」，返回 404
+	apiWantStatus(t, http.MethodPut, "people update unknown", s.do(http.MethodPut, "/api/v1/people/ghost-id", map[string]any{"name": "幽灵"}), http.StatusNotFound)
 
 	// 清空生日 => 关联的自动纪念日被移除
 	birth := apiCreatePersonMap(t, s, map[string]any{"name": "有生日", "birthday": "1988-06-06"})
@@ -229,8 +229,8 @@ func TestAPIPeopleGetUpdateDelete(t *testing.T) {
 	rec = s.do(http.MethodDelete, "/api/v1/people/"+id, nil)
 	apiWantStatus(t, http.MethodDelete, "people delete", rec, http.StatusNoContent)
 	apiWantStatus(t, http.MethodGet, "people get after delete", s.do(http.MethodGet, "/api/v1/people/"+id, nil), http.StatusNotFound)
-	// 删除未知 id 不报错
-	apiWantStatus(t, http.MethodDelete, "people delete unknown", s.do(http.MethodDelete, "/api/v1/people/ghost", nil), http.StatusNoContent)
+	// 删除未知 id => 404
+	apiWantStatus(t, http.MethodDelete, "people delete unknown", s.do(http.MethodDelete, "/api/v1/people/ghost", nil), http.StatusNotFound)
 }
 
 func TestAPIPeopleListFilters(t *testing.T) {
@@ -334,7 +334,7 @@ func TestAPIPeopleSearch(t *testing.T) {
 	pid := p["id"].(string)
 	ctx := context.Background()
 
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "和周伯通喝酒", EventDate: apiDate(-1), Summary: "醉拳"}, []string{pid}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "和周伯通喝酒", EventDate: apiDate(-1), Summary: "醉拳"}, []string{pid}, nil); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 	if err := s.Store.MemoCreate(ctx, &store.Memo{PersonID: pid, Content: "周伯通说要教我空明拳", SaidAt: apiDate(0)}); err != nil {
@@ -432,9 +432,9 @@ func TestAPIPeopleArchiveUnarchive(t *testing.T) {
 	if archived := s.get("/api/v1/people/" + pid)["person"].(map[string]any)["archived"]; archived != false {
 		t.Fatalf("unarchive 后 archived = %v", archived)
 	}
-	// 未知 id 不报错
-	apiWantStatus(t, http.MethodPost, "archive unknown", s.do(http.MethodPost, "/api/v1/people/ghost/archive", nil), http.StatusNoContent)
-	apiWantStatus(t, http.MethodDelete, "unarchive unknown", s.do(http.MethodDelete, "/api/v1/people/ghost/archive", nil), http.StatusNoContent)
+	// 未知 id => 404，不能再让前端以为归档上了
+	apiWantStatus(t, http.MethodPost, "archive unknown", s.do(http.MethodPost, "/api/v1/people/ghost/archive", nil), http.StatusNotFound)
+	apiWantStatus(t, http.MethodDelete, "unarchive unknown", s.do(http.MethodDelete, "/api/v1/people/ghost/archive", nil), http.StatusNotFound)
 }
 
 func TestAPIPeopleListArchivedOnly(t *testing.T) {
@@ -486,7 +486,7 @@ func TestAPIPeopleMerge(t *testing.T) {
 	if fid, _ := field["id"].(string); fid == "" {
 		t.Fatalf("自定义字段未创建: %v", field)
 	}
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "来源的饭局", EventDate: apiDate(-2)}, []string{source}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "来源的饭局", EventDate: apiDate(-2)}, []string{source}, nil); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 	if err := s.Store.MemoCreate(ctx, &store.Memo{PersonID: source, Content: "来源的备忘", SaidAt: apiDate(-1)}); err != nil {
@@ -613,14 +613,14 @@ func TestAPIPeopleFieldsCRUD(t *testing.T) {
 	}
 
 	apiWantStatus(t, http.MethodPost, "field bad json", s.raw(http.MethodPost, "/api/v1/people/"+pid+"/fields", []byte("[]"), "application/json"), http.StatusBadRequest)
-	// 未知联系人 => 外键失败 500
-	apiWantStatus(t, http.MethodPost, "field unknown person", s.do(http.MethodPost, "/api/v1/people/ghost/fields", map[string]any{"label": "x", "value": "y"}), http.StatusInternalServerError)
+	// 未知联系人 => 外键失败，是入参问题不是服务器故障
+	apiWantStatus(t, http.MethodPost, "field unknown person", s.do(http.MethodPost, "/api/v1/people/ghost/fields", map[string]any{"label": "x", "value": "y"}), http.StatusBadRequest)
 
 	apiWantStatus(t, http.MethodDelete, "field delete", s.do(http.MethodDelete, "/api/v1/people/"+pid+"/fields/"+fid, nil), http.StatusNoContent)
 	if got := apiArray(s, "/api/v1/people/"+pid+"/fields"); len(got) != 0 {
 		t.Fatalf("删除后 = %v", got)
 	}
-	apiWantStatus(t, http.MethodDelete, "field delete unknown", s.do(http.MethodDelete, "/api/v1/people/"+pid+"/fields/ghost", nil), http.StatusNoContent)
+	apiWantStatus(t, http.MethodDelete, "field delete unknown", s.do(http.MethodDelete, "/api/v1/people/"+pid+"/fields/ghost", nil), http.StatusNotFound)
 }
 
 func TestAPIPeopleRelationships(t *testing.T) {
@@ -666,10 +666,10 @@ func TestAPIPeopleRelationships(t *testing.T) {
 		"from_person_id": a, "to_person_id": b, "type": "   ",
 	}), http.StatusBadRequest, "type required")
 	apiWantStatus(t, http.MethodPost, "rel bad json", s.raw(http.MethodPost, "/api/v1/relationships/", []byte("not-json"), "application/json"), http.StatusBadRequest)
-	// 未知联系人 => 外键失败
+	// 未知联系人 => 外键失败 400
 	apiWantStatus(t, http.MethodPost, "rel unknown person", s.do(http.MethodPost, "/api/v1/relationships/", map[string]any{
 		"from_person_id": a, "to_person_id": "ghost", "type": "陌生人",
-	}), http.StatusInternalServerError)
+	}), http.StatusBadRequest)
 
 	// 同一对人可以挂多种类型的关系；重复的同名关系不再静默顶掉前一条，而是 409
 	again := decodeMap(t, s.do(http.MethodPost, "/api/v1/relationships/", map[string]any{
@@ -730,7 +730,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	// body 里的 id 不作数，以 URL 为准
 	apiWantStatus(t, http.MethodPut, "rel update ghost", s.do(http.MethodPut, "/api/v1/relationships/ghost", map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "陌生人",
-	}), http.StatusInternalServerError)
+	}), http.StatusNotFound)
 
 	// 图
 	graph := s.get("/api/v1/relationships/")
@@ -758,7 +758,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	if got := apiArray(s, "/api/v1/relationships/of/"+a); len(got) != 0 {
 		t.Fatalf("删除后 = %v", got)
 	}
-	apiWantStatus(t, http.MethodDelete, "rel delete unknown", s.do(http.MethodDelete, "/api/v1/relationships/ghost", nil), http.StatusNoContent)
+	apiWantStatus(t, http.MethodDelete, "rel delete unknown", s.do(http.MethodDelete, "/api/v1/relationships/ghost", nil), http.StatusNotFound)
 	// 空图
 	empty := s.get("/api/v1/relationships/")
 	if len(empty["relationships"].([]any)) != 0 || len(empty["people"].([]any)) != 2 {
@@ -771,10 +771,10 @@ func TestAPIPeopleTimelineIntimacyWordCloud(t *testing.T) {
 	ctx := context.Background()
 
 	pid := apiCreatePersonMap(t, s, map[string]any{"name": "亲密人", "grade": 5})["id"].(string)
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "登山", EventDate: apiDate(-1)}, []string{pid}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "登山", EventDate: apiDate(-1)}, []string{pid}, nil); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "看展", EventDate: apiDate(-3)}, []string{pid}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "看展", EventDate: apiDate(-3)}, []string{pid}, nil); err != nil {
 		t.Fatalf("seed event2: %v", err)
 	}
 	if err := s.Store.MemoCreate(ctx, &store.Memo{PersonID: pid, Content: "喜欢 登山 登山 摄影", SaidAt: apiDate(0)}); err != nil {
@@ -857,7 +857,7 @@ func TestAPIPeopleTimelineIntimacyWordCloud(t *testing.T) {
 		t.Fatalf("grade=5 且两次近期往来应封顶 100, got %d", highScore)
 	}
 	// 未知联系人 => 500
-	apiWantStatus(t, http.MethodGet, "intimacy unknown", s.do(http.MethodGet, "/api/v1/people/ghost/intimacy", nil), http.StatusInternalServerError)
+	apiWantStatus(t, http.MethodGet, "intimacy unknown", s.do(http.MethodGet, "/api/v1/people/ghost/intimacy", nil), http.StatusNotFound)
 
 	// 词云
 	words := apiArray(s, "/api/v1/people/"+pid+"/wordcloud")
@@ -1027,8 +1027,8 @@ func TestAPIAttachUploadAndDelete(t *testing.T) {
 	if n != 0 {
 		t.Fatal("附件行未删除")
 	}
-	// 再删一次 => AttachmentDelete ErrNoRows => 500
-	apiWantStatus(t, http.MethodDelete, "attachment delete twice", s.do(http.MethodDelete, "/api/v1/attachments/"+attID, nil), http.StatusInternalServerError)
+	// 再删一次 => AttachmentDelete ErrNoRows => 404
+	apiWantStatus(t, http.MethodDelete, "attachment delete twice", s.do(http.MethodDelete, "/api/v1/attachments/"+attID, nil), http.StatusNotFound)
 }
 
 func TestAPIAttachUploadValidation(t *testing.T) {
@@ -1041,7 +1041,29 @@ func TestAPIAttachUploadValidation(t *testing.T) {
 	// 非图片
 	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": "p1"}, "note.txt", []byte("纯文本内容，不是图片"))
 	rec := s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
-	apiWantError(t, http.MethodPost, "attach upload", rec, http.StatusBadRequest, "only image/* accepted")
+	apiWantError(t, http.MethodPost, "attach upload", rec, http.StatusBadRequest, "只接受")
+
+	// SVG 是图片但能带脚本，同样按「不是位图」拒
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>`)
+	body, ct = apiMultipartBody(t, nil, "icon.svg", svg)
+	apiWantStatus(t, http.MethodPost, "attach svg", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusBadRequest)
+
+	// polyglot：PNG 头 + HTML 体，文件名还自称 .html —— 落盘名必须由嗅探结果决定
+	poly := append(apiPNGBytes(), []byte("<html><script>alert(1)</script></html>")...)
+	body, ct = apiMultipartBody(t, nil, "evil.html", poly)
+	rec = s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
+	apiWantStatus(t, http.MethodPost, "attach polyglot", rec, http.StatusOK)
+	polyURL := decodeMap(t, rec)["url"].(string)
+	if !strings.HasSuffix(polyURL, ".png") {
+		t.Fatalf("polyglot 落盘名应取自嗅探结果而不是文件名: %s", polyURL)
+	}
+	if err := os.Remove(filepath.Join(s.Cfg.Uploads, strings.TrimPrefix(polyURL, "/uploads/"))); err != nil {
+		t.Fatalf("清理 polyglot: %v", err)
+	}
+
+	// 超过 20MB 上限
+	body, ct = apiMultipartBody(t, nil, "big.png", append(apiPNGBytes(), make([]byte, 21<<20)...))
+	apiWantStatus(t, http.MethodPost, "attach too big", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusRequestEntityTooLarge)
 
 	// 只有字段，没有 file
 	var buf bytes.Buffer
@@ -1097,8 +1119,8 @@ func TestAPIAttachDeleteUnknownAndRows(t *testing.T) {
 		t.Fatalf("mkdir uploads: %v", err)
 	}
 
-	// 未知 id => sql.ErrNoRows => 500
-	apiWantStatus(t, http.MethodDelete, "attach delete", s.do(http.MethodDelete, "/api/v1/attachments/nope", nil), http.StatusInternalServerError)
+	// 未知 id => sql.ErrNoRows => 404
+	apiWantStatus(t, http.MethodDelete, "attach delete", s.do(http.MethodDelete, "/api/v1/attachments/nope", nil), http.StatusNotFound)
 
 	// 手工插入一条附件（文件在磁盘上），删除应连带清理文件
 	if err := os.WriteFile(filepath.Join(s.Cfg.Uploads, "stored-1.png"), apiPNGBytes(), 0o644); err != nil {
@@ -1204,7 +1226,7 @@ func TestAPIDashboardStatsAndTimeline(t *testing.T) {
 	archived := apiCreatePersonMap(t, s, map[string]any{"name": "统计丙"})["id"].(string)
 	s.do(http.MethodPost, "/api/v1/people/"+archived+"/archive", nil)
 
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "统计饭局", EventDate: apiDate(-1)}, []string{pid}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "统计饭局", EventDate: apiDate(-1)}, []string{pid}, nil); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
 	if err := s.Store.MemoCreate(ctx, &store.Memo{PersonID: pid, Content: "统计备忘", SaidAt: apiDate(0), IsPromise: true, DueDate: apiDate(-2)}); err != nil {
@@ -1272,7 +1294,7 @@ func TestAPIDashboardByMonthAndGrade(t *testing.T) {
 		"INSERT INTO events(id,title,event_date,created_at,updated_at) VALUES('ev-m1','本月事件',?,'2026-01-01','2026-01-01')", thisMonth); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
-	if err := s.Store.EventCreate(ctx, &store.Event{Title: "关联事件", EventDate: thisMonth}, []string{pid}); err != nil {
+	if err := s.Store.EventCreate(ctx, &store.Event{Title: "关联事件", EventDate: thisMonth}, []string{pid}, nil); err != nil {
 		t.Fatalf("seed event2: %v", err)
 	}
 	if err := s.Store.MemoCreate(ctx, &store.Memo{PersonID: pid, Content: "本月备忘", SaidAt: thisMonth}); err != nil {

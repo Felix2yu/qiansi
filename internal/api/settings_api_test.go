@@ -372,9 +372,12 @@ func TestAPISettingsCategoriesCRUD(t *testing.T) {
 	// 非法 body / 未知 id
 	apiWantStatus(t, http.MethodPost, "category create", s.raw(http.MethodPost, "/api/v1/categories/", []byte("[1,2]"), "application/json"), http.StatusBadRequest)
 	apiWantStatus(t, http.MethodPut, "category update", s.raw(http.MethodPut, "/api/v1/categories/1", []byte("nope"), "application/json"), http.StatusBadRequest)
-	apiWantStatus(t, http.MethodDelete, "category delete unknown", s.do(http.MethodDelete, "/api/v1/categories/999999", nil), http.StatusNoContent)
-	apiWantStatus(t, http.MethodDelete, "category delete non-numeric", s.do(http.MethodDelete, "/api/v1/categories/abc", nil), http.StatusNoContent)
-	apiWantStatus(t, http.MethodPut, "category update non-numeric", s.do(http.MethodPut, "/api/v1/categories/abc", map[string]any{"name": "x"}), http.StatusOK)
+	apiWantStatus(t, http.MethodDelete, "category delete unknown", s.do(http.MethodDelete, "/api/v1/categories/999999", nil), http.StatusNotFound)
+	// id 解析不出来就是 400：过去 `id, _ := strconv.Atoi` 会得到 0，
+	// PUT 于是静默新建一条 0 号记录，DELETE 删的是空气。
+	apiWantStatus(t, http.MethodDelete, "category delete non-numeric", s.do(http.MethodDelete, "/api/v1/categories/abc", nil), http.StatusBadRequest)
+	apiWantStatus(t, http.MethodPut, "category update non-numeric", s.do(http.MethodPut, "/api/v1/categories/abc", map[string]any{"name": "x"}), http.StatusBadRequest)
+	apiWantStatus(t, http.MethodPut, "category update zero id", s.do(http.MethodPut, "/api/v1/categories/0", map[string]any{"name": "x"}), http.StatusBadRequest)
 }
 
 func TestAPISettingsTagsCRUD(t *testing.T) {
@@ -388,11 +391,11 @@ func TestAPISettingsTagsCRUD(t *testing.T) {
 		t.Fatalf("tag = %v", tag)
 	}
 
-	// 重名触发 UNIQUE => 500
+	// 重名触发 UNIQUE => 409，且不再把驱动原文丢给前端
 	dup := s.do(http.MethodPost, "/api/v1/tags/", map[string]any{"name": "同学"})
-	apiWantStatus(t, http.MethodPost, "duplicate tag", dup, http.StatusInternalServerError)
-	if !strings.Contains(dup.Body.String(), "UNIQUE") {
-		t.Fatalf("dup body = %s", dup.Body.String())
+	apiWantStatus(t, http.MethodPost, "duplicate tag", dup, http.StatusConflict)
+	if strings.Contains(dup.Body.String(), "UNIQUE") {
+		t.Fatalf("dup body 不该暴露约束原文: %s", dup.Body.String())
 	}
 
 	s.do(http.MethodPost, "/api/v1/tags/", map[string]any{"name": "同事"})
@@ -416,14 +419,14 @@ func TestAPISettingsTagsCRUD(t *testing.T) {
 		t.Fatalf("tag 更新未持久化: %v", list)
 	}
 
-	// 更新成已存在的名字 => 500
-	apiWantStatus(t, http.MethodPut, "tag rename dup", s.do(http.MethodPut, "/api/v1/tags/"+itoa(id), map[string]any{"id": id, "name": "同事"}), http.StatusInternalServerError)
+	// 更新成已存在的名字 => 409
+	apiWantStatus(t, http.MethodPut, "tag rename dup", s.do(http.MethodPut, "/api/v1/tags/"+itoa(id), map[string]any{"id": id, "name": "同事"}), http.StatusConflict)
 
 	apiWantStatus(t, http.MethodPost, "tag create bad json", s.raw(http.MethodPost, "/api/v1/tags/", []byte("{x"), "application/json"), http.StatusBadRequest)
 	apiWantStatus(t, http.MethodPut, "tag update bad json", s.raw(http.MethodPut, "/api/v1/tags/1", []byte("{x"), "application/json"), http.StatusBadRequest)
-	apiWantStatus(t, http.MethodPut, "tag update non-numeric", s.do(http.MethodPut, "/api/v1/tags/abc", map[string]any{"name": "z"}), http.StatusOK)
-	apiWantStatus(t, http.MethodDelete, "tag delete unknown", s.do(http.MethodDelete, "/api/v1/tags/999999", nil), http.StatusNoContent)
-	apiWantStatus(t, http.MethodDelete, "tag delete non-numeric", s.do(http.MethodDelete, "/api/v1/tags/xyz", nil), http.StatusNoContent)
+	apiWantStatus(t, http.MethodPut, "tag update non-numeric", s.do(http.MethodPut, "/api/v1/tags/abc", map[string]any{"name": "z"}), http.StatusBadRequest)
+	apiWantStatus(t, http.MethodDelete, "tag delete unknown", s.do(http.MethodDelete, "/api/v1/tags/999999", nil), http.StatusNotFound)
+	apiWantStatus(t, http.MethodDelete, "tag delete non-numeric", s.do(http.MethodDelete, "/api/v1/tags/xyz", nil), http.StatusBadRequest)
 
 	// 删除带打标的标签：taggings 应级联清理
 	personID := apiCreatePersonMap(t, s, map[string]any{"name": "阿强"})["id"].(string)
@@ -485,9 +488,9 @@ func TestAPISettingsEventTypesCRUD(t *testing.T) {
 
 	apiWantStatus(t, http.MethodPost, "bad json", s.raw(http.MethodPost, "/api/v1/event-types/", []byte("]"), "application/json"), http.StatusBadRequest)
 	apiWantStatus(t, http.MethodPut, "bad json", s.raw(http.MethodPut, "/api/v1/event-types/1", []byte("]"), "application/json"), http.StatusBadRequest)
-	apiWantStatus(t, http.MethodPut, "non-numeric id", s.do(http.MethodPut, "/api/v1/event-types/abc", map[string]any{"name": "x"}), http.StatusOK)
-	apiWantStatus(t, http.MethodDelete, "unknown id", s.do(http.MethodDelete, "/api/v1/event-types/999999", nil), http.StatusNoContent)
-	apiWantStatus(t, http.MethodDelete, "non-numeric delete", s.do(http.MethodDelete, "/api/v1/event-types/zz", nil), http.StatusNoContent)
+	apiWantStatus(t, http.MethodPut, "non-numeric id", s.do(http.MethodPut, "/api/v1/event-types/abc", map[string]any{"name": "x"}), http.StatusBadRequest)
+	apiWantStatus(t, http.MethodDelete, "unknown id", s.do(http.MethodDelete, "/api/v1/event-types/999999", nil), http.StatusNotFound)
+	apiWantStatus(t, http.MethodDelete, "non-numeric delete", s.do(http.MethodDelete, "/api/v1/event-types/zz", nil), http.StatusBadRequest)
 }
 
 func TestAPISettingsTaggings(t *testing.T) {
@@ -526,10 +529,10 @@ func TestAPISettingsTaggings(t *testing.T) {
 
 	apiWantStatus(t, http.MethodPost, "add bad json", s.raw(http.MethodPost, "/api/v1/taggings/add", []byte("<xml"), "application/json"), http.StatusBadRequest)
 	apiWantStatus(t, http.MethodPost, "remove bad json", s.raw(http.MethodPost, "/api/v1/taggings/remove", []byte("<xml"), "application/json"), http.StatusBadRequest)
-	// 外键不存在的 tag_id => 500
+	// 外键不存在的 tag_id => 400
 	apiWantStatus(t, http.MethodPost, "add unknown tag", s.do(http.MethodPost, "/api/v1/taggings/add", map[string]any{
 		"target_type": "person", "target_id": personID, "tag_id": 424242,
-	}), http.StatusInternalServerError)
+	}), http.StatusBadRequest)
 }
 
 func TestAPISettingsDBErrors(t *testing.T) {

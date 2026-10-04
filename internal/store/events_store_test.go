@@ -53,7 +53,7 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 		HasGift:   true,
 		Summary:   "老朋友聚会",
 	}
-	if err := s.EventCreate(ctx, e, []string{p1.ID, p2.ID}); err != nil {
+	if err := s.EventCreate(ctx, e, []string{p1.ID, p2.ID}, nil); err != nil {
 		t.Fatalf("EventCreate: %v", err)
 	}
 	if e.ID == "" || e.CreatedAt == "" || e.UpdatedAt == "" {
@@ -62,12 +62,12 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 
 	// 重复 ID → INSERT 错误分支
 	dup := &Event{ID: e.ID, Title: "x", EventDate: "2026-03-01"}
-	if err := s.EventCreate(ctx, dup, nil); err == nil {
+	if err := s.EventCreate(ctx, dup, nil, nil); err == nil {
 		t.Fatalf("重复 ID 的 EventCreate 应该报错")
 	}
 	// 参与人不存在 → FK 错误分支（participant 循环内 err）
 	bad := &Event{Title: "坏参与人", EventDate: "2026-03-01"}
-	if err := s.EventCreate(ctx, bad, []string{"no-such-person"}); err == nil {
+	if err := s.EventCreate(ctx, bad, []string{"no-such-person"}, nil); err == nil {
 		t.Fatalf("非法参与人 EventCreate 应该报错")
 	}
 	if bad.ID == "" {
@@ -122,13 +122,17 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 		t.Fatalf("EventExpenses 应回填 EventID")
 	}
 
-	// 更新：改标题、换参与人、清空 locations 但保留 location 兼容字段
+	// 更新：改标题、换参与人、清空 locations 但保留 location 兼容字段。
+	// 带上 expense 同步：金额不变，归属人从 p1 换到 p2，仍只有一条开销。
 	e.Title = "新年聚餐2"
 	e.Locations = nil
 	e.Location = "静安"
 	e.TypeID = nil
-	if err := s.EventUpdate(ctx, e, []string{p2.ID}); err != nil {
+	if err := s.EventUpdate(ctx, e, []string{p2.ID}, &EventExpense{PersonID: p2.ID, AmountFen: 8000, Title: "新年聚餐2", OccurredAt: "2026-03-01"}); err != nil {
 		t.Fatalf("EventUpdate: %v", err)
+	}
+	if after, _ := s.TransactionGet(ctx, tx1.ID); after.PersonID != p2.ID || after.Title != "新年聚餐2" {
+		t.Fatalf("开销未随事件更新: %+v", after)
 	}
 	got, err = s.EventGet(ctx, e.ID)
 	if err != nil {
@@ -145,7 +149,7 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	}
 
 	// 更新时非法参与人 → 循环内错误分支
-	if err := s.EventUpdate(ctx, e, []string{"ghost"}); err == nil {
+	if err := s.EventUpdate(ctx, e, []string{"ghost"}, nil); err == nil {
 		t.Fatalf("非法参与人 EventUpdate 应该报错")
 	}
 
@@ -165,6 +169,74 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	}
 }
 
+// TestEventStore_EventExpenseAtomic 事件与它的开销必须同生同灭（M7）。
+// 拆成两步写时，开销那步失败会留下一张金额与账本对不上的事件，
+// 而且用户再保存一次就会多挂出一笔重复开销。
+func TestEventStore_EventExpenseAtomic(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := evMustPerson(t, s, "老周")
+
+	expenses := func(eventID string) []*Transaction {
+		t.Helper()
+		list, err := s.EventExpenses(ctx, eventID)
+		if err != nil {
+			t.Fatalf("EventExpenses: %v", err)
+		}
+		var out []*Transaction
+		for _, x := range list {
+			if x.Kind == "expense" {
+				out = append(out, x)
+			}
+		}
+		return out
+	}
+
+	// 建事件即带开销：一条 out/expense，事件上读得到金额
+	e := &Event{Title: "茶馆", EventDate: "2026-04-01"}
+	if err := s.EventCreate(ctx, e, []string{p.ID}, &EventExpense{PersonID: p.ID, AmountFen: 12000, Title: e.Title, OccurredAt: e.EventDate}); err != nil {
+		t.Fatalf("EventCreate: %v", err)
+	}
+	got, err := s.EventGet(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("EventGet: %v", err)
+	}
+	if got.ExpenseFen != 12000 || len(expenses(e.ID)) != 1 {
+		t.Fatalf("创建后开销 = %d / %d 条", got.ExpenseFen, len(expenses(e.ID)))
+	}
+	keepID := expenses(e.ID)[0].ID
+
+	// 改金额：沿用同一行，不新增
+	e.Title = "茶馆二遇"
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, &EventExpense{PersonID: p.ID, AmountFen: 9000, Title: e.Title, OccurredAt: e.EventDate}); err != nil {
+		t.Fatalf("EventUpdate: %v", err)
+	}
+	list := expenses(e.ID)
+	if len(list) != 1 || list[0].ID != keepID || list[0].AmountFen != 9000 || !list[0].Settled {
+		t.Fatalf("改金额后开销不符: %+v", list)
+	}
+
+	// 开销归属人不存在：整个更新回滚，事件标题与金额都保持原样
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, &EventExpense{PersonID: "ghost", AmountFen: 100, Title: e.Title, OccurredAt: e.EventDate}); err == nil {
+		t.Fatalf("非法归属人应报错")
+	}
+	got, err = s.EventGet(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("EventGet(回滚后): %v", err)
+	}
+	if got.Title != "茶馆二遇" || got.ExpenseFen != 9000 {
+		t.Fatalf("回滚不彻底: title=%q expense=%d", got.Title, got.ExpenseFen)
+	}
+
+	// 金额清零：连带删掉自动挂的开销
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, nil); err != nil {
+		t.Fatalf("EventUpdate(清零): %v", err)
+	}
+	if n := len(expenses(e.ID)); n != 0 {
+		t.Fatalf("清空开销后仍剩 %d 条", n)
+	}
+}
+
 func TestEventStore_EventListFilters(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -172,15 +244,15 @@ func TestEventStore_EventListFilters(t *testing.T) {
 	b := evMustPerson(t, s, "小红")
 
 	e1 := &Event{Title: "茶馆偶遇", EventDate: "2026-05-01", Location: "西湖", Summary: "喝茶"}
-	if err := s.EventCreate(ctx, e1, []string{a.ID, b.ID}); err != nil {
+	if err := s.EventCreate(ctx, e1, []string{a.ID, b.ID}, nil); err != nil {
 		t.Fatalf("EventCreate e1: %v", err)
 	}
 	e2 := &Event{Title: "聚餐", EventDate: "2026-06-01", Location: "饭店"}
-	if err := s.EventCreate(ctx, e2, []string{b.ID}); err != nil {
+	if err := s.EventCreate(ctx, e2, []string{b.ID}, nil); err != nil {
 		t.Fatalf("EventCreate e2: %v", err)
 	}
 	e3 := &Event{Title: "独处", EventDate: "2026-07-01"}
-	if err := s.EventCreate(ctx, e3, nil); err != nil {
+	if err := s.EventCreate(ctx, e3, nil, nil); err != nil {
 		t.Fatalf("EventCreate e3: %v", err)
 	}
 	// locations 为非法 JSON 的脏数据 → 回退到 location 兼容字段
@@ -440,13 +512,27 @@ func TestEventStore_Transactions(t *testing.T) {
 	if tx2.SettledAt != "2026-02-02" {
 		t.Fatalf("settled_at 应回填 occurred_at, got %q", tx2.SettledAt)
 	}
-	// 指向不存在事件的 event_id：回填查询失败但不报错
-	tx3 := &Transaction{PersonID: p.ID, Kind: "expense", Direction: "out", AmountFen: 100, OccurredAt: "2026-02-03", EventID: "ghost-event"}
+	// event_id 有外键（迁移 011）：指向不存在事件的往来直接拒
+	if err := s.TransactionCreate(ctx, &Transaction{PersonID: p.ID, Kind: "expense", Direction: "out", AmountFen: 100, OccurredAt: "2026-02-03", EventID: "ghost-event"}); err == nil {
+		t.Fatalf("幽灵 event_id 应报错")
+	}
+	ev := &Event{Title: "茶馆", EventDate: "2026-02-03"}
+	if err := s.EventCreate(ctx, ev, []string{p.ID}, nil); err != nil {
+		t.Fatalf("EventCreate: %v", err)
+	}
+	tx3 := &Transaction{PersonID: p.ID, Kind: "expense", Direction: "out", AmountFen: 100, OccurredAt: "2026-02-03", EventID: ev.ID}
 	if err := s.TransactionCreate(ctx, tx3); err != nil {
 		t.Fatalf("TransactionCreate tx3: %v", err)
 	}
-	if tx3.EventTitle != "" {
-		t.Fatalf("幽灵事件不应有标题")
+	if tx3.EventTitle != ev.Title {
+		t.Fatalf("event_title 应回填 %q, got %q", ev.Title, tx3.EventTitle)
+	}
+	// 删除事件：往来留着（钱确实花过），只是不再挂在事件上
+	if err := s.EventDelete(ctx, ev.ID); err != nil {
+		t.Fatalf("EventDelete: %v", err)
+	}
+	if got, err := s.TransactionGet(ctx, tx3.ID); err != nil || got.EventID != "" {
+		t.Fatalf("事件删除后 event_id 应置空, got %q err=%v", got.EventID, err)
 	}
 
 	got, err := s.TransactionGet(ctx, tx1.ID)
@@ -791,9 +877,9 @@ func TestEventStore_PromiseUpcoming(t *testing.T) {
 		}
 	}
 
-	// 非承诺的对话不能被 MemoFulfill 改状态
-	if err := s.MemoFulfill(ctx, chat.ID); err != nil {
-		t.Fatalf("MemoFulfill(chat): %v", err)
+	// 非承诺的对话不能被 MemoFulfill 改状态：影响 0 行就是没改成，要报错而不是静默成功
+	if err := s.MemoFulfill(ctx, chat.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("MemoFulfill(chat) 应 ErrNoRows, got %v", err)
 	}
 	var status string
 	if err := s.DB.QueryRow("SELECT status FROM memos WHERE id=?", chat.ID).Scan(&status); err != nil {
@@ -902,9 +988,9 @@ func TestEventStore_Reminders(t *testing.T) {
 	if err != nil || len(up) != 1 || up[0].ID != r2.ID {
 		t.Fatalf("done 后 upcoming 应只剩 r2: %v / %+v", err, up)
 	}
-	// 未知 ID 的 Done 影响 0 行但不报错
-	if err := s.ReminderDone(ctx, "ghost"); err != nil {
-		t.Fatalf("ReminderDone(ghost): %v", err)
+	// 未知 ID 的 Done 影响 0 行，不能再当成成功
+	if err := s.ReminderDone(ctx, "ghost"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("ReminderDone(ghost) 应 ErrNoRows, got %v", err)
 	}
 	if err := s.ReminderDelete(ctx, r2.ID); err != nil {
 		t.Fatalf("ReminderDelete: %v", err)
@@ -956,7 +1042,7 @@ func TestEventStore_Search(t *testing.T) {
 		t.Fatalf("PersonCreate p2: %v", err)
 	}
 	e := &Event{Title: "与小明喝茶", EventDate: "2026-04-01", Summary: "聊了近况"}
-	if err := s.EventCreate(ctx, e, nil); err != nil {
+	if err := s.EventCreate(ctx, e, nil, nil); err != nil {
 		t.Fatalf("EventCreate: %v", err)
 	}
 	m := &Memo{Content: "小明说过年来", SaidAt: "2026-01-01T10:00:00", DueDate: "2026-12-01"}
@@ -1037,7 +1123,7 @@ func TestEventStore_Timelines(t *testing.T) {
 	q := evMustPerson(t, s, "二毛")
 
 	e := &Event{Title: "爬山", EventDate: "2026-03-05"}
-	if err := s.EventCreate(ctx, e, []string{p.ID, q.ID}); err != nil {
+	if err := s.EventCreate(ctx, e, []string{p.ID, q.ID}, nil); err != nil {
 		t.Fatalf("EventCreate: %v", err)
 	}
 	m := &Memo{PersonID: p.ID, Content: "约好下周见面", SaidAt: "2026-04-01T10:00:00"}
@@ -1124,7 +1210,7 @@ func TestEventStore_DashboardStats(t *testing.T) {
 		t.Fatalf("PersonArchive again: %v", err)
 	}
 	e := &Event{Title: "聚会", EventDate: evDate(0)}
-	if err := s.EventCreate(ctx, e, []string{a.ID}); err != nil {
+	if err := s.EventCreate(ctx, e, []string{a.ID}, nil); err != nil {
 		t.Fatalf("EventCreate: %v", err)
 	}
 	m := &Memo{PersonID: a.ID, Content: "欠他一顿饭", SaidAt: evLocalStamp(0), IsPromise: true}
@@ -1197,11 +1283,11 @@ func TestEventStore_StatsByMonthAndGrades(t *testing.T) {
 	}
 
 	e1 := &Event{Title: "一月聚会", EventDate: "2026-01-10"}
-	if err := s.EventCreate(ctx, e1, nil); err != nil {
+	if err := s.EventCreate(ctx, e1, nil, nil); err != nil {
 		t.Fatalf("EventCreate: %v", err)
 	}
 	e2 := &Event{Title: "无日期", EventDate: ""}
-	if err := s.EventCreate(ctx, e2, nil); err != nil {
+	if err := s.EventCreate(ctx, e2, nil, nil); err != nil {
 		t.Fatalf("EventCreate e2: %v", err)
 	}
 	m := &Memo{Content: "二月备忘", SaidAt: "2026-02-05T10:00:00"}
@@ -1317,7 +1403,7 @@ func TestEventStore_PersonDetailIntimacyWordCloud(t *testing.T) {
 	// 近 60 天两场事件 → recentCount=2；score 5*20+2*3+10=116 → 截断 100
 	for _, d := range []string{evDate(-1), evDate(-30)} {
 		e := &Event{Title: "聚会" + d, EventDate: d}
-		if err := s.EventCreate(ctx, e, []string{p.ID}); err != nil {
+		if err := s.EventCreate(ctx, e, []string{p.ID}, nil); err != nil {
 			t.Fatalf("EventCreate: %v", err)
 		}
 	}
@@ -1415,8 +1501,8 @@ func TestEventStore_ClosedDBErrors(t *testing.T) {
 	}
 
 	e := &Event{ID: "x", Title: "t", EventDate: "2026-01-01"}
-	wantErr("EventCreate", s.EventCreate(ctx, e, nil))
-	wantErr("EventUpdate", s.EventUpdate(ctx, e, nil))
+	wantErr("EventCreate", s.EventCreate(ctx, e, nil, nil))
+	wantErr("EventUpdate", s.EventUpdate(ctx, e, nil, nil))
 	wantErr("EventDelete", s.EventDelete(ctx, "x"))
 	_, err := s.EventGet(ctx, "x")
 	wantErr("EventGet", err)
