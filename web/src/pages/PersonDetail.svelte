@@ -96,7 +96,7 @@
       fd.append('entity_id', id)
       const res = await fetch('/api/v1/attachments', {
         method: 'POST',
-        headers: (localStorage.getItem('q_token') || '') ? { Authorization: 'Bearer ' + localStorage.getItem('q_token') } : undefined,
+        headers: API.authHeaders(),
         body: fd,
       })
       if (!res.ok) {

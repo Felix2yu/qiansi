@@ -48,7 +48,11 @@
 
   // 主题：本地值同步应用（防首屏闪白），再从服务端同步偏好。
   // 判定逻辑集中在 lib/theme.svelte.ts，这里只负责触发。
-  onMount(() => { initTheme() })
+  onMount(() => {
+    initTheme()
+    // 头像与导出链接带不了 Authorization 头，先拿令牌换一枚只读会话 cookie
+    API.ensureSession()
+  })
 
   // 全局搜索：输入即查，回车跳到第一个结果
   let searchQ = $state('')

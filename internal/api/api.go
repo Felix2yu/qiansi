@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -43,6 +44,7 @@ func New(s *store.Store, cfg *config.Config) *API {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
 
+	api.registerAuth(r)
 	api.registerSettings(r)
 	api.registerCategories(r)
 	api.registerTags(r)
@@ -81,16 +83,33 @@ func (a *API) authGuard(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if got == "" {
-			got = r.Header.Get("X-Qiansi-Token")
-		}
-		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+		if !a.authorized(r, token) {
 			writeErr(w, http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authorized 先认请求头里的令牌，再退一步认会话 cookie。
+//
+// cookie 通道只对 GET/HEAD 开放：图片与「点一下就下载」的链接没法带自定义头，
+// 这是它们在令牌模式下唯一可用的通道；而它们都只读数据，不改动数据。
+// 写请求仍必须带 Authorization，配合 cookie 的 SameSite=Strict，
+// 第三方页面既借不到 cookie，也伪造不出带头的请求。
+func (a *API) authorized(r *http.Request, token string) bool {
+	got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if got == "" {
+		got = r.Header.Get("X-Qiansi-Token")
+	}
+	if got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(token)) == 1 {
+		return true
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	c, err := r.Cookie(sessionCookieName)
+	return err == nil && validSession(token, c.Value, time.Now())
 }
 
 func (a *API) recoverer(next http.Handler) http.Handler {

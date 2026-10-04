@@ -167,19 +167,7 @@
 
   async function exportVCard() {
     try {
-      const res = await fetch('/api/v1/people/export/vcard')
-      if (!res.ok) {
-        let msg = res.statusText
-        try { msg = (await res.json()).error || msg } catch {}
-        throw new Error(msg)
-      }
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `qiansi-contacts-${new Date().toISOString().slice(0, 10)}.vcf`
-      a.click()
-      URL.revokeObjectURL(url)
+      await API.download('/api/v1/people/export/vcard', `qiansi-contacts-${new Date().toISOString().slice(0, 10)}.vcf`)
     } catch (err: any) {
       alert('导出失败：' + (err?.message || err))
     }

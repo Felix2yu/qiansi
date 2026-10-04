@@ -75,13 +75,23 @@
     }
   }
 
-  function saveToken() {
-    if (token.trim()) localStorage.setItem('q_token', token.trim())
+  async function saveToken() {
+    const t = token.trim()
+    if (t) localStorage.setItem('q_token', t)
     else localStorage.removeItem('q_token')
-    alert('已保存访问令牌；若服务端未设置 QIANSI_TOKEN，请留空')
+    // 头像和下载链接靠会话 cookie 才认令牌：存完当场换一枚，否则要刷新页面才生效
+    const ok = await API.ensureSession()
+    alert(ok ? '已保存访问令牌；若服务端未设置 QIANSI_TOKEN，请留空'
+             : '令牌已保存，但服务端不认它，头像与导出仍会失败')
   }
 
-  async function exportData() { window.location.href = '/api/v1/backup/export' }
+  async function exportData() {
+    try {
+      await API.download('/api/v1/backup/export')
+    } catch (err: any) {
+      alert('导出失败：' + (err?.message || err))
+    }
+  }
 
   async function snapshot() {
     try {
@@ -150,7 +160,7 @@
       fd.append('file', file)
       const res = await fetch('/api/v1/backup/restore', {
         method: 'POST',
-        headers: (localStorage.getItem('q_token') || '') ? { Authorization: 'Bearer ' + localStorage.getItem('q_token') } : undefined,
+        headers: API.authHeaders(),
         body: fd,
       })
       if (!res.ok) {

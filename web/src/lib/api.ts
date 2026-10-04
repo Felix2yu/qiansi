@@ -16,11 +16,50 @@ export const API = (() => {
     return res.json()
   }
   const headers = () => ({ 'Content-Type': 'application/json' })
+
+  // 令牌模式下，<img src="/uploads/…"> 和「点链接直接下载」都带不上自定义请求头，
+  // 只认令牌的鉴权会让头像裂图、导出 401。用一次带令牌的 POST 换一枚只读会话
+  // cookie（服务端只让它放行 GET/HEAD），这些浏览器自发起的请求才走得通。
+  async function ensureSession(): Promise<boolean> {
+    if (!localStorage.getItem('q_token')) return true
+    try {
+      const res = await fetch(base + '/api/v1/auth/session', { method: 'POST', headers: authHeaders() })
+      return res.ok
+    } catch {
+      return false
+    }
+  }
+
+  // 下载走 fetch 而不是 <a href>：既能在令牌模式下显式带头，也能把服务端的错误
+  // （令牌不对、快照失败）报回来，而不是让当前页跳成一个错误页、看起来像「已经导出了」。
+  async function download(path: string, filename = ''): Promise<void> {
+    const res = await fetch(base + path, { headers: authHeaders() })
+    if (!res.ok) {
+      let msg = res.statusText
+      try { msg = (await res.json()).error || msg } catch {}
+      throw new Error(msg)
+    }
+    const cd = res.headers.get('Content-Disposition') || ''
+    const name = filename || cd.match(/filename="?([^";]+)"?/)?.[1] || 'download'
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    // 马上 revoke 会掐断刚开始的下载，留出读取 blob 的时间
+    setTimeout(() => URL.revokeObjectURL(url), 30000)
+  }
+
   return {
     get: <T>(p: string) => req<T>(p),
     post: <T>(p: string, body: any) => req<T>(p, { method: 'POST', headers: headers(), body: JSON.stringify(body) }),
     put: <T>(p: string, body: any) => req<T>(p, { method: 'PUT', headers: headers(), body: JSON.stringify(body) }),
     delete: <T>(p: string, body?: any) => req<T>(p, { method: 'DELETE', ...(body ? { headers: headers(), body: JSON.stringify(body) } : {}) }),
+    authHeaders,
+    ensureSession,
+    download,
   }
 })()
 
