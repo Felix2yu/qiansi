@@ -120,6 +120,11 @@ func spaHandler(cfg *config.Config) http.HandlerFunc {
 					} else {
 						w.Header().Set("Cache-Control", "no-cache")
 					}
+					// Go 的 mime 表不认识 .webmanifest，会当成 text/plain 发出去，
+					// 而 Safari 只接受 application/manifest+json，否则直接忽略清单。
+					if strings.HasSuffix(path, ".webmanifest") {
+						w.Header().Set("Content-Type", "application/manifest+json")
+					}
 					fileServer.ServeHTTP(w, r)
 					return
 				}

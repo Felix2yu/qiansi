@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="牵丝">
+  <rect width="512" height="512" rx="112" fill="#6366f1"/>
+  <text x="256" y="256" text-anchor="middle" dominant-baseline="central"
+        font-family="PingFang SC, Hiragino Sans GB, Microsoft YaHei, sans-serif"
+        font-size="288" font-weight="600" fill="#ffffff">牵</text>
+</svg>
