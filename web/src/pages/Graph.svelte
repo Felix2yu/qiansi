@@ -14,6 +14,7 @@
   } from '../lib/graphLayout'
   import { Plus, X, Link2, Route, Share2, Trash2 } from '@lucide/svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
+  import { toast, errText } from '../lib/toast.svelte'
 
   echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 
@@ -62,7 +63,12 @@
   async function load() {
     // 圈子/标签/关系类型是全站共享字典，这里只保证「拿到」，不再各自重拉
     await Promise.all([ensure('categories'), ensure('tags'), ensure('relTypes')])
-    const r = await API.get('/api/v1/relationships') as any
+    const r = await API.get<any>('/api/v1/relationships').catch((err) => {
+      // 拉不到就整张图空白，一句提示也没有——空图和不画是两件事
+      toast.fail('加载关系图失败', err)
+      return null
+    })
+    if (!r) return
     await loadSelf()
     people = r.people
     rels = r.relationships
@@ -352,18 +358,21 @@
   }
 
   async function submitRel() {
-    if (!form.from_person_id || !form.to_person_id) { alert('请选择关系的双方'); return }
-    if (form.from_person_id === form.to_person_id) { alert('不能与自己建立关系'); return }
-    if (!form.type.trim()) { alert('请填写关系类型'); return }
+    if (!form.from_person_id || !form.to_person_id) { toast.error('请选择关系的双方'); return }
+    if (form.from_person_id === form.to_person_id) { toast.error('不能与自己建立关系'); return }
+    if (!form.type.trim()) { toast.error('请填写关系类型'); return }
     busy = true
     try {
       await API.post('/api/v1/relationships', { ...form, type: form.type.trim() })
-      closeForm()
-      // 关系类型可能是现场敲的新词，字典得知道
-      await Promise.all([load(), refresh('relTypes')])
     } catch (err: any) {
-      alert('添加失败：' + (err?.message || err))
+      // 失败时弹窗留着、双方已选的人不丢，改完可以直接再存一次
+      toast.fail('添加失败', err)
+      return
     } finally { busy = false }
+    closeForm()
+    toast.ok('已添加关系')
+    // 关系类型可能是现场敲的新词，字典得知道
+    await Promise.all([load(), refresh('relTypes')])
   }
 
   function addChainRow() {
@@ -381,9 +390,9 @@
   // 引荐链提交：缺人的先建（仅姓名，引荐人=上一跳），再逐跳建边。
   // 已有人物不覆盖其引荐人；边已存在（409）视为跳过。中途失败不回滚，提示断点。
   async function submitChain() {
-    if (!self.id) { alert('请先在人物详情里把自己设为「本人」'); return }
+    if (!self.id) { toast.error('请先在人物详情里把自己设为「本人」'); return }
     const rows = chainRows.filter(r => r.type.trim() && ((r.isNew ? r.newName.trim() : r.personId)))
-    if (rows.length === 0) { alert('至少填写一跳：关系类型 + 人物'); return }
+    if (rows.length === 0) { toast.error('至少填写一跳：关系类型 + 人物'); return }
     busy = true
     const failures: string[] = []
     let prevId = self.id
@@ -402,7 +411,12 @@
           // 已有人物：仅在还没记录引荐人时补上，不覆盖。
           // 图上只画了前 500 人，搜到的人可能不在这一页里，取不到就按 id 回查。
           const existing = people.find(p => p.id === pid)
-            ?? await API.get<{ person: Person }>(`/api/v1/people/${pid}`).then(r => r.person).catch(() => undefined)
+            ?? await API.get<{ person: Person }>(`/api/v1/people/${pid}`).then(r => r.person)
+              .catch((e: any) => {
+                // 回查失败就补不了引荐人，得说出来，不然链看着像全存上了
+                failures.push(`第 ${i + 1} 跳查联系人档案失败，引荐人未补记：${errText(e)}`)
+                return undefined
+              })
           if (existing && !existing.introduced_by_person_id) {
             const full: any = {
               ...existing,
@@ -410,7 +424,7 @@
               introduced_by_person_id: prevId,
             }
             await API.put(`/api/v1/people/${pid}`, full).catch((e: any) =>
-              failures.push(`补「${existing.name}」引荐人失败：${e?.message || e}`))
+              failures.push(`补「${existing.name}」引荐人失败：${errText(e)}`))
           }
         }
         try {
@@ -418,15 +432,19 @@
             from_person_id: prevId, to_person_id: pid, type: row.type.trim(), remark: '',
           })
         } catch (e: any) {
-          const msg = e?.message || String(e)
-          if (!String(msg).includes('已经有同名')) failures.push(`第 ${i + 1} 跳关系创建失败：${msg}`)
+          const msg = errText(e)
+          if (!msg.includes('已经有同名')) failures.push(`第 ${i + 1} 跳关系创建失败：${msg}`)
         }
         prevId = pid
       }
       closeForm()
       // 链上可能敲了新关系类型，字典要跟上
       await Promise.all([load(), refresh('relTypes')])
-      if (failures.length) alert('部分环节未成功：\n' + failures.join('\n'))
+      if (failures.length) toast.error('部分环节未成功：' + failures.join('；'))
+      else toast.ok('已录入引荐链')
+    } catch (err: any) {
+      // 建人到一半失败会直接抛出循环：弹窗不关、已填的跳不丢，同时说清断在哪
+      toast.fail('引荐链保存中断', err)
     } finally {
       busy = false
     }

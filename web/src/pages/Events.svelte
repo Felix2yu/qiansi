@@ -5,6 +5,8 @@
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
   import { Plus, X, Search } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
@@ -46,7 +48,12 @@
 
   // 时间线只在「全局时间线」视图里渲染，列表视图以前也照样拉一份
   async function loadTimeline() {
-    timeline = (await API.get<TimelineItem[]>('/api/v1/dashboard/timeline?limit=200').catch(() => [])) || []
+    timeline = await API.get<TimelineItem[]>('/api/v1/dashboard/timeline?limit=200')
+      .catch((err: any) => {
+        // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
+        toast.fail('加载失败', err)
+        return [] as TimelineItem[]
+      }) || []
   }
 
   async function load(reset = true) {
@@ -54,7 +61,10 @@
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) })
     if (filterPerson) qs.set('person_id', filterPerson)
     if (filterQuery.trim()) qs.set('q', filterQuery.trim())
-    const batch = (await API.get<Event[]>(`/api/v1/events?${qs}`).catch(() => [])) || []
+    const batch = await API.get<Event[]>(`/api/v1/events?${qs}`).catch((err: any) => {
+      toast.fail('加载失败', err)
+      return [] as Event[]
+    })
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
   }
@@ -70,17 +80,19 @@
     load(true)
   })
 
+  // 往来是硬删除，服务端没有可恢复的中间态，所以只靠确认框挡一次
   async function remove(id: string, title: string, expenseFen?: number) {
     const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
-    if (!confirm(`确定删除「${title}」吗？${tail}`)) return
+    if (!(await ask({ title: `删除「${title}」？`, detail: tail + '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
     try {
       await API.delete(`/api/v1/events/${id}`)
     } catch (err: any) {
-      alert('删除失败：' + (err?.message || err))
+      toast.fail('删除失败', err)
       return
     }
     showForm = false
     editId = ''
+    toast.ok('已删除')
     await Promise.all([load(), refresh('events')])
   }
 

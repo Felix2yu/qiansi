@@ -3,6 +3,8 @@
   import { API, todayLocal, type Anniversary } from '../lib/api'
   import { loadSelf } from '../lib/self.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Anniversary[]>([])
@@ -17,7 +19,11 @@
   }
 
   async function load() {
-    list = (await API.get<Anniversary[]>('/api/v1/anniversaries').catch(() => [])) || []
+    list = await API.get<Anniversary[]>('/api/v1/anniversaries').catch((err: any) => {
+      // 读失败也不能装作「暂无」：空列表和查不到是两件事
+      toast.fail('加载失败', err)
+      return [] as Anniversary[]
+    }) || []
   }
   onMount(() => {
     loadSelf()
@@ -42,20 +48,35 @@
   }
 
   async function submit() {
-    if (!form.title.trim() || !form.date) { alert('标题和日期必填'); return }
+    if (!form.title.trim() || !form.date) { toast.error('标题和日期必填'); return }
     const body: any = { ...form }
     if (!body.person_id) delete body.person_id
     if (!body.remind_days.trim()) body.remind_days = '0'
-    if (editId) await API.put(`/api/v1/anniversaries/${editId}`, body)
-    else await API.post('/api/v1/anniversaries', body)
+    const isEdit = !!editId
+    try {
+      if (isEdit) await API.put(`/api/v1/anniversaries/${editId}`, body)
+      else await API.post('/api/v1/anniversaries', body)
+    } catch (err: any) {
+      // 失败时弹窗不关、内容不丢，改完可以直接再存一次
+      toast.fail('保存失败', err)
+      return
+    }
     showForm = false
     editId = ''
+    toast.ok(isEdit ? '已更新' : '已保存')
     await load()
   }
 
+  // 硬删除没有反悔余地：服务端没有可恢复的中间态，这里靠确认框挡一下
   async function remove(a: Anniversary) {
-    if (!confirm(`删除「${a.title}」？`)) return
-    await API.delete(`/api/v1/anniversaries/${a.id}`); await load()
+    if (!(await ask({ title: `删除「${a.title}」？`, detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
+    try {
+      await API.delete(`/api/v1/anniversaries/${a.id}`)
+      toast.ok('已删除')
+      await load()
+    } catch (err: any) {
+      toast.fail('删除失败', err)
+    }
   }
 
   /** 每年重复的纪念日只有月日有意义，展示时补上今年的年份便于阅读 */

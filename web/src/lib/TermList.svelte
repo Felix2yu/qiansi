@@ -1,6 +1,8 @@
 <script lang="ts">
   import { API, type Category, type Tag, type EventType } from './api'
   import { Plus, Pencil, Trash2, X } from '@lucide/svelte'
+  import { toast, errText } from './toast.svelte'
+  import { ask } from './ask.svelte'
 
   // 圈子 / 标签 / 事件类型三处结构相同：id + name + color，其余字段编辑时原样带回
   type Term = Category | Tag | EventType
@@ -33,10 +35,10 @@
 
   const editing = $derived(items.find(t => t.id === editingId))
 
-  function warn(err: any, action: string) {
-    const msg = String(err?.message || err)
+  function warn(err: unknown, action: string) {
+    const msg = errText(err)
     // tags.name 上有 UNIQUE 约束，撞名的 sqlite 原文不适合直接甩给他看
-    alert(`${action}失败：` + (/UNIQUE/i.test(msg) ? `${noun}名已存在` : msg))
+    toast.error(`${action}失败：` + (/UNIQUE/i.test(msg) ? `${noun}名已存在` : msg))
   }
 
   async function create() {
@@ -58,7 +60,7 @@
 
   async function save() {
     if (!editing) return
-    if (!editForm.name.trim()) { alert(`${noun}名不能为空`); return }
+    if (!editForm.name.trim()) { toast.error(`${noun}名不能为空`); return }
     busy = true
     try {
       await API.put(`${endpoint}/${editing.id}`, { ...defaults, ...editing, name: editForm.name.trim(), color: editForm.color })
@@ -70,12 +72,18 @@
   }
 
   async function remove(t: Term) {
-    if (!confirm(`删除${noun}「${t.name}」？`)) return
+    if (!(await ask({
+      title: `删除${noun}「${t.name}」？`,
+      detail: '引用它的记录会失去这个标记，删除后无法恢复。',
+      danger: true,
+      confirmLabel: '删除',
+    }))) return
     busy = true
     try {
       await API.delete(`${endpoint}/${t.id}`)
       if (editingId === t.id) editingId = 0
       await onchange()
+      toast.ok('已删除')
     } catch (err) {
       warn(err, '删除')
     } finally { busy = false }

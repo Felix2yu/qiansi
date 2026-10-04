@@ -4,6 +4,9 @@
   import { loadSelf } from '../lib/self.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { Plus, X, Check } from '@lucide/svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
+  import { completeReminder } from '../lib/reminderActions'
 
   let list = $state<Reminder[]>([])
   let showDone = $state(false)
@@ -19,7 +22,11 @@
 
   // 后端按本地时间比较 due_at，这里不能再拼 UTC 的 Z，否则会整体偏移一天
   async function load() {
-    list = (await API.get<Reminder[]>(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`).catch(() => [])) || []
+    list = await API.get<Reminder[]>(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`)
+      .catch((err: any) => {
+        toast.fail('加载失败', err)
+        return [] as Reminder[]
+      }) || []
   }
   onMount(() => {
     loadSelf()
@@ -43,7 +50,7 @@
 
   function openEdit(r: Reminder) {
     const notice = derivedNotice(r, '改')
-    if (notice) { alert(notice); return }
+    if (notice) { toast.info(notice); return }
     editId = r.id
     pickedName = r.person_name || ''
     form = {
@@ -54,13 +61,20 @@
   }
 
   async function submit() {
-    if (!form.title.trim() || !form.due_at) { alert('内容和日期必填'); return }
+    if (!form.title.trim() || !form.due_at) { toast.error('内容和日期必填'); return }
     const body: any = { ...form, due_at: form.due_at + 'T09:00:00' }
     if (!body.person_id) delete body.person_id
-    if (editId) await API.put(`/api/v1/reminders/${editId}`, body)
-    else await API.post('/api/v1/reminders', body)
+    const isEdit = !!editId
+    try {
+      if (isEdit) await API.put(`/api/v1/reminders/${editId}`, body)
+      else await API.post('/api/v1/reminders', body)
+    } catch (err: any) {
+      toast.fail('保存失败', err)
+      return
+    }
     showForm = false
     editId = ''
+    toast.ok(isEdit ? '已更新' : '已添加待办')
     await load()
   }
 
@@ -89,16 +103,42 @@
     return diff > 0 ? diff : 0
   }
 
-  async function done(id: string) { await API.post(`/api/v1/reminders/${id}/done`, {}); await load() }
-  async function undo(r: Reminder) {
-    // PUT 是全量更新，必须带上原对象的其他字段，否则会被置空
-    await API.put(`/api/v1/reminders/${r.id}`, { ...r, status: 'pending', completed_at: '' })
-    await load()
+  // PUT 是全量更新，必须带上原对象的其他字段，否则会被置空
+  function restore(r: Reminder) {
+    return API.put(`/api/v1/reminders/${r.id}`, { ...r, status: 'pending', completed_at: '' })
   }
+
+  // 派生待办的「完成」写的是来源记录（承诺兑现 / 关闭本次提醒），
+  // 这里没有对应的反向接口，所以不给撤销按钮，只指路
+  function isDerived(r: Reminder) {
+    return r.id.startsWith('anniv:') || r.id.startsWith('promise:')
+  }
+
+  async function done(r: Reminder) {
+    await completeReminder(r, load)
+  }
+
+  async function undo(r: Reminder) {
+    try {
+      await restore(r)
+      toast.ok('已改为未完成')
+      await load()
+    } catch (err: any) {
+      toast.fail('操作失败', err)
+    }
+  }
+
   async function remove(r: Reminder) {
     const notice = derivedNotice(r, '删')
-    if (notice) { alert(notice); return }
-    if (confirm('删除？')) { await API.delete(`/api/v1/reminders/${r.id}`); await load() }
+    if (notice) { toast.info(notice); return }
+    if (!(await ask({ title: '删除这条待办？', detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
+    try {
+      await API.delete(`/api/v1/reminders/${r.id}`)
+      toast.ok('已删除')
+      await load()
+    } catch (err: any) {
+      toast.fail('删除失败', err)
+    }
   }
 </script>
 <div class="space-y-4">
@@ -126,9 +166,12 @@
           {#each g.items as r}
             <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
               {#if r.status === 'pending'}
-                <button class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" onclick={() => done(r.id)} style="border-color: var(--q-border);" title="标记完成">
+                <button class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" onclick={() => done(r)} style="border-color: var(--q-border);" title="标记完成">
                   <Check size={14} style="color: var(--q-muted);" />
                 </button>
+              {:else if isDerived(r)}
+                <!-- 派生待办完成了就是来源记录定了论，这里点不回，按钮留着只会报错 -->
+                <span class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" style="border-color: var(--q-border); color: var(--q-muted);"><Check size={14} /></span>
               {:else}
                 <button class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" onclick={() => undo(r)} style="border-color: var(--q-border);" title="撤销完成">↩</button>
               {/if}

@@ -5,6 +5,7 @@
   import { dict, ensure } from './dict.svelte'
   import { searchPeople, resolvePeople, type PersonLite } from './personSearch'
   import PersonPicker from './PersonPicker.svelte'
+  import { toast } from './toast.svelte'
   import { Trash2, Search } from '@lucide/svelte'
 
   let {
@@ -106,7 +107,7 @@
       }
       void remember([...form.participant_ids, form.expense_person_id, form.gift_person_id])
     } catch (err: any) {
-      alert('读取往来失败：' + (err?.message || err))
+      toast.fail('读取往来失败', err)
       oncancel?.()
     } finally {
       if (seq === loadSeq) loading = false
@@ -173,7 +174,7 @@
   }
 
   async function submit() {
-    if (!form.title.trim() || !form.event_date) { alert('标题和日期必填'); return }
+    if (!form.title.trim() || !form.event_date) { toast.error('标题和日期必填'); return }
     const locations = form.locations.map(s => s.trim()).filter(Boolean)
     const body: any = {
       title: form.title, event_date: form.event_date, locations,
@@ -185,7 +186,7 @@
     if (expenseFen > 0) {
       body.expense_fen = expenseFen
       if (form.expense_person_id) body.expense_person_id = form.expense_person_id
-      else if (form.participant_ids.length === 0) { alert('填写开销时需要选择参与人或指定开销归属人'); return }
+      else if (form.participant_ids.length === 0) { toast.error('填写开销时需要选择参与人或指定开销归属人'); return }
     } else if (editId) {
       body.expense_fen = 0 // 清空原有开销
     }
@@ -193,20 +194,26 @@
       body.gift_amount_fen = giftFen
       body.gift_direction = form.gift_direction === 'in' ? 'in' : 'out'
       if (form.gift_person_id) body.gift_person_id = form.gift_person_id
-      else if (form.participant_ids.length === 0) { alert('填写礼金时需要选择参与人或指定礼金归属人'); return }
+      else if (form.participant_ids.length === 0) { toast.error('填写礼金时需要选择参与人或指定礼金归属人'); return }
     } else if (editId) {
       body.gift_amount_fen = 0 // 清空原有礼金（store 会连带删掉那笔账）
     }
     saving = true
+    const isEdit = !!editId
+    let saved = false
     try {
-      if (editId) await API.put(`/api/v1/events/${editId}`, body)
+      if (isEdit) await API.put(`/api/v1/events/${editId}`, body)
       else await API.post('/api/v1/events', body)
-      onsave?.()
+      saved = true
     } catch (err: any) {
-      alert('保存失败：' + (err?.message || err))
+      // 失败时不回调 onsave：父级因此不会关弹窗，用户填的内容原样留着
+      toast.fail('保存失败', err)
     } finally {
       saving = false
     }
+    if (!saved) return
+    toast.ok(isEdit ? '已更新' : '已保存')
+    onsave?.()
   }
 </script>
 

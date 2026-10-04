@@ -3,6 +3,8 @@
   import { API, type Person, type Category, type Tag } from './api'
   import PersonPicker from './PersonPicker.svelte'
   import PersonRelEditor from './PersonRelEditor.svelte'
+  import { toast } from './toast.svelte'
+  import { ask } from './ask.svelte'
 
   let {
     person = null,
@@ -81,7 +83,11 @@
         const qs = new URLSearchParams({ name, phone, wechat })
         if (person?.id) qs.set('exclude_id', person.id)
         dups = await API.get(`/api/v1/people/duplicates?${qs}`) as Person[]
-      } catch { dups = [] }
+      } catch (err) {
+        // 查重要静默失败的话，面板收起得像「没有重复」，会让人继续新建重名联系人
+        toast.fail('加载失败', err)
+        dups = []
+      }
     }, 300)
   }
 
@@ -124,7 +130,9 @@
     try {
       const owned = await API.get(`/api/v1/taggings/of?target_type=person&target_id=${id}`) as Tag[]
       selectedTags = owned.map(t => t.id)
-    } catch {
+    } catch (err) {
+      // 这里回退成空标签，保存时差集会真的把原标签全删掉，失败必须说
+      toast.fail('加载失败', err)
       selectedTags = []
     }
   }
@@ -139,20 +147,21 @@
 
   // 合并：把疑似重复的那条并进当前正在编辑的人物
   async function mergeInto(targetId: string, fromId: string, fromName: string) {
-    if (!confirm(`把「${fromName}」的所有记录合并到当前人物，并删除「${fromName}」？此操作不可撤销。`)) return
+    if (!(await ask({ title: `把「${fromName}」的所有记录合并到当前人物，并删除「${fromName}」？`, detail: '此操作不可撤销。', danger: true, confirmLabel: '合并并删除' }))) return
     try {
       await API.post(`/api/v1/people/${targetId}/merge`, { from: fromId })
       dups = dups.filter(d => d.id !== fromId)
-      alert('已合并')
+      toast.ok('已合并')
       onsave?.({ ...(person as Person) })
     } catch (err: any) {
-      alert('合并失败：' + (err?.message || err))
+      toast.fail('合并失败', err)
     }
   }
 
   async function submit() {
-    if (!composedName().trim()) { alert('姓、名至少填一项'); return }
+    if (!composedName().trim()) { toast.error('姓、名至少填一项'); return }
     saving = true
+    const isEdit = !!person?.id
     try {
       const body: any = { ...form, name: composedName().trim() }
       // 圈子可多选，随整行 PUT 一起提交；空数组即「不归入任何圈子」
@@ -171,9 +180,10 @@
       for (const id of before.filter(x => !selectedTags.includes(x))) {
         await API.post('/api/v1/taggings/remove', { target_type: 'person', target_id: saved.id, tag_id: id })
       }
+      toast.ok(isEdit ? '已更新' : '已保存')
       onsave?.(saved)
     } catch (err: any) {
-      alert('保存失败：' + (err?.message || err))
+      toast.fail('保存失败', err)
     } finally {
       saving = false
     }

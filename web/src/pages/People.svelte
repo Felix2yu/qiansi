@@ -6,6 +6,8 @@
   import { navigate } from '../lib/router'
   import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
 
   let { mode = 'list' }: { mode?: string } = $props()
 
@@ -72,11 +74,11 @@
       })
       bulkCat = 0
       await load()
-      alert(res.added === selectedIds.length
+      toast.ok(res.added === selectedIds.length
         ? `已把 ${res.added} 位加入「${name}」`
         : `${selectedIds.length} 位里有 ${res.added} 位新加入「${name}」，其余原本就在圈子里`)
     } catch (err: any) {
-      alert('加入圈子失败：' + (err?.message || err))
+      toast.fail('加入圈子失败', err)
     }
   }
   // 危险操作两段式：ask* 只开确认框，框里手打确认词之后才跑 do*。
@@ -104,9 +106,9 @@
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids })
       selectedIds = []
       await load()
-      alert(`已删除 ${res.deleted} 位联系人`)
+      toast.ok(`已删除 ${res.deleted} 位联系人`)
     } catch (err: any) {
-      alert('删除失败：' + (err?.message || err))
+      toast.fail('删除失败', err)
     }
   }
   function askClearAll() {
@@ -129,9 +131,9 @@
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
       selectedIds = []
       await load()
-      alert(`已清空 ${res.deleted} 位联系人`)
+      toast.ok(`已清空 ${res.deleted} 位联系人`)
     } catch (err: any) {
-      alert('清空失败：' + (err?.message || err))
+      toast.fail('清空失败', err)
     }
   }
 
@@ -143,9 +145,13 @@
   async function load(reset = true) {
     if (reset) page = 0
     const archived = onlyArchived ? '&archived=only' : ''
-    const batch = await API.get(
+    const batch = await API.get<Person[]>(
       `/api/v1/people?q=${encodeURIComponent(q)}${archived}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
-    ) as Person[]
+    ).catch((err) => {
+      // 读失败也不能显示「暂无联系人」，那看起来像是数据没了
+      toast.fail('加载失败', err)
+      return [] as Person[]
+    })
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
   }
@@ -174,17 +180,35 @@
     await load()
     if (mode === 'new' && saved?.id) { navigate(`/people/${saved.id}`) }
   }
+  // 单人删除走的是不可恢复的硬删除：这里先用确认弹窗，是否升级成手打确认词还待定
   async function remove(p: Person) {
-    if (confirm(`删除联系人「${p.name}」及其所有关联记录？`)) {
+    if (!(await ask({
+      title: `删除联系人「${p.name}」及其所有关联记录？`,
+      detail: '往来、对话、记账与纪念日一并删除，删除后无法恢复。',
+      danger: true,
+      confirmLabel: '删除',
+    }))) return
+    try {
       await API.delete(`/api/v1/people/${p.id}`)
+      toast.ok('已删除')
       await load()
       selectedIds = selectedIds.filter((id) => id !== p.id)
+    } catch (err) {
+      toast.fail('删除失败', err)
     }
   }
   async function unarchive(p: Person) {
-    await API.delete(`/api/v1/people/${p.id}/archive`)
-    await load()
-    selectedIds = selectedIds.filter((id) => id !== p.id)
+    try {
+      await API.delete(`/api/v1/people/${p.id}/archive`)
+      toast.undoable('已取消归档', async () => {
+        await API.post(`/api/v1/people/${p.id}/archive`, {}).catch(() => {})
+        await load()
+      })
+      await load()
+      selectedIds = selectedIds.filter((id) => id !== p.id)
+    } catch (err) {
+      toast.fail('取消归档失败', err)
+    }
   }
 
   async function importVCard(e: Event) {
@@ -198,10 +222,10 @@
       const parts = [`成功导入 ${res.imported} 人`]
       if (res.updated > 0) parts.push(`更新姓名 ${res.updated} 人（与现有联系人按通讯录 ID 匹配）`)
       if (res.skipped > 0) parts.push(`跳过 ${res.skipped} 人（与现有联系人重复或缺少姓名）`)
-      alert(`vCard 导入完成：${parts.join('，')}`)
+      toast.ok(`vCard 导入完成：${parts.join('，')}`)
       await load()
     } catch (err: any) {
-      alert('导入失败：' + (err?.message || err))
+      toast.fail('导入失败', err)
     } finally {
       input.value = ''
       importing = false
@@ -212,7 +236,7 @@
     try {
       await API.download('/api/v1/people/export/vcard', `qiansi-contacts-${new Date().toISOString().slice(0, 10)}.vcf`)
     } catch (err: any) {
-      alert('导出失败：' + (err?.message || err))
+      toast.fail('导出失败', err)
     }
   }
 </script>

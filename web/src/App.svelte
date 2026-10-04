@@ -5,6 +5,9 @@
   import { initTheme, theme, setThemeMode, nextMode, THEME_LABEL, type ThemeMode } from './lib/theme.svelte'
   import type { Component } from 'svelte'
   import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search, Monitor, Sun, Moon } from '@lucide/svelte'
+  import Toaster from './lib/Toaster.svelte'
+  import AskHost from './lib/AskHost.svelte'
+  import { toast } from './lib/toast.svelte'
   import Today from './pages/Today.svelte'
 
   // 只有首页静态引入：其余页面各自成块，用到才下载（关系图/统计带 echarts，最重）
@@ -58,6 +61,11 @@
     initTheme()
     // 头像与导出链接带不了 Authorization 头，先拿令牌换一枚只读会话 cookie
     API.ensureSession()
+    // 兜底：漏了 catch 的写操作至少要在屏幕上留个痕。「点了没反应」是静默失效最难查的形态。
+    window.addEventListener('unhandledrejection', (e) => {
+      const msg = (e.reason as any)?.message || (typeof e.reason === 'string' ? e.reason : '')
+      if (msg) toast.error('操作失败：' + msg)
+    })
   })
 
   // 全局搜索：输入即查，回车跳到第一个结果
@@ -273,6 +281,10 @@
     </div>
   </main>
 </div>
+
+<!-- 反馈条与确认框：全站一套，挂在最外层 -->
+<Toaster />
+<AskHost />
 
 <style>
   a[href]:hover { background: color-mix(in srgb, var(--q-theme) 8%, transparent); }

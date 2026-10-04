@@ -161,7 +161,7 @@
         {#if searching && results.length === 0}
           <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">搜索中…</p>
         {:else if failed}
-          <p class="px-3 py-2 text-xs" style="color: var(--q-danger, #dc2626);">搜索失败，请重试</p>
+          <p class="px-3 py-2 text-xs" style="color: var(--q-danger);">搜索失败，请重试</p>
         {:else if results.length === 0}
           <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">没有匹配的人 · 换个关键词，或先到通讯录里新建</p>
         {:else}

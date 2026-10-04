@@ -8,6 +8,8 @@
   import { navigate } from '../lib/router'
   import { self, setSelf, loadSelf, personLabel } from '../lib/self.svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
   import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check, Route } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
@@ -65,12 +67,13 @@
     await loadWords()
   }
   async function removeEvent(eventId: string, title: string, expenseFen?: number) {
-    const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
-    if (!confirm(`确定删除「${title}」吗？${tail}`)) return
+    const detail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : '删除后无法恢复。'
+    if (!(await ask({ title: `确定删除「${title}」吗？`, detail, danger: true, confirmLabel: '删除' }))) return
     try {
       await API.delete(`/api/v1/events/${eventId}`)
+      toast.ok('已删除')
     } catch (err: any) {
-      alert('删除失败：' + (err?.message || err))
+      toast.fail('删除失败', err)
       return
     }
     await afterEventForm()
@@ -79,7 +82,10 @@
   async function loadWords() {
     try {
       words = await API.get(`/api/v1/people/${id}/wordcloud`) as { word: string; count: number }[]
-    } catch { words = [] }
+    } catch (err) {
+      toast.fail('加载失败', err)
+      words = []
+    }
   }
 
   async function uploadAvatar(e: Event) {
@@ -107,7 +113,7 @@
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: data.url })
       await load()
     } catch (err: any) {
-      alert('头像上传失败：' + (err?.message || err))
+      toast.fail('头像上传失败', err)
     } finally {
       input.value = ''
       uploadingAvatar = false
@@ -121,15 +127,28 @@
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: '' })
       await load()
     } catch (err: any) {
-      alert('移除头像失败：' + (err?.message || err))
+      toast.fail('移除头像失败', err)
     }
   }
 
   async function toggleArchive() {
     if (!person) return
-    if (person.archived) await API.delete(`/api/v1/people/${id}/archive`)
-    else await API.post(`/api/v1/people/${id}/archive`, {})
-    await load()
+    const archiving = !person.archived
+    try {
+      if (archiving) await API.post(`/api/v1/people/${id}/archive`, {})
+      else await API.delete(`/api/v1/people/${id}/archive`)
+      // 归档是状态翻转，反方向再调一次就是撤销
+      toast.undoable(archiving ? '已归档' : '已取消归档', async () => {
+        const undo = archiving
+          ? API.delete(`/api/v1/people/${id}/archive`)
+          : API.post(`/api/v1/people/${id}/archive`, {})
+        await undo.catch((err) => toast.fail('撤销失败', err))
+        await load()
+      })
+      await load()
+    } catch (err) {
+      toast.fail('操作失败', err)
+    }
   }
 
   // 本人只能有一个，再设别人等于把指针挪过去
@@ -139,7 +158,7 @@
       await API.post('/api/v1/settings/bulk', { self_person_id: next })
       setSelf(next)
     } catch (err: any) {
-      alert('设置失败：' + (err?.message || err))
+      toast.fail('设置失败', err)
     }
   }
 
@@ -149,22 +168,23 @@
     try {
       if (quick === 'money') {
         const fen = toFen(quickAmount)
-        if (fen <= 0) { alert('请填写金额（元）'); return }
+        if (fen <= 0) { toast.error('请填写金额（元）'); return }
         await API.post('/api/v1/transactions', {
           person_id: id, kind: 'loan', direction: 'out', amount_fen: fen,
           title: text, occurred_at: todayLocal(),
         })
       } else {
-        if (!text) { alert('请填写内容'); return }
+        if (!text) { toast.error('请填写内容'); return }
         await API.post('/api/v1/memos', { person_id: id, content: text, said_at: todayLocal(), speaker: 'other' })
       }
       quick = ''
       quickText = ''
       quickAmount = ''
+      toast.ok('已保存')
       await load()
       await loadWords()
     } catch (err: any) {
-      alert('保存失败：' + (err?.message || err))
+      toast.fail('保存失败', err)
     }
   }
 
@@ -189,13 +209,22 @@
       ownedTags = owned || []
       intro = path
       loadWords()
+    } catch (err) {
+      // 拉不到也不能装作「人物不存在」或留着半截数据：失败要说出来
+      toast.fail('加载失败', err)
     } finally { loading = false }
   }
   $effect(() => { if (id) load() })
 
   async function remove() {
-    if (person && confirm(`删除联系人「${person.name}」及其所有关联记录？`)) {
-      await API.delete(`/api/v1/people/${id}`); navigate('/people')
+    if (!person) return
+    if (!(await ask({ title: `删除联系人「${person.name}」及其所有关联记录？`, detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
+    try {
+      await API.delete(`/api/v1/people/${id}`)
+      toast.ok('已删除')
+      navigate('/people')
+    } catch (err) {
+      toast.fail('删除失败', err)
     }
   }
 
@@ -206,7 +235,7 @@
       fields = [...fields, saved]
       newField = { label: '', value: '' }
     } catch (err: any) {
-      alert('添加失败：' + (err?.message || err))
+      toast.fail('添加失败', err)
     }
   }
   // 带 id 提交就是更新（后端 ON CONFLICT(id) DO UPDATE），否则改一个字只能删了重建
@@ -215,7 +244,7 @@
     fieldForm = { label: f.label, value: f.value || '' }
   }
   async function saveField(f: PersonField) {
-    if (!fieldForm.label.trim()) { alert('字段名不能为空'); return }
+    if (!fieldForm.label.trim()) { toast.error('字段名不能为空'); return }
     busyField = true
     try {
       const saved = await API.post(`/api/v1/people/${id}/fields`,
@@ -223,17 +252,17 @@
       fields = fields.map(x => x.id === saved.id ? saved : x)
       editingFieldId = ''
     } catch (err: any) {
-      alert('保存失败：' + (err?.message || err))
+      toast.fail('保存失败', err)
     } finally { busyField = false }
   }
   async function removeField(fid: string) {
-    if (!confirm('删除这个自定义字段？')) return
+    if (!(await ask({ title: '删除这个自定义字段？', detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
     try {
       await API.delete(`/api/v1/people/${id}/fields/${fid}`)
       if (editingFieldId === fid) editingFieldId = ''
       fields = fields.filter(f => f.id !== fid)
     } catch (err: any) {
-      alert('删除失败：' + (err?.message || err))
+      toast.fail('删除失败', err)
     }
   }
 

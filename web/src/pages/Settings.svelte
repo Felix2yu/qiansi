@@ -7,6 +7,8 @@
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { dict, ensure, refresh, refreshAll } from '../lib/dict.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
 
   let settings = $state<Record<string, string>>({})
   let appriseUrls = $state('')
@@ -35,13 +37,23 @@
   let auto = $state<BackupStatus | null>(null)
   let autoSaving = $state(false)
   let autoRunning = $state(false)
-  let autoMsg = $state('')
 
   async function load() {
-    settings = await API.get('/api/v1/settings') as any
-    appriseUrls = settings['apprise_urls'] || ''
-    pushHour = parseInt(settings['push_time_hour'] || '9', 10)
-    backups = await API.get('/api/v1/backup/list') as BackupItem[]
+    // 读失败就把屏幕上已有的值留着：填成空再点保存会覆盖掉服务端的真配置
+    const s = await API.get<Record<string, string>>('/api/v1/settings').catch((err) => {
+      toast.fail('读取设置失败', err)
+      return null
+    })
+    if (s) {
+      settings = s
+      appriseUrls = s['apprise_urls'] || ''
+      pushHour = parseInt(s['push_time_hour'] || '9', 10)
+    }
+    const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
+      toast.fail('读取备份列表失败', err)
+      return null
+    })
+    if (b) backups = b
     await loadAuto()
   }
 
@@ -57,20 +69,30 @@
 
 
   async function saveNotify() {
-    await API.post('/api/v1/settings/bulk', {
-      apprise_urls: appriseUrls,
-      push_time_hour: String(pushHour),
-    })
-    alert('已保存推送设置')
+    try {
+      await API.post('/api/v1/settings/bulk', {
+        apprise_urls: appriseUrls,
+        push_time_hour: String(pushHour),
+      })
+    } catch (err) {
+      toast.fail('保存推送设置失败', err)
+      return
+    }
+    toast.ok('已保存推送设置')
   }
   // 之前的「测试推送」只保存了配置却提示已触发，属于误导
   async function testNotify() {
-    await API.post('/api/v1/settings/bulk', { apprise_urls: appriseUrls, push_time_hour: String(pushHour) })
+    try {
+      await API.post('/api/v1/settings/bulk', { apprise_urls: appriseUrls, push_time_hour: String(pushHour) })
+    } catch (err) {
+      toast.fail('保存推送设置失败', err)
+      return
+    }
     try {
       await API.post('/api/v1/notify/test', {})
-      alert('已发送测试推送，请检查对应渠道')
+      toast.ok('已发送测试推送，请检查对应渠道')
     } catch (err: any) {
-      alert('测试推送失败：' + (err?.message || err))
+      toast.fail('测试推送失败', err)
     }
   }
 
@@ -80,15 +102,15 @@
     else localStorage.removeItem('q_token')
     // 头像和下载链接靠会话 cookie 才认令牌：存完当场换一枚，否则要刷新页面才生效
     const ok = await API.ensureSession()
-    alert(ok ? '已保存访问令牌；若服务端未设置 QIANSI_TOKEN，请留空'
-             : '令牌已保存，但服务端不认它，头像与导出仍会失败')
+    if (ok) toast.ok('已保存访问令牌；若服务端未设置 QIANSI_TOKEN，请留空')
+    else toast.error('令牌已保存，但服务端不认它，头像与导出仍会失败')
   }
 
   async function exportData() {
     try {
       await API.download('/api/v1/backup/export')
     } catch (err: any) {
-      alert('导出失败：' + (err?.message || err))
+      toast.fail('导出失败', err)
     }
   }
 
@@ -99,11 +121,11 @@
   let csvPerson = $state('')
   let csvEvent = $state('')
   let ioMsg = $state('')
-  const ioIsError = $derived(ioMsg.includes('失败') || ioMsg.includes('不是'))
   let ioDanger = $state<null | { word: string; title: string; detail: string; confirmLabel: string; run: () => Promise<void> }>(null)
   let jsonInput: HTMLInputElement | undefined = $state()
 
   function say(msg: string) {
+    // 失败都交给 toast；这条留在原地，是导入结果里需要看清的明细数字
     ioMsg = msg
     setTimeout(() => ioMsg = '', 6000)
   }
@@ -117,7 +139,7 @@
     try {
       await API.download('/api/v1/export/csv?' + q.toString())
     } catch (err: any) {
-      say('导出失败：' + (err?.message || err))
+      toast.fail('导出失败', err)
     }
   }
 
@@ -125,7 +147,7 @@
     try {
       await API.download('/api/v1/export/json')
     } catch (err: any) {
-      say('全量导出失败：' + (err?.message || err))
+      toast.fail('全量导出失败', err)
     }
   }
 
@@ -138,12 +160,12 @@
     try {
       parsed = JSON.parse(await file.text())
     } catch {
-      say('这个文件读不出 JSON，确认选的是「全量导出」下来的文件')
+      toast.error('这个文件读不出 JSON，确认选的是「全量导出」下来的文件')
       return
     }
     // 先在本机看一眼再上传：选错文件不该让人等一趟几十 MB 的往返
     if (parsed?.app !== 'qiansi') {
-      say('这不是牵丝的全量导出文件')
+      toast.error('这不是牵丝的全量导出文件')
       return
     }
     ioDanger = {
@@ -157,7 +179,7 @@
           say(`已导入 ${res.rows} 行，覆盖 ${res.tables} 张表`)
           await Promise.all([load(), refreshAll()])
         } catch (err: any) {
-          say('导入失败：' + (err?.message || err))
+          toast.fail('导入失败', err)
         } finally {
           ioDanger = null
         }
@@ -168,12 +190,16 @@
   async function snapshot() {
     try {
       await API.post('/api/v1/backup/snapshot', {})
-      backups = await API.get('/api/v1/backup/list') as BackupItem[]
-      autoMsg = '已生成一份归档快照'
+      // 列表刷新失败只说明「没看到新条目」，不能说快照也失败
+      const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
+        toast.fail('读取备份列表失败', err)
+        return null
+      })
+      if (b) backups = b
+      toast.ok('已生成一份归档快照')
     } catch (err: any) {
-      autoMsg = '生成快照失败：' + (err?.message || err)
+      toast.fail('生成快照失败', err)
     }
-    setTimeout(() => autoMsg = '', 4000)
   }
 
   // ===== 自动备份 =====
@@ -182,12 +208,11 @@
     autoSaving = true
     try {
       auto = await API.put('/api/v1/backup/auto', auto.schedule) as BackupStatus
-      autoMsg = '已保存自动备份设置'
+      toast.ok('已保存自动备份设置')
     } catch (err: any) {
-      autoMsg = '保存失败：' + (err?.message || err)
+      toast.fail('保存失败', err)
     } finally {
       autoSaving = false
-      setTimeout(() => autoMsg = '', 4000)
     }
   }
 
@@ -196,15 +221,18 @@
     try {
       const res = await API.post('/api/v1/backup/auto/run', {}) as { status: BackupStatus }
       auto = res.status
-      backups = await API.get('/api/v1/backup/list') as BackupItem[]
-      autoMsg = '已立即执行一次备份'
+      const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
+        toast.fail('读取备份列表失败', err)
+        return null
+      })
+      if (b) backups = b
+      toast.ok('已立即执行一次备份')
     } catch (err: any) {
       // 失败原因已由服务端落库，Status.last_error 会展示，这里只给即时提示
-      autoMsg = '备份失败：' + (err?.message || err)
+      toast.fail('备份失败', err)
       await loadAuto()
     } finally {
       autoRunning = false
-      setTimeout(() => autoMsg = '', 4000)
     }
   }
 
@@ -222,10 +250,14 @@
     const input = e.target as HTMLInputElement
     const file = input.files?.[0]
     if (!file) return
-    if (!confirm('恢复会用上传的数据库覆盖当前数据，当前数据会先自动归档一份。确定继续？')) {
-      input.value = ''
-      return
-    }
+    // file 已经拿到手，先把 input 清空：后面无论走哪条分支都不用再管它
+    input.value = ''
+    if (!(await ask({
+      title: '用上传的数据库覆盖当前数据？',
+      detail: '当前数据会先自动归档一份，但恢复过程中新写的记录会全部丢失。',
+      danger: true,
+      confirmLabel: '覆盖并恢复',
+    }))) return
     restoring = true
     try {
       const fd = new FormData()
@@ -240,12 +272,11 @@
         try { msg = (await res.json()).error || msg } catch {}
         throw new Error(msg)
       }
-      alert('恢复完成，即将重新加载页面')
-      location.reload()
+      toast.ok('恢复完成，即将重新加载页面')
+      // alert 原来是阻塞的，toast 不会：晚一点刷新才看得见这句，期间按钮保持「恢复中」
+      setTimeout(() => location.reload(), 1500)
     } catch (err: any) {
-      alert('恢复失败：' + (err?.message || err))
-    } finally {
-      input.value = ''
+      toast.fail('恢复失败', err)
       restoring = false
     }
   }
@@ -345,9 +376,6 @@
     <p class="text-xs mt-2" style="color: var(--q-muted);">
       导出会生成一份一致性快照（不含未落盘的 WAL 残留）；恢复前会自动归档当前数据。
     </p>
-    {#if autoMsg}
-      <p class="text-xs mt-2 flex items-center gap-1" style="color: var(--q-muted);"><Check size={12} /> {autoMsg}</p>
-    {/if}
     {#if backups.length > 0}
       <ul class="mt-3 space-y-1">
         {#each backups as b}
@@ -398,9 +426,7 @@
       </button>
     </div>
     {#if ioMsg}
-      <p class="text-xs mt-2 flex items-center gap-1" style="color: {ioIsError ? '#dc2626;' : 'var(--q-muted)'};">
-        {#if ioIsError}<AlertTriangle size={12} />{:else}<Check size={12} />{/if} {ioMsg}
-      </p>
+      <p class="text-xs mt-2 flex items-center gap-1" style="color: var(--q-muted);"><Check size={12} /> {ioMsg}</p>
     {/if}
   </section>
 

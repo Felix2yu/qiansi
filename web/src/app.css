@@ -6,6 +6,8 @@
   --q-text: #1e293b;
   --q-muted: #64748b;
   --q-border: #e2e8f0;
+  --q-danger: #dc2626;
+  --q-ok: #16a34a;
 }
 html.dark {
   --q-bg: #0b1020;
@@ -13,6 +15,9 @@ html.dark {
   --q-text: #e2e8f0;
   --q-muted: #94a3b8;
   --q-border: #1f2937;
+  /* 深色底下正红/正绿太闷，提亮一档才看得出是报错还是成功 */
+  --q-danger: #f87171;
+  --q-ok: #4ade80;
 }
 html, body, #app { height: 100%; }
 body {

@@ -6,6 +6,8 @@
   import { personLabel, loadSelf } from '../lib/self.svelte'
   import { dict, ensure } from '../lib/dict.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
+  import { toast } from '../lib/toast.svelte'
+  import { ask } from '../lib/ask.svelte'
 
   let list = $state<Transaction[]>([])
   const events = $derived(dict.events)
@@ -32,9 +34,12 @@
 
   async function load(reset = true) {
     if (reset) page = 0
-    const batch = (await API.get<Transaction[]>(
+    const batch = await API.get<Transaction[]>(
       `/api/v1/transactions?limit=${PAGE}&offset=${page * PAGE}`
-    ).catch(() => [])) || []
+    ).catch((err: any) => {
+      toast.fail('加载失败', err)
+      return [] as Transaction[]
+    })
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
   }
@@ -56,7 +61,13 @@
   }
 
   async function openEdit(t: Transaction) {
-    const full = await API.get(`/api/v1/transactions/${t.id}`) as Transaction
+    let full: Transaction
+    try {
+      full = await API.get(`/api/v1/transactions/${t.id}`) as Transaction
+    } catch (err) {
+      toast.fail('读取账目失败', err)
+      return
+    }
     editId = full.id
     pickedName = full.person_name || ''
     form = {
@@ -71,7 +82,7 @@
 
   async function submit() {
     const fen = toFen(form.amount_yuan)
-    if (!form.person_id || fen <= 0) { alert('请选择联系人并填写大于 0 的金额（元）'); return }
+    if (!form.person_id || fen <= 0) { toast.error('请选择联系人并填写大于 0 的金额（元）'); return }
     // 只有借还才有「未结清」：礼物/花销提交即了结，避免被算进欠账口径
     const body: any = {
       person_id: form.person_id, kind: form.kind, direction: form.direction,
@@ -79,14 +90,30 @@
       due_date: form.due_date || '', event_id: form.event_id || '',
       settled: form.kind === 'loan' ? !!form.settled : true,
     }
-    if (editId) await API.put(`/api/v1/transactions/${editId}`, body)
-    else await API.post('/api/v1/transactions', body)
+    const isEdit = !!editId
+    try {
+      if (isEdit) await API.put(`/api/v1/transactions/${editId}`, body)
+      else await API.post('/api/v1/transactions', body)
+    } catch (err) {
+      toast.fail('保存失败', err)
+      return
+    }
     showForm = false
     editId = ''
+    toast.ok(isEdit ? '已更新' : '已记一笔')
     await load()
   }
 
-  async function remove(id: string) { if (confirm('删除这笔记录？')) { await API.delete(`/api/v1/transactions/${id}`); await load() } }
+  async function remove(id: string) {
+    if (!(await ask({ title: '删除这笔记录？', detail: '删除后无法恢复，相关的还款登记也会一并失效。', danger: true, confirmLabel: '删除' }))) return
+    try {
+      await API.delete(`/api/v1/transactions/${id}`)
+      toast.ok('已删除')
+      await load()
+    } catch (err) {
+      toast.fail('删除失败', err)
+    }
+  }
 
   // 名字随账目一起回来，不再为了这几个字拉全量名单
   function who(t: { person_id: string; person_name?: string }) {
@@ -94,47 +121,77 @@
   }
   function remaining(t: Transaction) { return Math.max(0, t.amount_fen - (t.repaid_fen || 0)) }
 
+  async function refreshRepay() {
+    if (!repayOf) return
+    repayList = await API.get(`/api/v1/transactions/${repayOf.id}/repayments`) as Repayment[]
+    repayOf = await API.get(`/api/v1/transactions/${repayOf.id}`) as Transaction
+  }
+
   async function openRepay(t: Transaction) {
     repayOf = t
     repayAmount = ''
     repayDate = todayLocal()
     repayNote = ''
-    repayList = await API.get(`/api/v1/transactions/${t.id}/repayments`) as Repayment[]
+    try {
+      await refreshRepay()
+    } catch (err) {
+      toast.fail('读取还款记录失败', err)
+    }
   }
 
   async function submitRepay() {
     if (!repayOf) return
     const fen = toFen(repayAmount)
-    if (fen <= 0) { alert('请填写还款金额（元）'); return }
-    await API.post(`/api/v1/transactions/${repayOf.id}/repayments`, {
-      amount_fen: fen, occurred_at: repayDate || todayLocal(), note: repayNote,
-    })
-    // 还清则自动标记为结清
-    const fresh = await API.get(`/api/v1/transactions/${repayOf.id}`) as Transaction
-    if (remaining(fresh) === 0 && !fresh.settled) {
-      await API.put(`/api/v1/transactions/${fresh.id}`, { ...fresh, settled: true })
+    if (fen <= 0) { toast.error('请填写还款金额（元）'); return }
+    const txId = repayOf.id
+    try {
+      await API.post(`/api/v1/transactions/${txId}/repayments`, {
+        amount_fen: fen, occurred_at: repayDate || todayLocal(), note: repayNote,
+      })
+      // 还清则自动标记为结清
+      const fresh = await API.get(`/api/v1/transactions/${txId}`) as Transaction
+      if (remaining(fresh) === 0 && !fresh.settled) {
+        await API.put(`/api/v1/transactions/${fresh.id}`, { ...fresh, settled: true })
+      }
+      repayAmount = ''
+      repayNote = ''
+      await load()
+      await refreshRepay()
+      toast.ok('已登记还款')
+    } catch (err) {
+      toast.fail('还款登记失败', err)
+      await refreshRepay().catch(() => {})
     }
-    repayAmount = ''
-    repayNote = ''
-    repayList = await API.get(`/api/v1/transactions/${repayOf.id}/repayments`) as Repayment[]
-    await load()
-    repayOf = await API.get(`/api/v1/transactions/${repayOf.id}`) as Transaction
   }
 
   async function removeRepay(id: string) {
     if (!repayOf) return
-    if (!confirm('删除这条还款记录？')) return
-    await API.delete(`/api/v1/transactions/${repayOf.id}/repayments/${id}`)
-    repayList = await API.get(`/api/v1/transactions/${repayOf.id}/repayments`) as Repayment[]
-    await load()
-    repayOf = await API.get(`/api/v1/transactions/${repayOf.id}`) as Transaction
+    if (!(await ask({ title: '删除这条还款记录？', detail: '删除后这笔借还的已还金额会回退。', danger: true, confirmLabel: '删除' }))) return
+    try {
+      await API.delete(`/api/v1/transactions/${repayOf.id}/repayments/${id}`)
+      await load()
+      await refreshRepay()
+      toast.ok('已删除')
+    } catch (err) {
+      toast.fail('删除失败', err)
+    }
   }
-
   // 只翻转结清标记（用于无需逐笔登记还款的场景）
   async function toggleSettled(id: string) {
-    const t = await API.get(`/api/v1/transactions/${id}`) as Transaction
-    await API.put(`/api/v1/transactions/${id}`, { ...t, settled: !t.settled })
-    await load()
+    let t: Transaction
+    try {
+      t = await API.get(`/api/v1/transactions/${id}`) as Transaction
+      const settled = !t.settled
+      await API.put(`/api/v1/transactions/${id}`, { ...t, settled })
+      // 翻回去就是撤销，不必再点一次
+      toast.undoable(settled ? '已结清' : '已取消结清', async () => {
+        await API.put(`/api/v1/transactions/${id}`, { ...t, settled: !settled }).catch(() => {})
+        await load()
+      })
+      await load()
+    } catch (err) {
+      toast.fail('操作失败', err)
+    }
   }
 </script>
 <div class="space-y-4">

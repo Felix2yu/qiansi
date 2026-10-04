@@ -3,6 +3,8 @@
   import { self, loadSelf, isSelf } from './self.svelte'
   import { dict, ensure } from './dict.svelte'
   import PersonPicker from './PersonPicker.svelte'
+  import { toast } from './toast.svelte'
+  import { ask } from './ask.svelte'
   import { Trash2, Plus, Pencil, X, Check } from '@lucide/svelte'
 
   // 关系维护：以 personId 为中心列出全部关系，支持添加、行内改类型/备注、删除
@@ -47,7 +49,8 @@
       rels = (list || []).sort((a, b) =>
         otherName(a).localeCompare(otherName(b), 'zh') || a.type.localeCompare(b.type, 'zh'))
       usedTypes = types || []
-    } catch {
+    } catch (err) {
+      toast.fail('加载失败', err)
       rels = []
     } finally { loading = false }
   }
@@ -68,9 +71,9 @@
   // 关系是有向的，from 永远是当前人物；换人只改备注与类型
   async function add() {
     const type = addForm.type.trim()
-    if (!addForm.to_person_id) { alert('请选择对方'); return }
-    if (addForm.to_person_id === personId) { alert('不能与自己建立关系'); return }
-    if (!type) { alert('请填写关系类型'); return }
+    if (!addForm.to_person_id) { toast.error('请选择对方'); return }
+    if (addForm.to_person_id === personId) { toast.error('不能与自己建立关系'); return }
+    if (!type) { toast.error('请填写关系类型'); return }
     busy = true
     try {
       await API.post('/api/v1/relationships', {
@@ -79,10 +82,11 @@
       })
       showAdd = false
       addForm = { to_person_id: '', type: RELATION_TYPES[0], remark: '' }
+      toast.ok('已添加')
       await load()
       onchange?.()
     } catch (err: any) {
-      alert('添加失败：' + (err?.message || err))
+      toast.fail('添加失败', err)
     } finally { busy = false }
   }
 
@@ -98,7 +102,7 @@
 
   async function saveEdit(r: Relationship) {
     const type = editForm.type.trim()
-    if (!type) { alert('请填写关系类型'); return }
+    if (!type) { toast.error('请填写关系类型'); return }
     busy = true
     try {
       await API.put(`/api/v1/relationships/${r.id}`, {
@@ -106,23 +110,25 @@
         type, remark: editForm.remark,
       })
       cancelEdit()
+      toast.ok('已更新')
       await load()
       onchange?.()
     } catch (err: any) {
-      alert('保存失败：' + (err?.message || err))
+      toast.fail('保存失败', err)
     } finally { busy = false }
   }
 
   async function remove(r: Relationship) {
     // 同一对人间现在可以并存几条不同类型的边，只写名字会分不清删的是哪条
-    if (!confirm(`删除与「${otherName(r)}」的「${r.type}」关系？`)) return
+    if (!(await ask({ title: `删除与「${otherName(r)}」的「${r.type}」关系？`, detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
     try {
       await API.delete(`/api/v1/relationships/${r.id}`)
       if (editingId === r.id) cancelEdit()
+      toast.ok('已删除')
       await load()
       onchange?.()
     } catch (err: any) {
-      alert('删除失败：' + (err?.message || err))
+      toast.fail('删除失败', err)
     }
   }
 </script>

@@ -2,6 +2,8 @@
   import { onMount } from 'svelte'
   import { API, todayLocal, REF_TYPE_LABEL, type Dashboard, type Reminder, type Suggestion } from '../lib/api'
   import { navigate } from '../lib/router'
+  import { toast } from '../lib/toast.svelte'
+  import { completeReminder } from '../lib/reminderActions'
   import { CalendarDays, Users, Wallet, Bell, Sparkles, CheckCircle2, ArrowRight } from '@lucide/svelte'
 
   const today = todayLocal()
@@ -23,10 +25,13 @@
       dashboard = d as Dashboard
       upcoming = r as Reminder[]
       suggestions = s as Suggestion[]
+    } catch (err) {
+      // 拉不到要留在屏幕上：首页一片空白和真的没有数据看起来一样
+      toast.fail('加载失败', err)
     } finally { loading = false }
   }
   onMount(load)
-  function done(id: string) { API.post(`/api/v1/reminders/${id}/done`, {}).then(load) }
+  function done(r: Reminder) { void completeReminder(r, load) }
 </script>
 <div class="space-y-6">
   <header>
@@ -100,7 +105,7 @@
           <ul class="space-y-2 mb-3">
             {#each imminent as r}
               <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-                <input type="checkbox" onchange={() => done(r.id)} />
+                <input type="checkbox" onchange={() => done(r)} />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm truncate">{r.title}</div>
                   <div class="text-xs mt-0.5" style="color: var(--q-muted);">
@@ -116,7 +121,7 @@
           <ul class="space-y-2">
             {#each later.slice(0, 6) as r}
               <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-                <input type="checkbox" onchange={() => done(r.id)} />
+                <input type="checkbox" onchange={() => done(r)} />
                 <div class="flex-1 min-w-0">
                   <div class="text-sm truncate">{r.title}</div>
                   <div class="text-xs mt-0.5" style="color: var(--q-muted);">
