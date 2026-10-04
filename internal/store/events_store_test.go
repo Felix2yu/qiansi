@@ -444,11 +444,11 @@ func TestEventStore_Relationships(t *testing.T) {
 	if err != nil || len(noneOf) != 0 {
 		t.Fatalf("未知人物 RelationshipsOf 应空: %v", err)
 	}
-	people, rels, graphTags, err := s.RelationshipGraph(ctx)
-	if err != nil || len(people) != 2 || len(rels) != 2 {
-		t.Fatalf("RelationshipGraph: %v / %d / %d", err, len(people), len(rels))
+	g, err := s.RelationshipGraph(ctx)
+	if err != nil || len(g.People) != 2 || len(g.Relationships) != 2 {
+		t.Fatalf("RelationshipGraph: %v / %d / %d", err, len(g.People), len(g.Relationships))
 	}
-	if graphTags == nil {
+	if g.Tags == nil {
 		t.Fatalf("RelationshipGraph 应返回 tags map（空也非 nil）")
 	}
 	// 后面的单条更新流程只留一条，免得计数绕来绕去
@@ -1524,7 +1524,7 @@ func TestEventStore_ClosedDBErrors(t *testing.T) {
 	wantErr("RelationshipList", err)
 	_, err = s.RelationshipsOf(ctx, "a")
 	wantErr("RelationshipsOf", err)
-	_, _, _, err = s.RelationshipGraph(ctx)
+	_, err = s.RelationshipGraph(ctx)
 	wantErr("RelationshipGraph", err)
 
 	tx := &Transaction{ID: "t1", PersonID: "p", Kind: "loan", Direction: "out", AmountFen: 1, OccurredAt: "2026-01-01"}

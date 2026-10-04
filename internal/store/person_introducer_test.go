@@ -157,11 +157,11 @@ func TestRelationshipGraphTags(t *testing.T) {
 	}
 	pRaw(t, s, "INSERT INTO taggings(tag_id,target_type,target_id) VALUES(?,'person',?)", tag.ID, a.ID)
 
-	_, _, tags, err := s.RelationshipGraph(ctx)
+	g, err := s.RelationshipGraph(ctx)
 	if err != nil {
 		t.Fatalf("RelationshipGraph: %v", err)
 	}
-	if len(tags[a.ID]) != 1 || tags[a.ID][0].Name != "爱猫" {
-		t.Fatalf("甲应带出一个标签: %+v", tags[a.ID])
+	if len(g.Tags[a.ID]) != 1 || g.Tags[a.ID][0].Name != "爱猫" {
+		t.Fatalf("甲应带出一个标签: %+v", g.Tags[a.ID])
 	}
 }
