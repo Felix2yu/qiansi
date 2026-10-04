@@ -44,7 +44,7 @@ func (a *API) search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
 	list, err := a.Store.Search(r.Context(), q, parseIntQuery(r, "limit", 5))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -55,7 +55,7 @@ func (a *API) personDuplicates(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	list, err := a.Store.PersonDuplicates(r.Context(), q.Get("name"), q.Get("phone"), q.Get("wechat"), q.Get("exclude_id"))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -64,7 +64,7 @@ func (a *API) personDuplicates(w http.ResponseWriter, r *http.Request) {
 func (a *API) personArchive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.PersonArchive(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -73,7 +73,7 @@ func (a *API) personArchive(w http.ResponseWriter, r *http.Request) {
 func (a *API) personUnarchive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.PersonUnarchive(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -126,7 +126,7 @@ func (a *API) peopleList(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -135,10 +135,23 @@ func (a *API) peopleList(w http.ResponseWriter, r *http.Request) {
 func (a *API) peopleCount(w http.ResponseWriter, r *http.Request) {
 	n, err := a.Store.PersonCount(r.Context())
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]int{"count": n})
+}
+
+// preparePerson 落库前的入参收口：表单可以只填姓和名，姓名在这里拼出来；
+// 生日要归一成 YYYY-MM-DD——它会生成纪念日并参与「下一次」的字符串比较，
+// 少写补零的值（1990-1-1）会让提醒窗口算偏。
+func preparePerson(p *store.Person) error {
+	if p.Name == "" {
+		p.Name = store.ComposeName(p.FamilyName, p.GivenName)
+	}
+	if p.Name == "" {
+		return errors.New("name required")
+	}
+	return validatePerson(p)
 }
 
 func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
@@ -147,11 +160,8 @@ func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	if p.Name == "" {
-		p.Name = store.ComposeName(p.FamilyName, p.GivenName)
-	}
-	if p.Name == "" {
-		writeErr(w, 400, "name required")
+	if err := preparePerson(&p); err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	if err := a.Store.PersonCreate(r.Context(), &p); err != nil {
@@ -159,7 +169,7 @@ func (a *API) peopleCreate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, err.Error())
 			return
 		}
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	// 生日要能进入提醒与建议，落库后同步生成对应纪念日
@@ -189,11 +199,8 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.ID = id
-	if p.Name == "" {
-		p.Name = store.ComposeName(p.FamilyName, p.GivenName)
-	}
-	if p.Name == "" {
-		writeErr(w, 400, "name required")
+	if err := preparePerson(&p); err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
 	if err := a.Store.PersonUpdate(r.Context(), &p); err != nil {
@@ -201,7 +208,7 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 400, err.Error())
 			return
 		}
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	// 生日改动要同步到纪念日；清空生日则移除此前自动生成的那条
@@ -238,7 +245,7 @@ func (a *API) deletePersonFull(ctx context.Context, id string) error {
 func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.deletePersonFull(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -276,6 +283,9 @@ func (a *API) peopleDeleteBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := a.deletePersonFull(ctx, id); err != nil {
+			if isNoRows(err) {
+				continue // 这一条已经在别处删掉了，不算失败，也不该中断整批
+			}
 			writeErr(w, 500, fmt.Sprintf("删除联系人失败: %v", err))
 			return
 		}
@@ -301,7 +311,7 @@ func (a *API) peopleBulkCategories(w http.ResponseWriter, r *http.Request) {
 	}
 	added, err := a.Store.PeopleAddCategories(r.Context(), body.IDs, body.CategoryIDs)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"added": added})
@@ -311,7 +321,7 @@ func (a *API) peopleTimeline(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	list, err := a.Store.PersonTimeline(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -321,7 +331,7 @@ func (a *API) peopleIntimacy(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	res, err := a.Store.PersonIntimacy(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, res)
@@ -331,7 +341,7 @@ func (a *API) peopleWordCloud(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	words, err := a.Store.PersonWordCloudText(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, words)
@@ -341,7 +351,7 @@ func (a *API) personFieldList(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	list, err := a.Store.PersonFieldList(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -356,7 +366,7 @@ func (a *API) personFieldUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	f.PersonID = id
 	if err := a.Store.PersonFieldUpsert(r.Context(), &f); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, f)
@@ -365,7 +375,7 @@ func (a *API) personFieldUpsert(w http.ResponseWriter, r *http.Request) {
 func (a *API) personFieldDelete(w http.ResponseWriter, r *http.Request) {
 	fid := chi.URLParam(r, "fid")
 	if err := a.Store.PersonFieldDelete(r.Context(), fid); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -388,7 +398,7 @@ func (a *API) relsOf(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	list, err := a.Store.RelationshipsOf(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -423,7 +433,7 @@ func (a *API) relCreate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 409, err.Error())
 			return
 		}
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, rel)
@@ -446,7 +456,7 @@ func (a *API) relUpdate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 409, err.Error())
 			return
 		}
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, rel)
@@ -455,7 +465,7 @@ func (a *API) relUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) relDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.RelationshipDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -465,7 +475,7 @@ func (a *API) relDelete(w http.ResponseWriter, r *http.Request) {
 func (a *API) relTypes(w http.ResponseWriter, r *http.Request) {
 	types, err := a.Store.RelationshipTypes(r.Context())
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, types)
@@ -475,7 +485,7 @@ func (a *API) relTypes(w http.ResponseWriter, r *http.Request) {
 func (a *API) graph(w http.ResponseWriter, r *http.Request) {
 	people, rels, tags, err := a.Store.RelationshipGraph(r.Context())
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"people": people, "relationships": rels, "tags": tags})

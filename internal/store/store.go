@@ -2,6 +2,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"sync"
 	"time"
@@ -33,6 +34,29 @@ func (s *Store) UseDB(next *sql.DB) {
 	s.swapMu.Lock()
 	s.DB = next
 	s.swapMu.Unlock()
+}
+
+// execOne 执行「目标行必须存在」的写语句，并把影响 0 行翻译成 sql.ErrNoRows。
+//
+// 不查 RowsAffected 是这一层最容易漏的坑：PUT 打到一个不存在的 id（比如另一个标签页
+// 刚把它删掉）会静默成功，前端刷新后记录还在原样，用户以为改到了。
+// 只用于按主键定位的单行写；清理类语句（解除关联、删中间表、批量置空）合法地可能
+// 影响 0 行，走它们会把正常操作变成假 404，别用这个。
+func execOne(ctx context.Context, db interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}, query string, args ...any) error {
+	res, err := db.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // timeFormat 用于审计字段（created_at 等），保持 UTC 带时区，便于排查问题。

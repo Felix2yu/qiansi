@@ -2,7 +2,9 @@ package api
 
 import (
 	"crypto/subtle"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -134,6 +136,31 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// writeStoreErr 把 store 返回的错误翻译成状态码与中文文案。
+//
+// 三种情况分别处理：目标行不存在 → 404（以前是 500 甚至 200 假成功）；
+// 约束冲突 → 400/409，这类是用户能自己纠正的，不该看到 SQLite 的英文原文；
+// 其余保持 500 + 原文，便于排查真正的内部错误。
+func writeStoreErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		writeErr(w, http.StatusNotFound, "记录不存在，可能已经在别处被删除")
+	case errors.Is(err, store.ErrRelationshipExists):
+		writeErr(w, http.StatusConflict, "这两个联系人之间已经是这种关系了")
+	case isConstraintErr(err, "UNIQUE"):
+		writeErr(w, http.StatusConflict, "这个名字已经存在")
+	case isConstraintErr(err, "FOREIGN KEY"):
+		writeErr(w, http.StatusBadRequest, "关联的记录不存在，可能已被删除；请先选好联系人或往来")
+	default:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	}
+}
+
+// isConstraintErr 识别 SQLite 的约束错误文本（驱动没有导出更细的错误类型）。
+func isConstraintErr(err error, kind string) bool {
+	return strings.Contains(err.Error(), kind+" constraint")
 }
 
 func decode(r *http.Request, v any) error {

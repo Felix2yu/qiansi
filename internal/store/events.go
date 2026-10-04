@@ -66,7 +66,48 @@ func decodeLocations(s string) []string {
 	return out
 }
 
-func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []string) error {
+// EventExpense 是事件自带的那笔开销（kind='expense' 且 event_id 指向该事件）。
+// 金额的真相在 transactions 里，事件上的 expense_fen 只是它的投影。
+type EventExpense struct {
+	PersonID   string
+	AmountFen  int
+	Title      string
+	OccurredAt string
+}
+
+// applyEventExpense 在事件所在的事务里把开销对齐到 ex。
+//
+// 这一步不能挪到 API 层事后补写：事件提交成功、开销写入失败（归属人被并发删掉、
+// 磁盘满、进程被杀）就会留下一张金额与账本对不上的事件，而且下次保存会再补一条。
+func applyEventExpense(ctx context.Context, tx *sql.Tx, eventID string, ex *EventExpense) error {
+	if ex == nil || ex.AmountFen <= 0 {
+		_, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE event_id=? AND kind='expense'", eventID)
+		return err
+	}
+	// 只保留一条：历史上重复保存可能挂出多笔
+	var keep string
+	err := tx.QueryRowContext(ctx,
+		"SELECT id FROM transactions WHERE event_id=? AND kind='expense' ORDER BY created_at, id LIMIT 1", eventID).Scan(&keep)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if keep == "" {
+		_, err := tx.ExecContext(ctx, `INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id)
+VALUES(?,?,'expense','out',?,?,?,NULL,1,?,?,?)`,
+			uuid.NewString(), ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, nowUTC(), eventID)
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE event_id=? AND kind='expense' AND id<>?", eventID, keep); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,direction='out',amount_fen=?,title=?,occurred_at=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
+		ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, keep)
+	return err
+}
+
+// EventCreate 写入事件、参与人与它自带的那笔开销。
+// expense 为 nil 表示「这个事件没有开销」，会顺带清掉该事件下 kind='expense' 的往来。
+func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
@@ -87,19 +128,23 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 			return err
 		}
 	}
+	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []string) error {
+// EventUpdate 语义同 EventCreate：事件字段、参与人、开销在一次事务里落定，
+// 任何一步失败都整体回滚，不会出现「事件改了、账没改」。
+func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	e.UpdatedAt = nowUTC()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, "UPDATE events SET title=?,type_id=?,event_date=?,location=?,locations=?,has_gift=?,gift=?,summary=?,updated_at=? WHERE id=?",
-		e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.UpdatedAt, e.ID)
-	if err != nil {
+	if err := execOne(ctx, tx, "UPDATE events SET title=?,type_id=?,event_date=?,location=?,locations=?,has_gift=?,gift=?,summary=?,updated_at=? WHERE id=?",
+		e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.UpdatedAt, e.ID); err != nil {
 		return err
 	}
 	_, _ = tx.ExecContext(ctx, "DELETE FROM event_participants WHERE event_id=?", e.ID)
@@ -108,14 +153,27 @@ func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []stri
 			return err
 		}
 	}
+	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
 func (s *Store) EventDelete(ctx context.Context, id string) error {
-	// 解除关联交易，避免留下指向已删除事件的 event_id
-	_, _ = s.DB.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id=?", id)
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM events WHERE id=?", id)
-	return err
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// 往来留着（钱确实花过），只是不再挂在事件上。外键本身带 ON DELETE SET NULL，
+	// 这里显式置空是为了让「删事件不会删账」这个意图留在代码里。
+	if _, err := tx.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id=?", id); err != nil {
+		return err
+	}
+	if err := execOne(ctx, tx, "DELETE FROM events WHERE id=?", id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // expense_fen 只统计支出方向（收到的礼金/回礼属入账，不算开销）
@@ -268,14 +326,11 @@ func (s *Store) MemoUpdate(ctx context.Context, m *Memo) error {
 	if m.PersonID != "" { personID = m.PersonID } else { personID = nil }
 	var dueDate any
 	if m.DueDate != "" { dueDate = m.DueDate } else { dueDate = nil }
-	_, err := s.DB.ExecContext(ctx, "UPDATE memos SET person_id=?,speaker=?,content=?,said_at=?,is_promise=?,due_date=?,status=? WHERE id=?",
-		personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.ID)
-	return err
+	return execOne(ctx, s.DB, "UPDATE memos SET person_id=?,speaker=?,content=?,said_at=?,is_promise=?,due_date=?,status=? WHERE id=?", personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.ID)
 }
 
 func (s *Store) MemoDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM memos WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM memos WHERE id=?", id)
 }
 
 func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool, limit, offset int) ([]*Memo, error) {
@@ -351,23 +406,16 @@ func (s *Store) RelationshipUpdate(ctx context.Context, r *Relationship) error {
 	} else {
 		remark = nil
 	}
-	res, err := s.DB.ExecContext(ctx, "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
+	err := execOne(ctx, s.DB, "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
 		r.FromPerson, r.ToPerson, r.Type, remark, r.ID)
 	if isUniqueRel(err) {
 		return ErrRelationshipExists
 	}
-	if err != nil {
-		return err
-	}
-	if n, err := res.RowsAffected(); err == nil && n == 0 {
-		return sql.ErrNoRows
-	}
-	return nil
+	return err
 }
 
 func (s *Store) RelationshipDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM relationships WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM relationships WHERE id=?", id)
 }
 
 func (s *Store) RelationshipList(ctx context.Context) ([]*Relationship, error) {
@@ -451,14 +499,12 @@ func (s *Store) TransactionUpdate(ctx context.Context, t *Transaction) error {
 	if t.Title != "" { title = t.Title } else { title = nil }
 	var eventID any
 	if t.EventID != "" { eventID = t.EventID } else { eventID = nil }
-	_, err := s.DB.ExecContext(ctx, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=?",
+	return execOne(ctx, s.DB, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=?",
 		t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, eventID, t.ID)
-	return err
 }
 
 func (s *Store) TransactionDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM transactions WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM transactions WHERE id=?", id)
 }
 
 const txColumns = `t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name,
@@ -546,14 +592,11 @@ func (s *Store) AnniversaryCreate(ctx context.Context, a *Anniversary) error {
 func (s *Store) AnniversaryUpdate(ctx context.Context, a *Anniversary) error {
 	var personID any
 	if a.PersonID != "" { personID = a.PersonID } else { personID = nil }
-	_, err := s.DB.ExecContext(ctx, "UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=?,remind_days=? WHERE id=?",
-		personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.ID)
-	return err
+	return execOne(ctx, s.DB, "UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=?,remind_days=? WHERE id=?", personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.ID)
 }
 
 func (s *Store) AnniversaryDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM anniversaries WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM anniversaries WHERE id=?", id)
 }
 
 func (s *Store) AnniversaryList(ctx context.Context) ([]*Anniversary, error) {
@@ -649,19 +692,15 @@ func (s *Store) ReminderUpdate(ctx context.Context, r *Reminder) error {
 	if r.RefID != "" { refID = r.RefID } else { refID = nil }
 	var completedAt any
 	if r.CompletedAt != "" { completedAt = r.CompletedAt } else { completedAt = nil }
-	_, err := s.DB.ExecContext(ctx, "UPDATE reminders SET person_id=?,ref_type=?,ref_id=?,title=?,due_at=?,status=?,completed_at=? WHERE id=?",
-		personID, r.RefType, refID, r.Title, r.DueAt, r.Status, completedAt, r.ID)
-	return err
+	return execOne(ctx, s.DB, "UPDATE reminders SET person_id=?,ref_type=?,ref_id=?,title=?,due_at=?,status=?,completed_at=? WHERE id=?", personID, r.RefType, refID, r.Title, r.DueAt, r.Status, completedAt, r.ID)
 }
 
 func (s *Store) ReminderDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM reminders WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM reminders WHERE id=?", id)
 }
 
 func (s *Store) ReminderDone(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "UPDATE reminders SET status='done',completed_at=? WHERE id=?", nowUTC(), id)
-	return err
+	return execOne(ctx, s.DB, "UPDATE reminders SET status='done',completed_at=? WHERE id=?", nowUTC(), id)
 }
 
 // ReminderList 列出 reminders 表里的待办。
@@ -912,9 +951,8 @@ WHERE m.is_promise=1 AND m.status='open' AND m.due_date IS NOT NULL AND m.due_da
 
 // MemoFulfill 把一条承诺记为已兑现。只动承诺项，避免误改普通对话的状态。
 func (s *Store) MemoFulfill(ctx context.Context, memoID string) error {
-	_, err := s.DB.ExecContext(ctx,
+	return execOne(ctx, s.DB,
 		"UPDATE memos SET status='fulfilled' WHERE id=? AND is_promise=1", memoID)
-	return err
 }
 
 // ===== Global search =====
@@ -1192,8 +1230,7 @@ func (s *Store) RepaymentCreate(ctx context.Context, r *Repayment) error {
 }
 
 func (s *Store) RepaymentDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM repayments WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM repayments WHERE id=?", id)
 }
 
 func (s *Store) RepaymentsOf(ctx context.Context, transactionID string) ([]*Repayment, error) {
@@ -1225,13 +1262,11 @@ func (s *Store) PersonDetail(ctx context.Context, id string) (*Person, []*Person
 // ===== PersonArchive =====
 
 func (s *Store) PersonArchive(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "UPDATE people SET archived=1 WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "UPDATE people SET archived=1 WHERE id=?", id)
 }
 
 func (s *Store) PersonUnarchive(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "UPDATE people SET archived=0 WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "UPDATE people SET archived=0 WHERE id=?", id)
 }
 
 // ===== PersonIntimacy / WordCloud =====

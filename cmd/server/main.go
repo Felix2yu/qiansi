@@ -82,6 +82,17 @@ func main() {
 	}
 }
 
+// uploads 只放位图。早前落盘的扩展名取自客户端文件名，目录里可能已经有 .html/.svg；
+// 同源回显这些文件等于给自己上存储型 XSS，所以按扩展名再收一道口，其余一律不下发。
+var uploadContentTypes = map[string]string{
+	".png":  "image/png",
+	".jpg":  "image/jpeg",
+	".jpeg": "image/jpeg",
+	".gif":  "image/gif",
+	".webp": "image/webp",
+	".bmp":  "image/bmp",
+}
+
 func safeFileServer(root string) http.Handler {
 	fs := http.FileServer(http.Dir(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +102,14 @@ func safeFileServer(root string) http.Handler {
 			http.Error(w, "bad path", 400)
 			return
 		}
+		ct, ok := uploadContentTypes[strings.ToLower(filepath.Ext(p))]
+		if !ok {
+			http.Error(w, "unsupported file type", http.StatusUnsupportedMediaType)
+			return
+		}
+		// 预设 Content-Type：FileServer 见它非空就不再自行嗅探；nosniff 挡住 polyglot 被当页面解析
+		w.Header().Set("Content-Type", ct)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		r.URL.Path = p
 		fs.ServeHTTP(w, r)
 	})

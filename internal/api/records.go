@@ -32,7 +32,7 @@ func (a *API) eventList(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("q"),
 		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -46,7 +46,7 @@ func (a *API) eventGet(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, 404, "not found")
 			return
 		}
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, e)
@@ -65,38 +65,25 @@ func (a *API) eventCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "event_date required")
 		return
 	}
+	d, err := normDate("event_date", body.Event.EventDate)
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	body.Event.EventDate = d
 	// 地点：locations 为准，location 存拼接串供搜索/兼容
 	body.Event.Locations = cleanStrings(body.Event.Locations)
 	if len(body.Event.Locations) > 0 {
 		body.Event.Location = strings.Join(body.Event.Locations, " · ")
 	}
-	expensePerson := body.Event.ExpensePersonID
-	if expensePerson == "" && len(body.ParticipantIDs) > 0 {
-		expensePerson = body.ParticipantIDs[0]
-	}
-	if body.Event.ExpenseFen > 0 && expensePerson == "" {
-		writeErr(w, 400, "记录开销需要至少一位参与人（或指定开销归属人）")
+	expense, err := eventExpense(&body.Event, body.ParticipantIDs)
+	if err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := a.Store.EventCreate(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
-		writeErr(w, 500, err.Error())
+	if err := a.Store.EventCreate(r.Context(), &body.Event, body.ParticipantIDs, expense); err != nil {
+		writeStoreErr(w, err)
 		return
-	}
-	if body.Event.ExpenseFen > 0 {
-		tx := &store.Transaction{
-			PersonID:   expensePerson,
-			Kind:       "expense",
-			Direction:  "out",
-			AmountFen:  body.Event.ExpenseFen,
-			Title:      body.Event.Title,
-			OccurredAt: body.Event.EventDate,
-			Settled:    true,
-			EventID:    body.Event.ID,
-		}
-		if err := a.Store.TransactionCreate(r.Context(), tx); err != nil {
-			writeErr(w, 500, "事件已保存，但开销记账失败: "+err.Error())
-			return
-		}
 	}
 	writeJSON(w, 200, body.Event)
 }
@@ -115,51 +102,25 @@ func cleanStrings(in []string) []string {
 	return out
 }
 
-// syncEventExpense 把事件的开销金额同步到 Money：有金额则 upsert 一条关联交易，
-// 金额为 0 则删除该事件下由事件自动创建的 expense 交易。
-func (a *API) syncEventExpense(ctx context.Context, e *store.Event, participantIDs []string) error {
-	existing, err := a.Store.EventExpenses(ctx, e.ID)
-	if err != nil {
-		return err
-	}
+// eventExpense 把事件表单上的开销金额翻译成要落账的那笔往来。
+// 金额为空/0 时返回 nil，交给 store 在事务里清掉旧账。
+func eventExpense(e *store.Event, participantIDs []string) (*store.EventExpense, error) {
 	if e.ExpenseFen <= 0 {
-		for _, t := range existing {
-			if t.Kind == "expense" {
-				if err := a.Store.TransactionDelete(ctx, t.ID); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
+		return nil, nil
 	}
 	person := e.ExpensePersonID
 	if person == "" && len(participantIDs) > 0 {
 		person = participantIDs[0]
 	}
 	if person == "" {
-		return errors.New("记录开销需要至少一位参与人（或指定开销归属人）")
+		return nil, errors.New("记录开销需要至少一位参与人（或指定开销归属人）")
 	}
-	for _, t := range existing {
-		if t.Kind != "expense" {
-			continue
-		}
-		t.PersonID = person
-		t.AmountFen = e.ExpenseFen
-		t.Title = e.Title
-		t.OccurredAt = e.EventDate
-		t.Settled = true
-		return a.Store.TransactionUpdate(ctx, t)
-	}
-	return a.Store.TransactionCreate(ctx, &store.Transaction{
+	return &store.EventExpense{
 		PersonID:   person,
-		Kind:       "expense",
-		Direction:  "out",
 		AmountFen:  e.ExpenseFen,
 		Title:      e.Title,
 		OccurredAt: e.EventDate,
-		Settled:    true,
-		EventID:    e.ID,
-	})
+	}, nil
 }
 
 func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
@@ -173,16 +134,27 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Event.ID = id
+	if body.Event.EventDate == "" {
+		writeErr(w, 400, "event_date required")
+		return
+	}
+	d, err := normDate("event_date", body.Event.EventDate)
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	body.Event.EventDate = d
 	body.Event.Locations = cleanStrings(body.Event.Locations)
 	if len(body.Event.Locations) > 0 {
 		body.Event.Location = strings.Join(body.Event.Locations, " · ")
 	}
-	if err := a.Store.EventUpdate(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
-		writeErr(w, 500, err.Error())
+	expense, err := eventExpense(&body.Event, body.ParticipantIDs)
+	if err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
-	if err := a.syncEventExpense(r.Context(), &body.Event, body.ParticipantIDs); err != nil {
-		writeErr(w, 400, err.Error())
+	if err := a.Store.EventUpdate(r.Context(), &body.Event, body.ParticipantIDs, expense); err != nil {
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, body.Event)
@@ -191,7 +163,7 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) eventDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.EventDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -214,7 +186,7 @@ func (a *API) memoList(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("promises_only") == "1",
 		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -230,8 +202,12 @@ func (a *API) memoCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "said_at required")
 		return
 	}
+	if err := validateMemo(&m); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.MemoCreate(r.Context(), &m); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, m)
@@ -245,8 +221,16 @@ func (a *API) memoUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.ID = id
+	if m.SaidAt == "" {
+		writeErr(w, 400, "said_at required")
+		return
+	}
+	if err := validateMemo(&m); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.MemoUpdate(r.Context(), &m); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, m)
@@ -255,7 +239,7 @@ func (a *API) memoUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) memoDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.MemoDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -281,7 +265,7 @@ func (a *API) txList(w http.ResponseWriter, r *http.Request) {
 		r.URL.Query().Get("person_id"),
 		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -322,8 +306,12 @@ func (a *API) txCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	normalizeTx(&t)
+	if err := validateTx(&t); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.TransactionCreate(r.Context(), &t); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, t)
@@ -337,9 +325,17 @@ func (a *API) txUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.ID = id
+	if t.OccurredAt == "" {
+		writeErr(w, 400, "occurred_at required")
+		return
+	}
 	normalizeTx(&t)
+	if err := validateTx(&t); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.TransactionUpdate(r.Context(), &t); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, t)
@@ -348,7 +344,7 @@ func (a *API) txUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) txDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.TransactionDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -365,17 +361,23 @@ func (a *API) repaymentCreate(w http.ResponseWriter, r *http.Request) {
 	if rp.OccurredAt == "" {
 		rp.OccurredAt = nowLocalStamp()[:10]
 	}
-	if rp.AmountFen <= 0 {
-		writeErr(w, 400, "amount_fen 必须大于 0")
+	if err := positiveFen("amount_fen", rp.AmountFen); err != nil {
+		badRequestErr(w, err)
 		return
 	}
+	d, err := normDate("occurred_at", rp.OccurredAt)
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	rp.OccurredAt = d
 	if err := a.Store.RepaymentCreate(r.Context(), &rp); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	// 还款后自动校正结清状态，还完即结清、删掉还款则回到未结清
 	if err := a.resyncSettled(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, rp)
@@ -390,7 +392,7 @@ func (a *API) repaymentsList(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	list, err := a.Store.RepaymentsOf(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -399,12 +401,12 @@ func (a *API) repaymentsList(w http.ResponseWriter, r *http.Request) {
 func (a *API) repaymentDelete(w http.ResponseWriter, r *http.Request) {
 	rid := chi.URLParam(r, "rid")
 	if err := a.Store.RepaymentDelete(r.Context(), rid); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	// 删掉一笔还款后重新计算结清状态，避免出现「已结清但仍有欠款」
 	if err := a.resyncSettled(r.Context(), chi.URLParam(r, "id")); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -447,7 +449,7 @@ func (a *API) registerAnniversaries(r chi.Router) {
 func (a *API) annivList(w http.ResponseWriter, r *http.Request) {
 	list, err := a.Store.AnniversaryList(r.Context())
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -463,8 +465,12 @@ func (a *API) annivCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "title and date required")
 		return
 	}
+	if err := validateAnniv(&a2); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.AnniversaryCreate(r.Context(), &a2); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, a2)
@@ -478,8 +484,16 @@ func (a *API) annivUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a2.ID = id
+	if a2.Date == "" || a2.Title == "" {
+		writeErr(w, 400, "title and date required")
+		return
+	}
+	if err := validateAnniv(&a2); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.AnniversaryUpdate(r.Context(), &a2); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, a2)
@@ -488,7 +502,7 @@ func (a *API) annivUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) annivDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := a.Store.AnniversaryDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -519,7 +533,7 @@ func (a *API) reminderList(w http.ResponseWriter, r *http.Request) {
 	offset := parseIntQuery(r, "offset", 0)
 	list, err := a.Store.ReminderList(ctx, status, 0, 0)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	if status == "" || status == "pending" {
@@ -548,7 +562,7 @@ func (a *API) reminderList(w http.ResponseWriter, r *http.Request) {
 func (a *API) upcoming(w http.ResponseWriter, r *http.Request) {
 	list, err := a.Store.ReminderUpcoming(r.Context(), parseIntQuery(r, "days", 30))
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
@@ -568,8 +582,12 @@ func (a *API) reminderCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "due_at required")
 		return
 	}
+	if err := validateReminder(&rm); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.ReminderCreate(r.Context(), &rm); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, rm)
@@ -595,8 +613,20 @@ func (a *API) reminderUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rm.ID = id
+	if strings.TrimSpace(rm.Title) == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
+	if strings.TrimSpace(rm.DueAt) == "" {
+		writeErr(w, 400, "due_at required")
+		return
+	}
+	if err := validateReminder(&rm); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.ReminderUpdate(r.Context(), &rm); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, rm)
@@ -609,7 +639,7 @@ func (a *API) reminderDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.ReminderDelete(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
@@ -631,7 +661,7 @@ func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.Store.AnniversaryDismiss(r.Context(), annivID, occurrence); err != nil {
-			writeErr(w, 500, err.Error())
+			writeStoreErr(w, err)
 			return
 		}
 		w.WriteHeader(204)
@@ -644,14 +674,14 @@ func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.Store.MemoFulfill(r.Context(), memoID); err != nil {
-			writeErr(w, 500, err.Error())
+			writeStoreErr(w, err)
 			return
 		}
 		w.WriteHeader(204)
 		return
 	}
 	if err := a.Store.ReminderDone(r.Context(), id); err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)

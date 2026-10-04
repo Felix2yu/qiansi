@@ -140,10 +140,9 @@ func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 		return err
 	}
 	p.UpdatedAt = nowUTC()
-	_, err := s.DB.ExecContext(ctx, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,archived=?,x_abuid=?,updated_at=?,introduced_by_person_id=? WHERE id=?`,
+	if err := execOne(ctx, s.DB, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,archived=?,x_abuid=?,updated_at=?,introduced_by_person_id=? WHERE id=?`,
 		p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
-		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.Archived, p.XAbUID, p.UpdatedAt, nullableString(p.IntroducedByPersonID), p.ID)
-	if err != nil {
+		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.Archived, p.XAbUID, p.UpdatedAt, nullableString(p.IntroducedByPersonID), p.ID); err != nil {
 		return err
 	}
 	return s.replacePersonCategories(ctx, p.ID, p.CategoryIDs)
@@ -270,6 +269,9 @@ func dedupeInts(ids []int) []int {
 
 // PersonUpdateNameParts 只更新姓名三件套（显示名/姓/名），
 // 供 vCard 重导入时按 X-ABUID 匹配回填，不触碰用户在应用内维护的其他字段。
+//
+// 这里刻意不用 execOne：id 来自同一批导入开头读出的人物列表，中间被并发删除属于
+// 正常现象，报 ErrNoRows 会让整份 vcf 停在半路，而导入侧本就按「命中即回填」计数。
 func (s *Store) PersonUpdateNameParts(ctx context.Context, id, name, familyName, givenName string) error {
 	_, err := s.DB.ExecContext(ctx,
 		"UPDATE people SET name=?,family_name=?,given_name=?,updated_at=? WHERE id=?",
@@ -303,8 +305,7 @@ func hasHan(s string) bool {
 }
 
 func (s *Store) PersonDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM people WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM people WHERE id=?", id)
 }
 
 // PersonDetachAttachments 返回该人物的附件列表，并把引用清空。
@@ -653,8 +654,7 @@ func (s *Store) PersonFieldUpsert(ctx context.Context, f *PersonField) error {
 }
 
 func (s *Store) PersonFieldDelete(ctx context.Context, id string) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM person_fields WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM person_fields WHERE id=?", id)
 }
 
 // ===== Categories / Tags / EventTypes =====
@@ -694,15 +694,13 @@ func (s *Store) CategoryUpsert(ctx context.Context, c *Category) error {
 		c.ID = int(id)
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE categories SET name=?,color=?,icon=?,sort_order=? WHERE id=?", c.Name, c.Color, c.Icon, c.SortOrder, c.ID)
-	return err
+	return execOne(ctx, s.DB, "UPDATE categories SET name=?,color=?,icon=?,sort_order=? WHERE id=?", c.Name, c.Color, c.Icon, c.SortOrder, c.ID)
 }
 
 // CategoryDelete 删除圈子。people 侧不再挂列，成员关系由
 // person_categories 的 ON DELETE CASCADE 一并清掉。
 func (s *Store) CategoryDelete(ctx context.Context, id int) error {
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM categories WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM categories WHERE id=?", id)
 }
 
 // PeopleAddCategories 把一批人各加进若干个圈子，只增不减，已在圈子里的跳过。
@@ -792,8 +790,7 @@ func (s *Store) TagUpsert(ctx context.Context, t *Tag) error {
 		t.ID = int(id)
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE tags SET name=?,color=? WHERE id=?", t.Name, t.Color, t.ID)
-	return err
+	return execOne(ctx, s.DB, "UPDATE tags SET name=?,color=? WHERE id=?", t.Name, t.Color, t.ID)
 }
 
 // TagDelete 删除标签。taggings 有外键级联，这里只需保证记录本身被清掉。
@@ -801,8 +798,7 @@ func (s *Store) TagDelete(ctx context.Context, id int) error {
 	if _, err := s.DB.ExecContext(ctx, "DELETE FROM taggings WHERE tag_id=?", id); err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM tags WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM tags WHERE id=?", id)
 }
 
 type EventType struct {
@@ -842,9 +838,8 @@ func (s *Store) EventTypeUpsert(ctx context.Context, e *EventType) error {
 		e.ID = int(id)
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx, "UPDATE event_types SET name=?,color=?,icon=?,is_default=?,sort_order=? WHERE id=?",
+	return execOne(ctx, s.DB, "UPDATE event_types SET name=?,color=?,icon=?,is_default=?,sort_order=? WHERE id=?",
 		e.Name, e.Color, e.Icon, e.IsDefault, e.SortOrder, e.ID)
-	return err
 }
 
 // EventTypeDelete 删除事件类型，并把引用它的往来置为「未分类」。
@@ -852,8 +847,7 @@ func (s *Store) EventTypeDelete(ctx context.Context, id int) error {
 	if _, err := s.DB.ExecContext(ctx, "UPDATE events SET type_id=NULL WHERE type_id=?", id); err != nil {
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx, "DELETE FROM event_types WHERE id=?", id)
-	return err
+	return execOne(ctx, s.DB, "DELETE FROM event_types WHERE id=?", id)
 }
 
 // ===== Tagging =====

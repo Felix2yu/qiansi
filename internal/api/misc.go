@@ -1,6 +1,8 @@
 package api
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"math/rand"
 	"net/http"
@@ -23,8 +25,33 @@ func (a *API) registerAttachments(r chi.Router) {
 	// uploads static path registered in main
 }
 
+// 上传白名单：落盘扩展名只由嗅探出的真实类型决定，绝不用客户端文件名。
+// 否则「PNG 头 + HTML 体」的 polyglot 会以 .html 存进同源目录，
+// 被 /uploads 直接当页面渲染 —— 单用户自托管也躲不开自己踩自己的 XSS。
+const maxUploadSize = 20 << 20
+
+var uploadExts = map[string]string{
+	"image/png":  ".png",
+	"image/jpeg": ".jpg",
+	"image/gif":  ".gif",
+	"image/webp": ".webp",
+	"image/bmp":  ".bmp",
+}
+
 func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
-	r.ParseMultipartForm(10 << 20) // 10MB
+	// 先把整个请求体封顶，否则超限的表单会先落一份临时文件才被解析阶段发现。
+	// multipart 的边界与字段头也要算进预算，所以留 1MB 余量。
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize+(1<<20))
+	err := r.ParseMultipartForm(maxUploadSize)
+	var tooBig *http.MaxBytesError
+	if err != nil {
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("图片超过 %d MB", maxUploadSize>>20))
+			return
+		}
+		writeErr(w, 400, "表单解析失败: "+err.Error())
+		return
+	}
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeErr(w, 400, "file required")
@@ -40,11 +67,12 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mime := http.DetectContentType(head)
-	if !strings.HasPrefix(mime, "image/") {
-		writeErr(w, 400, "only image/* accepted")
+	ext, ok := uploadExts[mime]
+	if !ok {
+		// SVG 会带脚本、HTML/文本会带可执行内容，一律按「不是位图」拒掉
+		writeErr(w, 400, "只接受 PNG / JPEG / GIF / WEBP / BMP 位图")
 		return
 	}
-	ext := filepath.Ext(header.Filename)
 	stored := time.Now().UTC().Format("20060102150405") + randStr(8) + ext
 	outPath := filepath.Join(a.Cfg.Uploads, stored)
 	out, err := os.Create(outPath)
@@ -53,7 +81,18 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer out.Close()
-	written, _ := io.Copy(out, file)
+	// io.Copy 不限量，嗅探通过后仍可塞进任意大的正文；CopyN 多读 1 字节用于判超限
+	written, err := io.CopyN(out, file, maxUploadSize+1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		os.Remove(outPath)
+		writeErr(w, 500, err.Error())
+		return
+	}
+	if written > maxUploadSize {
+		os.Remove(outPath)
+		writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("图片超过 %d MB", maxUploadSize>>20))
+		return
+	}
 	att := &store.Attachment{
 		EntityType: r.FormValue("entity_type"),
 		EntityID:   r.FormValue("entity_id"),
@@ -64,7 +103,7 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := a.Store.AttachmentCreate(r.Context(), att); err != nil {
 		os.Remove(outPath)
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"attachment": att, "url": "/uploads/" + stored})
@@ -74,7 +113,7 @@ func (a *API) deleteAttachment(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	att, err := a.Store.AttachmentDelete(r.Context(), id)
 	if err != nil {
-		writeErr(w, 500, err.Error())
+		writeStoreErr(w, err)
 		return
 	}
 	path := filepath.Join(a.Cfg.Uploads, att.StoredName)

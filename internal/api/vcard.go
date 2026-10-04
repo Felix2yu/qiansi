@@ -1,7 +1,9 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -645,7 +647,8 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 				// 只顺着卡上的标记归档、不反向取消：外来 vcf 没有这个属性，
 				// 反向操作会把用户精心隐藏的企业联系人又放出来
 				if p.Archived {
-					if err := a.Store.PersonArchive(ctx, id); err != nil {
+					// 从开头读出列表到现在，这一条可能已被别处删掉；不影响导入，跳过
+					if err := a.Store.PersonArchive(ctx, id); err != nil && !errors.Is(err, sql.ErrNoRows) {
 						writeErr(w, 500, fmt.Sprintf("归档「%s」失败: %v", p.Name, err))
 						return
 					}
