@@ -54,11 +54,12 @@ ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
 	//
 	// 先按每笔交易扣掉各自还款，再按人汇总。直接在聚合里写 t.id 会让 SQLite
 	// 取未定义的某一行，多笔借款时数字是错的。
+	// kind='loan' 与首页欠账口径一致：礼物/花销不是借款，不该出现在「待还」里。
 	rows, err = st.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(SUM(x.remaining),0) AS unpaid
 FROM (
   SELECT t.person_id AS pid,
          t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
-  FROM transactions t WHERE t.direction='out' AND t.settled=0
+  FROM transactions t WHERE t.direction='out' AND t.kind='loan' AND t.settled=0
 ) x JOIN people p ON p.id=x.pid
 GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 	if err == nil {

@@ -65,10 +65,12 @@
   async function submit() {
     const fen = toFen(form.amount_yuan)
     if (!form.person_id || fen <= 0) { alert('请选择联系人并填写大于 0 的金额（元）'); return }
+    // 只有借还才有「未结清」：礼物/花销提交即了结，避免被算进欠账口径
     const body: any = {
       person_id: form.person_id, kind: form.kind, direction: form.direction,
       amount_fen: fen, title: form.title, occurred_at: form.occurred_at || todayLocal(),
-      due_date: form.due_date || '', event_id: form.event_id || '', settled: !!form.settled,
+      due_date: form.due_date || '', event_id: form.event_id || '',
+      settled: form.kind === 'loan' ? !!form.settled : true,
     }
     if (editId) await API.put(`/api/v1/transactions/${editId}`, body)
     else await API.post('/api/v1/transactions', body)
@@ -146,8 +148,10 @@
           <div class="text-sm font-medium truncate">{personName(t.person_id)}{t.title && ` · ${t.title}`}</div>
           <div class="text-xs mt-0.5" style="color: var(--q-muted);">
             ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} · {DIRECTION_LABEL[t.direction] || t.direction} · {new Date(t.occurred_at).toLocaleDateString()}
-            {t.settled ? ' · 已结清' : ''}
-            {#if !t.settled && (t.repaid_fen || 0) > 0}· 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(remaining(t))}{/if}
+            {#if t.kind === 'loan'}
+              {t.settled ? ' · 已结清' : ''}
+              {#if !t.settled && (t.repaid_fen || 0) > 0}· 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(remaining(t))}{/if}
+            {/if}
             {t.event_title && ` · 关联事件：${t.event_title}`}
           </div>
         </div>
@@ -155,8 +159,8 @@
         <div class="flex gap-1 shrink-0">
           {#if t.kind === 'loan'}
             <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => openRepay(t)}>还款</button>
+            <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => toggleSettled(t.id)}>{t.settled ? '取消结清' : '结清'}</button>
           {/if}
-          <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => toggleSettled(t.id)}>{t.settled ? '取消结清' : '结清'}</button>
           <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => openEdit(t)}>编辑</button>
           <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(t.id)}>删</button>
         </div>
@@ -201,7 +205,11 @@
           <option value="">关联事件（可选）</option>
           {#each events as e}<option value={e.id}>{new Date(e.event_date).toLocaleDateString()} · {e.title}</option>{/each}
         </select>
-        <label class="text-sm flex items-center gap-2" style="color: var(--q-muted);"><input type="checkbox" bind:checked={form.settled} /> 已结清</label>
+        {#if form.kind === 'loan'}
+          <label class="text-sm flex items-center gap-2" style="color: var(--q-muted);"><input type="checkbox" bind:checked={form.settled} /> 已结清</label>
+        {:else}
+          <p class="text-xs" style="color: var(--q-muted);">礼物/花销提交即视为了结，不计入未还金额</p>
+        {/if}
       </div>
       <div class="flex justify-end gap-2 mt-5">
         <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>

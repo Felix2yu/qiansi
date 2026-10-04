@@ -995,12 +995,16 @@ type GradeDist struct {
 
 // unsettledBalanceSQL 计算某个方向上未结清的净额（分）。
 //
+// 只统计借还（kind='loan'）：礼物、花销、随礼是一次性了结的支出，不存在「对方待还」，
+// 把它们算进来会让首页的「我借出（未还）」凭空涨，建议里出现「某某待还 ¥600」这种
+// 会让人去催一个根本没借钱的人的话。
+//
 // 注意：必须先在子查询里按每笔交易 t.id 扣除对应还款，再在外层求和。
 // 原先写成 `SUM(t.amount_fen) - (SELECT … WHERE r.transaction_id=t.id)` 时，
 // 聚合上下文中的 t.id 是裸列，SQLite 取哪一行未定义，多笔借款时结果错误。
 const unsettledBalanceSQL = `SELECT COALESCE(SUM(remaining),0) FROM (
   SELECT t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
-  FROM transactions t WHERE t.direction=? AND t.settled=0)`
+  FROM transactions t WHERE t.direction=? AND t.kind='loan' AND t.settled=0)`
 
 func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 	var totalPeople, totalEvents int
