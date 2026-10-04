@@ -79,6 +79,10 @@ type Person struct {
 	IntroducedByPersonID string `json:"introduced_by_person_id,omitempty"`
 	// IntroducedByName 只用于读取，PersonGet 时带出引荐人姓名。
 	IntroducedByName string `json:"introduced_by_name,omitempty"`
+	// Stats 是按人的往来小结（随出去/收到/净额/最近接触），只用于读取。
+	// 指针 + omitempty：没有过任何礼金往来的人不带这个字段，
+	// 人物列表一页 60 人也不会凭空多出一堆零值对象。
+	Stats *PersonStats `json:"stats,omitempty"`
 }
 
 // ErrIntroMissing 引荐人指向了不存在的人。
@@ -219,6 +223,87 @@ func (s *Store) attachCategories(ctx context.Context, list []*Person) error {
 	}
 	for _, p := range list {
 		p.Categories = m[p.ID]
+	}
+	return nil
+}
+
+// ===== 按人的往来小结 =====
+
+// PersonStats 回答的是「上次我在这人身上随了多少，这次该回多少」：
+// 随出去的礼金、收到的礼金、净额，以及最近一次接触是哪天。
+//
+// 只计 kind='gift'：借还（loan）有自己的未结口径（见 unsettledBalanceSQL），
+// 花销（expense）多是饭钱车费，跟「人情往来」不同一本账，混进来会让
+// 「我该回多少」凭空冒出一堆数字。
+type PersonStats struct {
+	GiftOutFen  int    `json:"gift_out_fen"`
+	GiftInFen   int    `json:"gift_in_fen"`
+	NetFen      int    `json:"net_fen"`
+	LastContact string `json:"last_contact,omitempty"`
+}
+
+// PersonStatsFor 一次算出一批人的往来小结。
+//
+// 聚合不带 id 过滤：三张表本来就要整表分组才能算出每人合计，把 id 列表塞进
+// IN 只会多出一倍占位符（一页 60 人 × 6 处 = 360 个参数），而「清空全部」那条
+// 路径一次传入所有人，参数还会顶到 SQLite 的上限直接报错。改成算完再在 Go 里
+// 挑要的那几个 id。
+func (s *Store) PersonStatsFor(ctx context.Context, ids []string) (map[string]*PersonStats, error) {
+	out := map[string]*PersonStats{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	want := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	rows, err := s.DB.QueryContext(ctx, `WITH gift AS (
+  SELECT person_id,
+         SUM(CASE WHEN direction='out' THEN amount_fen ELSE 0 END) AS out_fen,
+         SUM(CASE WHEN direction='in'  THEN amount_fen ELSE 0 END) AS in_fen
+  FROM transactions WHERE kind='gift' GROUP BY person_id),
+contact AS (
+  SELECT person_id, MAX(d) AS d FROM (
+    SELECT person_id, substr(occurred_at,1,10) AS d FROM transactions
+    UNION ALL SELECT person_id, substr(said_at,1,10) FROM memos
+    UNION ALL SELECT ep.person_id, substr(e.event_date,1,10) FROM event_participants ep JOIN events e ON e.id=ep.event_id
+  ) WHERE d <> '' GROUP BY person_id)
+SELECT p.id, COALESCE(gift.out_fen,0), COALESCE(gift.in_fen,0), COALESCE(contact.d,'')
+FROM people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON contact.person_id=p.id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, last string
+		st := &PersonStats{}
+		if err := rows.Scan(&id, &st.GiftOutFen, &st.GiftInFen, &last); err != nil {
+			return nil, err
+		}
+		if !want[id] {
+			continue
+		}
+		st.NetFen = st.GiftOutFen - st.GiftInFen
+		st.LastContact = last
+		out[id] = st
+	}
+	return out, rows.Err()
+}
+
+// attachStats 给一组人补上往来小结。全无记录的人留 nil，不占卡片一行。
+func (s *Store) attachStats(ctx context.Context, list []*Person) error {
+	ids := make([]string, len(list))
+	for i, p := range list {
+		ids[i] = p.ID
+	}
+	m, err := s.PersonStatsFor(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, p := range list {
+		if st := m[p.ID]; st != nil && (st.GiftOutFen != 0 || st.GiftInFen != 0 || st.LastContact != "") {
+			p.Stats = st
+		}
 	}
 	return nil
 }
@@ -532,6 +617,9 @@ FROM people p WHERE p.id=?`, id)
 	if err := s.attachCategories(ctx, []*Person{p}); err != nil {
 		return nil, err
 	}
+	if err := s.attachStats(ctx, []*Person{p}); err != nil {
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -605,6 +693,9 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 		return nil, err
 	}
 	if err := s.attachCategories(ctx, list); err != nil {
+		return nil, err
+	}
+	if err := s.attachStats(ctx, list); err != nil {
 		return nil, err
 	}
 	return list, nil

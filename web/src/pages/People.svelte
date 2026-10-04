@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Person, type Category, type Tag } from '../lib/api'
+  import { API, yuanShort, netLabel, contactAgo, type Person, type Category, type Tag } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { navigate } from '../lib/router'
@@ -315,6 +315,15 @@
                     <span class="px-1.5 py-0.5 rounded-full whitespace-nowrap"
                           style={`background: color-mix(in srgb, ${c.color} 18%, transparent); color: ${c.color};`}>{c.name}</span>
                   {/each}
+                </div>
+              {/if}
+              {#if p.stats}
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-1 text-xs" style="color: var(--q-muted);">
+                  {#if p.stats.gift_out_fen || p.stats.gift_in_fen}
+                    <span>随出 ¥{yuanShort(p.stats.gift_out_fen)} / 收 ¥{yuanShort(p.stats.gift_in_fen)}</span>
+                    <span style={p.stats.net_fen !== 0 ? 'color: var(--q-text);' : ''}>{netLabel(p.stats.net_fen)}</span>
+                  {/if}
+                  {#if p.stats.last_contact}<span>最近 {contactAgo(p.stats.last_contact)}</span>{/if}
                 </div>
               {/if}
               {#if p.notes}<div class="text-xs mt-1 line-clamp-2" style="color: var(--q-muted);">{p.notes}</div>{/if}

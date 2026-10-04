@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, TIMELINE_LABEL, todayLocal, toFen,
+  import { API, TIMELINE_LABEL, todayLocal, toFen, yuan, netLabel, contactAgo,
            type Person, type Relationship, type TimelineItem, type Category, type Tag,
            type PersonField, type TrendPoint } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
@@ -323,6 +323,33 @@
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="删除" onclick={remove}><Trash2 size={16} /></button>
       </div>
     </div>
+
+    {#if person.stats}
+      <!-- 回礼对照：先给「我随出去 vs 收到」，再看净额，回答这次该回多少 -->
+      <section class="rounded-xl p-4" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
+          <div>
+            <div class="text-xs" style="color: var(--q-muted);">我随出去</div>
+            <div class="text-lg font-semibold">¥{yuan(person.stats.gift_out_fen)}</div>
+          </div>
+          <div>
+            <div class="text-xs" style="color: var(--q-muted);">收到</div>
+            <div class="text-lg font-semibold">¥{yuan(person.stats.gift_in_fen)}</div>
+          </div>
+          <div>
+            <div class="text-xs" style="color: var(--q-muted);">净额</div>
+            <div class="text-lg font-semibold" style={person.stats.net_fen !== 0 ? 'color: var(--q-theme);' : ''}>{netLabel(person.stats.net_fen)}</div>
+          </div>
+          <div>
+            <div class="text-xs" style="color: var(--q-muted);">最近一次接触</div>
+            <div class="text-lg font-semibold">{person.stats.last_contact ? contactAgo(person.stats.last_contact) : '—'}</div>
+          </div>
+        </div>
+        <p class="text-xs mt-3 text-center" style="color: var(--q-muted);">
+          金额只计礼金（随礼、礼物）的往来，不含借还与日常花销{#if person.stats.last_contact}；最近一次接触取自往来、对话与记账里最晚的一天{/if}。
+        </p>
+      </section>
+    {/if}
 
     {#if intro && intro.chainIds.length > 1}
       <!-- 认识路径：我 —关系→ 引荐人 … → 此人；深链到关系图聚焦同一条链 -->

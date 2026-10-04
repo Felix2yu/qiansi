@@ -77,7 +77,11 @@ export type Person = {
   introduced_by_name?: string;
   /** 仅关系图接口批量带回 */
   tags?: Tag[];
+  /** 往来小结：随出去/收到/净额/最近接触。没有任何礼金与接触记录的人不带 */
+  stats?: PersonStats;
 }
+/** 按人的往来对照（后端 store.PersonStats） */
+export type PersonStats = { gift_out_fen: number; gift_in_fen: number; net_fen: number; last_contact?: string }
 export type Event = { id: string; title: string; type_id?: number; type_name?: string; type_color?: string; event_date: string; location?: string; locations?: string[]; has_gift?: boolean; gift?: string; summary?: string; created_at: string; updated_at: string; participants?: Person[]; expense_fen?: number; expense_person_id?: string; expenses?: Transaction[] }
 export type Memo = { id: string; person_id?: string; speaker: string; content: string; said_at: string; is_promise: boolean; due_date?: string; status: string; created_at: string }
 export type Transaction = { id: string; person_id: string; kind: string; direction: string; amount_fen: number; title?: string; occurred_at: string; due_date?: string; settled: boolean; settled_at?: string; created_at: string; person_name?: string; repaid_fen?: number; event_id?: string; event_title?: string }
@@ -132,6 +136,41 @@ export const SEARCH_LABEL: Record<string, string> = { person: '人物', event: '
 export const RELATION_TYPES = ['家人', '亲戚', '朋友', '同学', '同事', '邻居', '合作伙伴', '其它']
 
 export const yuan = (fen: number) => (fen / 100).toFixed(2)
+
+/** 列表卡片用的紧凑金额：整元去掉小数，一行里全是 .00 反而看不清 */
+export const yuanShort = (fen: number) => {
+  const v = fen / 100
+  return Number.isInteger(v) ? String(v) : v.toFixed(2)
+}
+
+/** 净额的说法：不写正负号，「净随出 500」比「+500」不容易读反 */
+export function netLabel(fen: number): string {
+  if (fen > 0) return `净随出 ¥${yuanShort(fen)}`
+  if (fen < 0) return `净收 ¥${yuanShort(-fen)}`
+  return '持平'
+}
+
+/** 距今多少天（按本地日界，超过 30 天不再倒数） */
+export function daysSince(day?: string): number | null {
+  if (!day) return null
+  const [y, m, d] = day.slice(0, 10).split('-').map(Number)
+  if (!y || !m || !d) return null
+  const then = new Date(y, m - 1, d)
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  return Math.round((today.getTime() - then.getTime()) / 86400000)
+}
+
+/** 「最近一次接触」的口吻 */
+export function contactAgo(day?: string): string {
+  if (!day) return ''
+  const n = daysSince(day)
+  if (n === null) return day
+  if (n <= 0) return '今天'
+  if (n === 1) return '昨天'
+  if (n < 30) return `${n} 天前`
+  return day.slice(0, 10)
+}
 
 /** 元字符串转分；非法输入返回 0，避免把 NaN 写进库 */
 export function toFen(input: string | number): number {
