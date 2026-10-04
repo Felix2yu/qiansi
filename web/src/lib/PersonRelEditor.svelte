@@ -1,6 +1,7 @@
 <script lang="ts">
   import { API, RELATION_TYPES, type Person, type Relationship } from './api'
   import { self, loadSelf, selfFirst, isSelf, personLabel } from './self.svelte'
+  import { dict, ensure } from './dict.svelte'
   import { Trash2, Plus, Pencil, X, Check } from '@lucide/svelte'
 
   // 关系维护：以 personId 为中心列出全部关系，支持添加、行内改类型/备注、删除
@@ -47,7 +48,7 @@
     try {
       const [list, types] = await Promise.all([
         API.get<Relationship[]>(`/api/v1/relationships/of/${pid}`),
-        API.get<string[]>('/api/v1/relationships/types').catch(() => []),
+        ensure('relTypes').then(() => dict.relTypes),
       ])
       // 同一对的人可以并存几条不同类型的边，按对方名字排一下才看得出是连着同一个人
       rels = (list || []).sort((a, b) =>
@@ -59,9 +60,8 @@
   }
 
   async function loadOptions() {
-    try {
-      options = await API.get<Person[]>('/api/v1/people?limit=500')
-    } catch { options = [] }
+    await ensure('people')
+    options = dict.people
   }
 
   function candidates(excludeId: string) {

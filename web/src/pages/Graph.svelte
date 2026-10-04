@@ -7,6 +7,7 @@
   import { API, RELATION_TYPES, type Person, type Relationship, type Category, type Tag } from '../lib/api'
   import { navigate, route } from '../lib/router'
   import { self, loadSelf, selfFirst, personLabel } from '../lib/self.svelte'
+  import { dict, ensure, refresh } from '../lib/dict.svelte'
   import {
     egoLayout, outwardLabel, circleFill, NO_CIRCLE_COLOR, edgePairKey, laneOf, pairKey,
     introEdgePairs, introChain, vennLayout, type VennCircle,
@@ -18,11 +19,11 @@
   type ViewMode = 'rel' | 'venn'
 
   let people = $state<Person[]>([])
-  let categories = $state<Category[]>([])
-  let allTags = $state<Tag[]>([])
+  const categories = $derived(dict.categories)
+  const allTags = $derived(dict.tags)
   let rels = $state<Relationship[]>([])
   let tagsByPerson = $state<Record<string, Tag[]>>({})
-  let usedTypes = $state<string[]>([])
+  const usedTypes = $derived(dict.relTypes)
   let chartDiv: HTMLDivElement | null = $state(null)
   let chart: echarts.ECharts | null = null
   // 容器尺寸变化（侧栏折叠、手机转屏、初始化时还没布局完）时让 ECharts 跟着重排，
@@ -56,22 +57,16 @@
   let dragEndedAt = 0
 
   async function load() {
-    const [r, cats, tags, types] = await Promise.all([
-      API.get('/api/v1/relationships') as Promise<any>,
-      API.get('/api/v1/categories') as Promise<Category[]>,
-      API.get('/api/v1/tags') as Promise<Tag[]>,
-      API.get<string[]>('/api/v1/relationships/types').catch(() => []),
-    ])
+    // 圈子/标签/关系类型是全站共享字典，这里只保证「拿到」，不再各自重拉
+    await Promise.all([ensure('categories'), ensure('tags'), ensure('relTypes')])
+    const r = await API.get('/api/v1/relationships') as any
     await loadSelf()
     people = r.people
     rels = r.relationships
-    categories = cats
-    allTags = tags
     tagsByPerson = r.tags ?? {}
-    usedTypes = types
     // 圈子可能刚被从设置里删掉，选择里留着死 id 会把维恩图选空
-    vennSel = vennSel.filter(id => cats.some(c => c.id === id))
-    catFilter = catFilter.filter(id => cats.some(c => c.id === id))
+    vennSel = vennSel.filter(id => categories.some(c => c.id === id))
+    catFilter = catFilter.filter(id => categories.some(c => c.id === id))
   }
 
   // chartDiv 要等 {#if} 走到有图的那一支才绑定上，load() 里同步画会拿到 null；
@@ -360,7 +355,8 @@
     try {
       await API.post('/api/v1/relationships', { ...form, type: form.type.trim() })
       closeForm()
-      await load()
+      // 关系类型可能是现场敲的新词，字典得知道
+      await Promise.all([load(), refresh('relTypes')])
     } catch (err: any) {
       alert('添加失败：' + (err?.message || err))
     } finally { busy = false }
@@ -417,7 +413,8 @@
         prevId = pid
       }
       closeForm()
-      await load()
+      // 链上可能新建了人、用到了新关系类型，两份缓存都要跟上
+      await Promise.all([load(), refresh('people'), refresh('relTypes')])
       if (failures.length) alert('部分环节未成功：\n' + failures.join('\n'))
     } finally {
       busy = false

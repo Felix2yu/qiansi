@@ -1,15 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, TIMELINE_LABEL, yuan, todayLocal, type Event, type EventType, type Person, type TimelineItem } from '../lib/api'
+  import { API, TIMELINE_LABEL, yuan, todayLocal, type Event, type TimelineItem } from '../lib/api'
   import EventForm from '../lib/EventForm.svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { Plus, X, Search } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
   let list = $state<Event[]>([])
   let timeline = $state<TimelineItem[]>([])
-  let types = $state<EventType[]>([])
-  let people = $state<Person[]>([])
+  // 参与人下拉和表单用的名单走共享缓存，不再每页重拉
+  const people = $derived(dict.people)
+  const types = $derived(dict.eventTypes)
   let showForm = $state(false)
   let editId = $state('')
   // 新建预填：引用保持稳定，组件只在打开时读取，变动会重置用户已填内容
@@ -34,31 +36,40 @@
   }
   async function afterForm() {
     closeForm()
-    await load()
+    // 金钱页的「关联到哪场往来」用的就是这份缓存
+    await Promise.all([load(), refresh('events')])
   }
 
   const PAGE = 50
   let page = $state(0)
   let hasMore = $state(false)
 
+  // 时间线只在「全局时间线」视图里渲染，列表视图以前也照样拉一份
+  async function loadTimeline() {
+    timeline = (await API.get<TimelineItem[]>('/api/v1/dashboard/timeline?limit=200').catch(() => [])) || []
+  }
+
   async function load(reset = true) {
     if (reset) page = 0
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) })
     if (filterPerson) qs.set('person_id', filterPerson)
     if (filterQuery.trim()) qs.set('q', filterQuery.trim())
-    const [batch, ty, pe, tl] = await Promise.all([
-      API.get(`/api/v1/events?${qs}`), API.get('/api/v1/event-types'),
-      API.get('/api/v1/people?limit=500'), API.get('/api/v1/dashboard/timeline?limit=200'), loadSelf(),
-    ]) as any
-    hasMore = (batch || []).length === PAGE
+    const batch = (await API.get<Event[]>(`/api/v1/events?${qs}`).catch(() => [])) || []
+    hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
-    types = ty; people = pe; timeline = tl
   }
   async function loadMore() {
     page += 1
     await load(false)
   }
-  onMount(() => load(true))
+  onMount(() => {
+    loadSelf()
+    if (onlyTimeline) { loadTimeline(); return }
+    // 字典进缓存后，翻页与切筛选只剩 /api/v1/events 一个请求
+    ensure('eventTypes')
+    ensure('people')
+    load(true)
+  })
 
   async function remove(id: string, title: string, expenseFen?: number) {
     const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
@@ -71,7 +82,7 @@
     }
     showForm = false
     editId = ''
-    await load()
+    await Promise.all([load(), refresh('events')])
   }
 
   function locText(e: Event) {

@@ -2,6 +2,7 @@
   import { untrack, onMount } from 'svelte'
   import { API, type Person, type Category, type Tag } from './api'
   import { selfFirst, personLabel } from './self.svelte'
+  import { dict, ensure } from './dict.svelte'
   import PersonRelEditor from './PersonRelEditor.svelte'
 
   let {
@@ -89,11 +90,9 @@
     return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', introduced_by_person_id: '' }
   }
 
-  // 引荐人候选：新建时也要能选，所以弹窗一挂载就拉全量名单（与关系编辑器同一接口）
-  let peopleOptions = $state<Person[]>([])
-  onMount(async () => {
-    try { peopleOptions = await API.get<Person[]>('/api/v1/people?limit=500') } catch { peopleOptions = [] }
-  })
+  // 引荐人候选：新建时也要能选，所以弹窗一挂载就要名单（走共享字典缓存）
+  const peopleOptions = $derived(dict.people)
+  onMount(() => { ensure('people') })
   // 不能把自己设为自己的引荐人；其余人按「本人优先」排序
   const introducerOptions = $derived(selfFirst(peopleOptions, person?.id ?? ''))
 

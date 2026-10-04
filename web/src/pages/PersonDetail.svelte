@@ -1,14 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
   import { API, TIMELINE_LABEL, todayLocal, toFen, yuan, netLabel, contactAgo,
-           type Person, type Relationship, type TimelineItem, type Category, type Tag,
-           type PersonField, type TrendPoint } from '../lib/api'
+           type Person, type TimelineItem, type Tag,
+           type PersonField, type TrendPoint, type IntroPath } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import PersonRelEditor from '../lib/PersonRelEditor.svelte'
   import EventForm from '../lib/EventForm.svelte'
   import { navigate } from '../lib/router'
   import { self, setSelf, loadSelf, personLabel } from '../lib/self.svelte'
-  import { introChain, relTypeMap, pairTypesOf } from '../lib/graphLayout'
+  import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check, Route } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
@@ -26,8 +25,8 @@
   })
   let timeline = $state<TimelineItem[]>([])
   let intimacy = $state<{ current_score: number; trend: TrendPoint[] } | null>(null)
-  let categories = $state<Category[]>([])
-  let tags = $state<Tag[]>([])
+  let categories = $derived(dict.categories)
+  let tags = $derived(dict.tags)
   let ownedTags = $state<Tag[]>([])
   let fields = $state<PersonField[]>([])
   let loading = $state(true)
@@ -48,9 +47,8 @@
   let eventEditId = $state('')
   // 预填对象引用保持稳定，表单组件只在打开时读取，变动会重置已填内容
   let eventPreset = $state<{ event_date?: string; participant_ids?: string[] }>({})
-  // 认识路径卡片要用全量人物与关系沿 introduced_by 往回追
-  let graphPeople = $state<Person[]>([])
-  let graphRels = $state<Relationship[]>([])
+  // 认识路径：只问后端链上那几跳，不再为此拉全量人物与关系
+  let intro = $state<IntroPath | null>(null)
 
   function openEventForm(editId = '') {
     eventPreset = { event_date: todayLocal(), participant_ids: [id] }
@@ -63,7 +61,7 @@
   }
   async function afterEventForm() {
     closeEventForm()
-    await load()
+    await Promise.all([load(), refresh('events')])
     await loadWords()
   }
   async function removeEvent(eventId: string, title: string, expenseFen?: number) {
@@ -107,7 +105,7 @@
       const data = await res.json()
       // 存可直接渲染的 URL（/uploads/xxx）——avatar_attachment_id 是自由文本字段
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: data.url })
-      await load()
+      await Promise.all([load(), refresh('people')])
     } catch (err: any) {
       alert('头像上传失败：' + (err?.message || err))
     } finally {
@@ -121,7 +119,7 @@
     if (!person) return
     try {
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: '' })
-      await load()
+      await Promise.all([load(), refresh('people')])
     } catch (err: any) {
       alert('移除头像失败：' + (err?.message || err))
     }
@@ -131,7 +129,7 @@
     if (!person) return
     if (person.archived) await API.delete(`/api/v1/people/${id}/archive`)
     else await API.post(`/api/v1/people/${id}/archive`, {})
-    await load()
+    await Promise.all([load(), refresh('people')])
   }
 
   // 本人只能有一个，再设别人等于把指针挪过去
@@ -176,31 +174,28 @@
       const r = await API.get(`/api/v1/people/${id}`) as any
       person = r.person
       fields = (r.fields || []) as PersonField[]
-      const [tl, inti, cats, tg, owned, graph] = await Promise.all([
+      // 认识路径以本人为终点，得先知道「我是谁」
+      await loadSelf(true)
+      const [tl, inti, owned, path] = await Promise.all([
         API.get(`/api/v1/people/${id}/timeline`) as Promise<TimelineItem[]>,
         API.get(`/api/v1/people/${id}/intimacy`) as Promise<any>,
-        API.get('/api/v1/categories') as Promise<Category[]>,
-        API.get('/api/v1/tags') as Promise<Tag[]>,
         API.get(`/api/v1/taggings/of?target_type=person&target_id=${id}`) as Promise<Tag[]>,
-        API.get('/api/v1/relationships') as Promise<{ people: Person[]; relationships: Relationship[] }>,
-        loadSelf(true),
-      ])
+        // 没设本人时后端回 400，这张卡片直接不出现
+        self.id ? API.get<IntroPath>(`/api/v1/people/${id}/intro-path`).catch(() => null) : Promise.resolve(null),
+        ensure('categories'), ensure('tags'),
+      ]) as any
       timeline = tl
       intimacy = inti
-      categories = cats
-      tags = tg
       ownedTags = owned || []
-      graphPeople = graph.people || []
-      graphRels = graph.relationships || []
+      intro = path
       loadWords()
     } finally { loading = false }
   }
-  onMount(load)
   $effect(() => { if (id) load() })
 
   async function remove() {
     if (person && confirm(`删除联系人「${person.name}」及其所有关联记录？`)) {
-      await API.delete(`/api/v1/people/${id}`); navigate('/people')
+      await API.delete(`/api/v1/people/${id}`); await refresh('people'); navigate('/people')
     }
   }
 
@@ -259,17 +254,8 @@
     return pts.map((p, i) => `${(i / (pts.length - 1)) * 200},${70 - ((p.score - min) / Math.max(1, max - min)) * 60}`).join(' ')
   })
 
-  // 认识路径：沿 introduced_by 往回追，还原「我 —同学→ A —对象→ B → 此人」
-  const intro = $derived.by(() => {
-    if (!self.id || !person || graphPeople.length === 0) return null
-    return introChain(self.id, person.id, graphPeople, graphRels)
-  })
-  const personById = $derived(new Map(graphPeople.map(p => [p.id, p])))
-  // 如今与此人的直达关系（经人认识后又成为挚友，就是另一条「我 —挚友→ 此人」）
-  const directTypes = $derived.by(() => {
-    if (!self.id || !person) return []
-    return pairTypesOf(relTypeMap(graphRels), self.id, person.id)
-  })
+  // 认识路径由后端沿 introduced_by 往回追（「我 —同学→ A —对象→ B → 此人」），
+  // 直达关系一并带回：经人认识后又成为挚友，就是另一条「我 —挚友→ 此人」。
 </script>
 
 {#if loading}
@@ -351,7 +337,7 @@
       </section>
     {/if}
 
-    {#if intro && intro.chainIds.length > 1}
+    {#if intro && intro.chain.length > 1}
       <!-- 认识路径：我 —关系→ 引荐人 … → 此人；深链到关系图聚焦同一条链 -->
       <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
         <div class="flex items-center justify-between mb-3">
@@ -363,33 +349,33 @@
           </button>
         </div>
         <div class="flex flex-wrap items-center gap-y-2 text-sm">
-          {#each intro.chainIds as cid, i}
+          {#each intro.chain as hop, i}
             {#if i > 0}
               <span class="mx-1.5 text-xs whitespace-nowrap" style="color: var(--q-muted);">
-                —{intro.edgeTypes[i - 1] || '认识'}→
+                —{hop.edge_types.join('、') || '认识'}→
               </span>
             {/if}
-            {#if cid === id}
+            {#if hop.id === id}
               <span class="px-2 py-0.5 rounded-full font-medium whitespace-nowrap"
                     style="background: color-mix(in srgb, var(--q-theme) 14%, transparent); color: var(--q-theme);">
-                {personById.get(cid) ? personLabel(personById.get(cid)!) : '?'}
+                {personLabel(hop)}
               </span>
             {:else}
               <button class="underline whitespace-nowrap" style="color: var(--q-text);"
-                      onclick={() => navigate(`/people/${cid}`)}>
-                {personById.get(cid) ? personLabel(personById.get(cid)!) : '已删除的人'}
+                      onclick={() => navigate(`/people/${hop.id}`)}>
+                {personLabel(hop)}
               </button>
             {/if}
           {/each}
         </div>
-        {#if directTypes.length > 0}
-          <p class="text-xs mt-2" style="color: var(--q-muted);">现在你们也是：{directTypes.join('、')}</p>
+        {#if intro.direct_types.length > 0}
+          <p class="text-xs mt-2" style="color: var(--q-muted);">现在你们也是：{intro.direct_types.join('、')}</p>
         {/if}
         {#if intro.broken}
           <p class="text-xs mt-2" style="color: #b45309;">引荐人记录指向了已删除的人，可在编辑资料里重新选择。</p>
         {:else if intro.cyclic}
           <p class="text-xs mt-2" style="color: #b45309;">引荐人记录出现了环，请在编辑资料里修正。</p>
-        {:else if !intro.reachesSelf}
+        {:else if !intro.reaches_self}
           <p class="text-xs mt-2" style="color: var(--q-muted);">这条引荐链还没连到你本人，可在编辑资料里继续补全引荐人。</p>
         {/if}
       </section>
@@ -529,7 +515,7 @@
         <h2 class="font-semibold">编辑联系人</h2>
         <button onclick={() => (showEdit = false)}><X size={18} /></button>
       </div>
-      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load() }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
+      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load(); refresh('people') }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
     </div>
   </div>
 {/if}

@@ -97,6 +97,9 @@ export type GradeDist = { grade: number; count: number }
 export type Suggestion = { type: string; person_id?: string; person_name?: string; message: string }
 export type Relationship = { id: string; from_person_id: string; to_person_id: string; type: string; remark?: string; created_at: string; from_name?: string; to_name?: string }
 export type TimelineItem = { date: string; type: string; title: string; person_id?: string; person_name?: string; id: string }
+/** 认识路径的一跳，edge_types 是「上一跳 → 这一跳」之间的关系类型 */
+export type IntroHop = { id: string; name: string; edge_types: string[] }
+export type IntroPath = { chain: IntroHop[]; reaches_self: boolean; broken: boolean; cyclic: boolean; direct_types: string[] }
 export type Repayment = { id: string; transaction_id: string; amount_fen: number; occurred_at: string; note?: string }
 export type PersonField = { id: string; person_id: string; label: string; value?: string; sort_order?: number }
 export type BackupItem = { name: string; size: number; time: string }

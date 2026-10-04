@@ -1,19 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Category, type Tag, type EventType, type BackupItem, type BackupStatus, type Person, type Event as EventRecord } from '../lib/api'
+  import { API, type BackupItem, type BackupStatus } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
   import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
   import { selfFirst, personLabel } from '../lib/self.svelte'
+  import { dict, ensure, refresh, refreshAll } from '../lib/dict.svelte'
 
   let settings = $state<Record<string, string>>({})
   let appriseUrls = $state('')
   let pushHour = $state(9)
 
-  let categories = $state<Category[]>([])
-  let tags = $state<Tag[]>([])
-  let eventTypes = $state<EventType[]>([])
+  // 这三个字典在本页编辑，改完必须显式刷新，否则别的页面还是旧名单
+  const categories = $derived(dict.categories)
+  const tags = $derived(dict.tags)
+  const eventTypes = $derived(dict.eventTypes)
   let backups = $state<BackupItem[]>([])
   let restoreInput: HTMLInputElement | undefined = $state()
   let restoring = $state(false)
@@ -39,15 +41,7 @@
     settings = await API.get('/api/v1/settings') as any
     appriseUrls = settings['apprise_urls'] || ''
     pushHour = parseInt(settings['push_time_hour'] || '9', 10)
-    ;[categories, tags, eventTypes, backups, people, eventOptions] = await Promise.all([
-      API.get('/api/v1/categories') as Promise<Category[]>,
-      API.get('/api/v1/tags') as Promise<Tag[]>,
-      API.get('/api/v1/event-types') as Promise<EventType[]>,
-      API.get('/api/v1/backup/list') as Promise<BackupItem[]>,
-      // 明细导出的两个筛选下拉
-      API.get('/api/v1/people?limit=500') as Promise<Person[]>,
-      API.get('/api/v1/events?limit=200') as Promise<EventRecord[]>,
-    ])
+    backups = await API.get('/api/v1/backup/list') as BackupItem[]
     await loadAuto()
   }
 
@@ -59,7 +53,7 @@
     }
   }
 
-  onMount(() => { initTheme(); load() })
+  onMount(() => { initTheme(); ensure('categories'); ensure('tags'); ensure('eventTypes'); ensure('people'); ensure('events'); load() })
 
 
   async function saveNotify() {
@@ -99,8 +93,8 @@
   }
 
   // ===== 明细 CSV 与全量 JSON（N3）=====
-  let people = $state<Person[]>([])
-  let eventOptions = $state<EventRecord[]>([])
+  const people = $derived(dict.people)
+  const eventOptions = $derived(dict.events)
   let csvWhat = $state<'events' | 'transactions' | 'memos'>('events')
   let csvYear = $state<number | ''>('')
   let csvPerson = $state('')
@@ -162,7 +156,7 @@
         try {
           const res = await API.post<{ tables: number; rows: number }>('/api/v1/import/json', parsed)
           say(`已导入 ${res.rows} 行，覆盖 ${res.tables} 张表`)
-          await load()
+          await Promise.all([load(), refreshAll()])
         } catch (err: any) {
           say('导入失败：' + (err?.message || err))
         } finally {
@@ -291,20 +285,20 @@
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">圈子（分组）</h2>
     <TermList items={categories} endpoint="/api/v1/categories" noun="圈子" placeholder="圈子名"
-              defaults={{ icon: 'circle', sort_order: 0 }} onchange={load} />
+              defaults={{ icon: 'circle', sort_order: 0 }} onchange={() => refresh('categories')} />
   </section>
 
   <!-- 标签 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">标签</h2>
-    <TermList items={tags} endpoint="/api/v1/tags" noun="标签" placeholder="标签名" pill onchange={load} />
+    <TermList items={tags} endpoint="/api/v1/tags" noun="标签" placeholder="标签名" pill onchange={() => refresh('tags')} />
   </section>
 
   <!-- 事件类型 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3">往来事件类型</h2>
     <TermList items={eventTypes} endpoint="/api/v1/event-types" noun="类型" placeholder="类型名"
-              defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={load} />
+              defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={() => refresh('eventTypes')} />
   </section>
 
   <!-- 通知 -->

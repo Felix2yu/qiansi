@@ -27,6 +27,7 @@ func (a *API) registerPeople(r chi.Router) {
 		r.Delete("/", a.peopleDeleteBulk)
 		r.Get("/{id}/timeline", a.peopleTimeline)
 		r.Get("/{id}/intimacy", a.peopleIntimacy)
+		r.Get("/{id}/intro-path", a.personIntroPath)
 		r.Get("/{id}/wordcloud", a.peopleWordCloud)
 		r.Get("/{id}/fields", a.personFieldList)
 		r.Post("/{id}/fields", a.personFieldUpsert)
@@ -335,6 +336,27 @@ func (a *API) peopleIntimacy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, res)
+}
+
+// personIntroPath 认识路径（引荐人链）。详情页以前为了画这一条链，
+// 把全量 people 和全量 relationships 都拉回浏览器，现在换成按需单接口。
+func (a *API) personIntroPath(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	selfID, err := a.Store.SettingGet(r.Context(), "self_person_id")
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if selfID == "" {
+		writeErr(w, 400, "请先在设置里指定「我是谁」")
+		return
+	}
+	path, err := a.Store.IntroPath(r.Context(), selfID, id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, 200, path)
 }
 
 func (a *API) peopleWordCloud(w http.ResponseWriter, r *http.Request) {

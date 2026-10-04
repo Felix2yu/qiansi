@@ -1,17 +1,18 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, yuanShort, netLabel, contactAgo, type Person, type Category, type Tag } from '../lib/api'
+  import { API, yuanShort, netLabel, contactAgo, type Person } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { navigate } from '../lib/router'
   import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
+  import { dict, ensure, refresh } from '../lib/dict.svelte'
 
   let { mode = 'list' }: { mode?: string } = $props()
 
   let list = $state<Person[]>([])
   let q = $state('')
-  let categories = $state<Category[]>([])
-  let tags = $state<Tag[]>([])
+  const categories = $derived(dict.categories)
+  const tags = $derived(dict.tags)
   let selectedCat = $state<number>(0)
   let selectedTag = $state<number>(0)
   // 归档的人默认不在列表里，靠这个筛选翻出来找回
@@ -102,7 +103,7 @@
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids })
       selectedIds = []
-      await load()
+      await Promise.all([load(), refresh('people')])
       alert(`已删除 ${res.deleted} 位联系人`)
     } catch (err: any) {
       alert('删除失败：' + (err?.message || err))
@@ -127,7 +128,7 @@
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
       selectedIds = []
-      await load()
+      await Promise.all([load(), refresh('people')])
       alert(`已清空 ${res.deleted} 位联系人`)
     } catch (err: any) {
       alert('清空失败：' + (err?.message || err))
@@ -153,8 +154,8 @@
     await load(false)
   }
   async function init() {
-    categories = await API.get('/api/v1/categories') as Category[]
-    tags = await API.get('/api/v1/tags') as Tag[]
+    ensure('categories')
+    ensure('tags')
     await load()
     if (mode === 'new') { openCreate() }
   }
@@ -170,18 +171,20 @@
   }
   async function onSaved(saved: Person) {
     showForm = false
-    await load()
+    // 新建或改名都会让别的页面的选人下拉过期
+    await Promise.all([load(), refresh('people')])
     if (mode === 'new' && saved?.id) { navigate(`/people/${saved.id}`) }
   }
   async function remove(p: Person) {
     if (confirm(`删除联系人「${p.name}」及其所有关联记录？`)) {
-      await API.delete(`/api/v1/people/${p.id}`); await load()
+      await API.delete(`/api/v1/people/${p.id}`)
+      await Promise.all([load(), refresh('people')])
       selectedIds = selectedIds.filter((id) => id !== p.id)
     }
   }
   async function unarchive(p: Person) {
     await API.delete(`/api/v1/people/${p.id}/archive`)
-    await load()
+    await Promise.all([load(), refresh('people')])
     selectedIds = selectedIds.filter((id) => id !== p.id)
   }
 
@@ -197,7 +200,7 @@
       if (res.updated > 0) parts.push(`更新姓名 ${res.updated} 人（与现有联系人按通讯录 ID 匹配）`)
       if (res.skipped > 0) parts.push(`跳过 ${res.skipped} 人（与现有联系人重复或缺少姓名）`)
       alert(`vCard 导入完成：${parts.join('，')}`)
-      await load()
+      await Promise.all([load(), refresh('people')])
     } catch (err: any) {
       alert('导入失败：' + (err?.message || err))
     } finally {

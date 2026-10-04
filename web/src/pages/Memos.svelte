@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, MEMO_STATUS_LABEL, todayLocal, type Memo, type Person } from '../lib/api'
+  import { API, MEMO_STATUS_LABEL, todayLocal, type Memo } from '../lib/api'
   import { Plus, X } from '@lucide/svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { dict, ensure } from '../lib/dict.svelte'
 
   let list = $state<Memo[]>([])
-  let people = $state<Person[]>([])
+  const people = $derived(dict.people)
   let onlyPromises = $state(false)
   let showForm = $state(false)
   let editId = $state('')
@@ -21,19 +22,21 @@
 
   async function load(reset = true) {
     if (reset) page = 0
-    const [batch, pe] = await Promise.all([
-      API.get(`/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`),
-      API.get('/api/v1/people?limit=500'), loadSelf(),
-    ]) as any
-    hasMore = (batch || []).length === PAGE
+    const batch = (await API.get<Memo[]>(
+      `/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`
+    ).catch(() => [])) || []
+    hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
-    people = pe
   }
   async function loadMore() {
     page += 1
     await load(false)
   }
-  onMount(() => load(true))
+  onMount(() => {
+    loadSelf()
+    ensure('people')
+    load(true)
+  })
 
   function openCreate() {
     editId = ''

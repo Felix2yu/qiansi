@@ -2,6 +2,7 @@
   import { untrack } from 'svelte'
   import { API, todayLocal, toFen, type Event, type EventType, type Person } from './api'
   import { selfFirst, personLabel, loadSelf, isSelf } from './self.svelte'
+  import { dict, ensure } from './dict.svelte'
   import { Trash2, Search } from '@lucide/svelte'
 
   let {
@@ -26,10 +27,8 @@
     onremove?: (id: string, title: string, expenseFen?: number) => void
   } = $props()
 
-  let localTypes = $state<EventType[]>([])
-  let localPeople = $state<Person[]>([])
-  const typeList = $derived(types ?? localTypes)
-  const peopleList = $derived(people ?? localPeople)
+  const typeList = $derived(types ?? dict.eventTypes)
+  const peopleList = $derived(people ?? dict.people)
 
   let loading = $state(false)
   let saving = $state(false)
@@ -66,11 +65,11 @@
     else { form = blank(); originExpenseFen = 0; peopleQuery = '' }
   })
 
-  // 父级没传数据时自行拉取，避免每个调用方都写一遍（只看初始值，故用 untrack）
+  // 父级没传数据时读共享字典，避免每个调用方都写一遍（只看初始值，故用 untrack）
   untrack(() => {
     void loadSelf()
-    if (!types) void API.get('/api/v1/event-types').then(r => (localTypes = r as EventType[])).catch(() => {})
-    if (!people) void API.get('/api/v1/people?limit=500').then(r => (localPeople = r as Person[])).catch(() => {})
+    if (!types) void ensure('eventTypes')
+    if (!people) void ensure('people')
   })
 
   async function loadDetail(id: string) {

@@ -1,13 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, yuan, toFen, todayLocal, KIND_LABEL, DIRECTION_LABEL,
-           type Transaction, type Person, type Event, type Repayment } from '../lib/api'
+           type Transaction, type Repayment } from '../lib/api'
   import { Plus, X, Trash2 } from '@lucide/svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { dict, ensure } from '../lib/dict.svelte'
 
   let list = $state<Transaction[]>([])
-  let people = $state<Person[]>([])
-  let events = $state<Event[]>([])
+  const people = $derived(dict.people)
+  const events = $derived(dict.events)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
@@ -29,19 +30,22 @@
 
   async function load(reset = true) {
     if (reset) page = 0
-    const [batch, pe, ev] = await Promise.all([
-      API.get(`/api/v1/transactions?limit=${PAGE}&offset=${page * PAGE}`),
-      API.get('/api/v1/people?limit=500'), API.get('/api/v1/events?limit=100'), loadSelf(),
-    ]) as any
-    hasMore = (batch || []).length === PAGE
+    const batch = (await API.get<Transaction[]>(
+      `/api/v1/transactions?limit=${PAGE}&offset=${page * PAGE}`
+    ).catch(() => [])) || []
+    hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
-    people = pe; events = ev
   }
   async function loadMore() {
     page += 1
     await load(false)
   }
-  onMount(() => load(true))
+  onMount(() => {
+    loadSelf()
+    ensure('people')
+    ensure('events')
+    load(true)
+  })
 
   function openCreate() {
     editId = ''

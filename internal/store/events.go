@@ -374,22 +374,52 @@ FROM events e LEFT JOIN event_types et ON e.type_id=et.id`
 		}
 		list = append(list, e)
 	}
-	// Hydrate participants for each event
+	// 参与人一次补齐。连接池只有一条连接，逐场查等于让几十个 SELECT 排队。
+	ids := make([]string, len(list))
+	for i, e := range list {
+		ids[i] = e.ID
+	}
+	parts, err := s.eventParticipantsFor(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
 	for _, e := range list {
-		prows, err := s.DB.QueryContext(ctx,
-			`SELECT p.id,p.name FROM people p JOIN event_participants ep ON ep.person_id=p.id WHERE ep.event_id=? ORDER BY ep.rowid`, e.ID)
-		if err != nil {
-			continue
-		}
-		for prows.Next() {
-			var id, name string
-			if err := prows.Scan(&id, &name); err == nil {
-				e.Participants = append(e.Participants, &Person{ID: id, Name: name})
-			}
-		}
-		prows.Close()
+		e.Participants = parts[e.ID]
 	}
 	return list, rows.Err()
+}
+
+// eventParticipantsFor 批量取一批往来的参与人，按登记顺序返回。
+func (s *Store) eventParticipantsFor(ctx context.Context, ids []string) (map[string][]*Person, error) {
+	out := map[string][]*Person{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	rows, err := s.DB.QueryContext(ctx, `SELECT ep.event_id,p.id,p.name
+FROM event_participants ep JOIN people p ON p.id=ep.person_id
+WHERE ep.event_id IN (`+ph+`) ORDER BY ep.event_id,ep.rowid`, args...)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var eventID, pid, name string
+		if err := rows.Scan(&eventID, &pid, &name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[eventID] = append(out[eventID], &Person{ID: pid, Name: name})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	defer rows.Close()
+	return out, nil
 }
 
 // ===== Memos =====

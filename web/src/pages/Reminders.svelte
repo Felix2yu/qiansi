@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, todayLocal, REF_TYPE_LABEL, type Reminder, type Person } from '../lib/api'
+  import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { dict, ensure } from '../lib/dict.svelte'
   import { Plus, X, Check } from '@lucide/svelte'
 
   let list = $state<Reminder[]>([])
-  let people = $state<Person[]>([])
+  const people = $derived(dict.people)
   let showDone = $state(false)
   let showForm = $state(false)
   let editId = $state('')
@@ -17,12 +18,13 @@
 
   // 后端按本地时间比较 due_at，这里不能再拼 UTC 的 Z，否则会整体偏移一天
   async function load() {
-    ;[list, people] = await Promise.all([
-      API.get(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`) as Promise<Reminder[]>,
-      API.get('/api/v1/people?limit=500') as Promise<Person[]>, loadSelf(),
-    ])
+    list = (await API.get<Reminder[]>(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`).catch(() => [])) || []
   }
-  onMount(load)
+  onMount(() => {
+    loadSelf()
+    ensure('people')
+    load()
+  })
 
   function openCreate() {
     editId = ''

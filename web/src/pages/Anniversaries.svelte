@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, todayLocal, type Anniversary, type Person } from '../lib/api'
+  import { API, todayLocal, type Anniversary } from '../lib/api'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { dict, ensure } from '../lib/dict.svelte'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Anniversary[]>([])
-  let people = $state<Person[]>([])
+  const people = $derived(dict.people)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
@@ -15,9 +16,13 @@
   }
 
   async function load() {
-    ;[list, people] = await Promise.all([API.get('/api/v1/anniversaries'), API.get('/api/v1/people?limit=500'), loadSelf()]) as any
+    list = (await API.get<Anniversary[]>('/api/v1/anniversaries').catch(() => [])) || []
   }
-  onMount(load)
+  onMount(() => {
+    loadSelf()
+    ensure('people')
+    load()
+  })
 
   function openCreate() {
     editId = ''
