@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type Category, type Tag, type EventType, type BackupItem, type BackupStatus } from '../lib/api'
+  import { API, type Category, type Tag, type EventType, type BackupItem, type BackupStatus, type Person, type Event as EventRecord } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
-  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle } from '@lucide/svelte'
+  import DangerConfirm from '../lib/DangerConfirm.svelte'
+  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
+  import { selfFirst, personLabel } from '../lib/self.svelte'
 
   let settings = $state<Record<string, string>>({})
   let appriseUrls = $state('')
@@ -37,11 +39,14 @@
     settings = await API.get('/api/v1/settings') as any
     appriseUrls = settings['apprise_urls'] || ''
     pushHour = parseInt(settings['push_time_hour'] || '9', 10)
-    ;[categories, tags, eventTypes, backups] = await Promise.all([
+    ;[categories, tags, eventTypes, backups, people, eventOptions] = await Promise.all([
       API.get('/api/v1/categories') as Promise<Category[]>,
       API.get('/api/v1/tags') as Promise<Tag[]>,
       API.get('/api/v1/event-types') as Promise<EventType[]>,
       API.get('/api/v1/backup/list') as Promise<BackupItem[]>,
+      // 明细导出的两个筛选下拉
+      API.get('/api/v1/people?limit=500') as Promise<Person[]>,
+      API.get('/api/v1/events?limit=200') as Promise<EventRecord[]>,
     ])
     await loadAuto()
   }
@@ -90,6 +95,80 @@
       await API.download('/api/v1/backup/export')
     } catch (err: any) {
       alert('导出失败：' + (err?.message || err))
+    }
+  }
+
+  // ===== 明细 CSV 与全量 JSON（N3）=====
+  let people = $state<Person[]>([])
+  let eventOptions = $state<EventRecord[]>([])
+  let csvWhat = $state<'events' | 'transactions' | 'memos'>('events')
+  let csvYear = $state<number | ''>('')
+  let csvPerson = $state('')
+  let csvEvent = $state('')
+  let ioMsg = $state('')
+  const ioIsError = $derived(ioMsg.includes('失败') || ioMsg.includes('不是'))
+  let ioDanger = $state<null | { word: string; title: string; detail: string; confirmLabel: string; run: () => Promise<void> }>(null)
+  let jsonInput: HTMLInputElement | undefined = $state()
+
+  function say(msg: string) {
+    ioMsg = msg
+    setTimeout(() => ioMsg = '', 6000)
+  }
+
+  async function exportCsv() {
+    const q = new URLSearchParams({ what: csvWhat })
+    if (csvYear) q.set('year', String(csvYear))
+    if (csvPerson) q.set('person_id', csvPerson)
+    // 事件过滤只对金钱明细有意义（礼单对账）
+    if (csvEvent && csvWhat === 'transactions') q.set('event_id', csvEvent)
+    try {
+      await API.download('/api/v1/export/csv?' + q.toString())
+    } catch (err: any) {
+      say('导出失败：' + (err?.message || err))
+    }
+  }
+
+  async function exportJson() {
+    try {
+      await API.download('/api/v1/export/json')
+    } catch (err: any) {
+      say('全量导出失败：' + (err?.message || err))
+    }
+  }
+
+  async function pickJson(e: Event) {
+    const input = e.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (!file) return
+    let parsed: any
+    try {
+      parsed = JSON.parse(await file.text())
+    } catch {
+      say('这个文件读不出 JSON，确认选的是「全量导出」下来的文件')
+      return
+    }
+    // 先在本机看一眼再上传：选错文件不该让人等一趟几十 MB 的往返
+    if (parsed?.app !== 'qiansi') {
+      say('这不是牵丝的全量导出文件')
+      return
+    }
+    ioDanger = {
+      word: '覆盖导入',
+      title: '用这份 JSON 覆盖当前全部数据',
+      detail: `文件导出于 ${fmtTime(parsed.exported_at || '')}。导入前会自动归档一份当前数据库到 backups/，出问题可以从那里捞回来。附件的图片文件不在 JSON 里，需要另外拷贝 uploads 目录。`,
+      confirmLabel: '覆盖导入',
+      run: async () => {
+        try {
+          const res = await API.post<{ tables: number; rows: number }>('/api/v1/import/json', parsed)
+          say(`已导入 ${res.rows} 行，覆盖 ${res.tables} 张表`)
+          await load()
+        } catch (err: any) {
+          say('导入失败：' + (err?.message || err))
+        } finally {
+          ioDanger = null
+        }
+      },
     }
   }
 
@@ -288,6 +367,51 @@
     {/if}
   </section>
 
+  <!-- 明细导出与全量迁移 -->
+  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><FileSpreadsheet size={14} /> 明细导出与全量迁移</h2>
+    <div class="flex flex-wrap items-center gap-2">
+      <select bind:value={csvWhat} class="px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="events">往来明细</option>
+        <option value="transactions">金钱明细</option>
+        <option value="memos">对话明细</option>
+      </select>
+      <input type="number" min="1900" max="2200" bind:value={csvYear} placeholder="年份（全部）"
+             class="w-28 px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+      <select bind:value={csvPerson} class="max-w-[10rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="">全部人物</option>
+        {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
+      </select>
+      {#if csvWhat === 'transactions'}
+        <select bind:value={csvEvent} class="max-w-[12rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+          <option value="">全部往来</option>
+          {#each eventOptions as ev}<option value={ev.id}>{ev.title}</option>{/each}
+        </select>
+      {/if}
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={exportCsv}>
+        <Download size={14} /> 导出 CSV
+      </button>
+    </div>
+    <p class="text-xs mt-2" style="color: var(--q-muted);">
+      CSV 带 BOM，Excel 双击打开不乱码；金额按「元」导出。选一场往来即可只导它的礼单。
+    </p>
+    <div class="flex flex-wrap gap-2 mt-3">
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={exportJson}>
+        <Download size={14} /> 全量导出 JSON
+      </button>
+      <input type="file" accept=".json,application/json" class="hidden" bind:this={jsonInput} onchange={pickJson} />
+      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
+              style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;" onclick={() => jsonInput?.click()}>
+        <Upload size={14} /> 从 JSON 导入（覆盖全库）
+      </button>
+    </div>
+    {#if ioMsg}
+      <p class="text-xs mt-2 flex items-center gap-1" style="color: {ioIsError ? '#dc2626;' : 'var(--q-muted)'};">
+        {#if ioIsError}<AlertTriangle size={12} />{:else}<Check size={12} />{/if} {ioMsg}
+      </p>
+    {/if}
+  </section>
+
   <!-- 定时自动备份 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
     <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><Clock size={14} /> 定时自动备份</h2>
@@ -379,3 +503,14 @@
     {/if}
   </section>
 </div>
+
+{#if ioDanger}
+  <DangerConfirm
+    word={ioDanger.word}
+    title={ioDanger.title}
+    detail={ioDanger.detail}
+    confirmLabel={ioDanger.confirmLabel}
+    onconfirm={ioDanger.run}
+    oncancel={() => (ioDanger = null)}
+  />
+{/if}

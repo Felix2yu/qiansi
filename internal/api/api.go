@@ -62,6 +62,7 @@ func New(s *store.Store, cfg *config.Config) *API {
 	api.registerAttachments(r)
 	api.registerNotify(r)
 	api.registerBackup(r)
+	api.registerExport(r)
 	registerDashboard(r, api)
 
 	return api

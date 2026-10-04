@@ -71,7 +71,7 @@
         class="px-4 py-2 rounded-lg text-sm text-white"
         style="background: {armed ? '#dc2626' : 'var(--q-border)'};"
         disabled={!armed || busy}
-        onclick={submit}>{busy ? '删除中…' : confirmLabel}</button>
+        onclick={submit}>{busy ? '处理中…' : confirmLabel}</button>
     </div>
   </div>
 </div>
