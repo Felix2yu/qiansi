@@ -35,15 +35,15 @@ func (a *API) registerBackup(r chi.Router) {
 }
 
 // backupRunner 构造自动备份调度器。API 每次请求现构造：
-// Runner 只持有 store/db/cfg 三个指针，无内部可变状态（并发控制靠自身的 mutex），
+// Runner 只持有 store/cfg 两个指针，无内部可变状态（并发控制靠自身的 mutex），
 // 这样避免在 New() 里多一个字段依赖，也便于测试直接构造。
 func (a *API) backupRunner() *bsched.Runner {
-	return bsched.New(a.Store, a.Store.DB, a.Cfg)
+	return bsched.New(a.Store, a.Cfg)
 }
 
 // snapshotDB 生成一份一致性快照到 dest（委托给 backup 包，与调度器共用实现）。
 func (a *API) snapshotDB(ctx context.Context, dest string) error {
-	return backup.Snapshot(ctx, a.Store.DB, a.Cfg.DBPath, dest)
+	return backup.Snapshot(ctx, a.Store.CurrentDB(), a.Cfg.DBPath, dest)
 }
 
 func (a *API) backupExport(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +78,7 @@ func (a *API) backupSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) archiveSnapshot(ctx context.Context) (string, error) {
-	return backup.Archive(ctx, a.Store.DB, a.Cfg.DBPath, a.Cfg.Backups)
+	return backup.Archive(ctx, a.Store.CurrentDB(), a.Cfg.DBPath, a.Cfg.Backups)
 }
 
 func (a *API) backupList(w http.ResponseWriter, r *http.Request) {
@@ -175,7 +175,7 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 4) 关闭连接并替换
-	if err := a.Store.DB.Close(); err != nil {
+	if err := a.Store.CurrentDB().Close(); err != nil {
 		log.Printf("[backup] close db: %v", err)
 	}
 	if err := os.Rename(tmp, a.Cfg.DBPath); err != nil {
@@ -196,7 +196,9 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, "迁移失败: "+err.Error())
 		return
 	}
-	a.Store.DB = fresh
+	// 换句柄必须走 UseDB：常驻的自动备份调度器每次执行时现取，
+	// 直接改字段会让它继续握着上面刚 Close 掉的旧库。
+	a.Store.UseDB(fresh)
 	log.Printf("[backup] restored from %s (%d people)", header.Filename, cnt)
 	writeJSON(w, 200, map[string]any{"ok": true, "people": cnt})
 }

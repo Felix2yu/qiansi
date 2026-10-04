@@ -37,8 +37,9 @@ func main() {
 
 	a := api.New(st, cfg)
 
-	// 自动备份调度器需要 store/db/cfg，与 HTTP 层共用同一份配置对象
-	backupRunner := bsched.New(st, database, cfg)
+	// 自动备份调度器需要 store/cfg，与 HTTP 层共用同一份配置对象。
+	// 不传 *sql.DB：恢复备份会换掉 Store 里的句柄，常驻调度器每次执行时现取才不会抱着旧库。
+	backupRunner := bsched.New(st, cfg)
 
 	// uploads static
 	a.Router.Get("/uploads/*", http.StripPrefix("/uploads/", safeFileServer(cfg.Uploads)).ServeHTTP)

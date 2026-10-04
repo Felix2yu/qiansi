@@ -3,7 +3,6 @@ package scheduler
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -33,17 +32,19 @@ const tickInterval = 30 * time.Second
 
 // Runner 执行自动备份。它是 API 层与 main 之间唯一的耦合点：
 // API 只负责读写 Schedule 与查询状态，实际执行交给 Runner。
+//
+// 不持有 *sql.DB：句柄会在「从备份恢复」时被整体换掉，常驻的 Runner 若缓存启动时那一份，
+// 恢复之后每次自动备份都会对着已关闭的旧库失败 —— 而设置页照常显示下次执行时间。
 type Runner struct {
 	Store *store.Store
-	DB    *sql.DB
 	Cfg   *config.Config
 
 	mu sync.Mutex // 串行化 Run，避免手动触发与定时触发并发写同一目录
 }
 
 // New 构造 Runner。
-func New(st *store.Store, db *sql.DB, cfg *config.Config) *Runner {
-	return &Runner{Store: st, DB: db, Cfg: cfg}
+func New(st *store.Store, cfg *config.Config) *Runner {
+	return &Runner{Store: st, Cfg: cfg}
 }
 
 // LoadSchedule 读取当前配置；无配置时返回默认（每日 04:00、保留 7 份）。
@@ -173,7 +174,7 @@ func (r *Runner) RunNow(ctx context.Context, now time.Time) (string, error) {
 
 // execute 做一次归档 + 清理 + 记账。调用方需持有锁。
 func (r *Runner) execute(ctx context.Context, s backup.Schedule, now time.Time) (string, error) {
-	path, err := backup.Archive(ctx, r.DB, r.Cfg.DBPath, r.Cfg.Backups)
+	path, err := backup.Archive(ctx, r.Store.CurrentDB(), r.Cfg.DBPath, r.Cfg.Backups)
 	if err != nil {
 		msg := err.Error()
 		log.Printf("[backup] 自动备份失败（%s）: %v", s.Describe(), err)

@@ -3,15 +3,36 @@ package store
 
 import (
 	"database/sql"
+	"sync"
 	"time"
 )
 
 type Store struct {
+	// DB 是当前连接句柄。请求处理里的读写直接用这个字段即可 —— 一个请求只用一个句柄。
+	// 常驻 goroutine（自动备份调度器、通知调度器）必须走 CurrentDB()：
+	// 从备份恢复会在 HTTP goroutine 里换掉整个句柄，缓存旧指针意味着恢复后拿着
+	// 一个已 Close 的库继续跑，失败只落在 last_error 里，界面上看不出任何异常。
 	DB *sql.DB
+
+	swapMu sync.RWMutex
 }
 
 func New(db *sql.DB) *Store {
 	return &Store{DB: db}
+}
+
+// CurrentDB 取当前句柄，供跨 goroutine 的常驻任务现取现用。
+func (s *Store) CurrentDB() *sql.DB {
+	s.swapMu.RLock()
+	defer s.swapMu.RUnlock()
+	return s.DB
+}
+
+// UseDB 换上新的句柄（从备份恢复后）。旧句柄由调用方负责关闭。
+func (s *Store) UseDB(next *sql.DB) {
+	s.swapMu.Lock()
+	s.DB = next
+	s.swapMu.Unlock()
 }
 
 // timeFormat 用于审计字段（created_at 等），保持 UTC 带时区，便于排查问题。
