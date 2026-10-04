@@ -6,6 +6,27 @@
   <meta name="theme-color" content="#6366f1" />
   <title>牵丝 · 人际关系记录</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='24' fill='%236366f1'/%3E%3C/svg%3E" />
+  <script>
+    // 首屏防闪：CSS 生效前先按偏好定好 dark class，否则深色用户会看到一帧白底。
+    // 与 src/lib/theme.svelte.ts 的 applyTheme 保持同一套判定规则。
+    (function () {
+      try {
+        var m = localStorage.getItem('q_theme_mode');
+        if (m !== 'light' && m !== 'dark' && m !== 'system') {
+          var legacy = localStorage.getItem('q_dark');
+          m = legacy === '1' ? 'dark' : legacy === '0' ? 'light' : 'system';
+        }
+        var dark = m === 'dark' || (m === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+        var el = document.documentElement;
+        el.classList.toggle('dark', dark);
+        el.style.colorScheme = dark ? 'dark' : 'light';
+        var c = localStorage.getItem('q_theme');
+        if (c) el.style.setProperty('--q-theme', c);
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#0b1020' : (c || '#6366f1'));
+      } catch (e) { /* 隐私模式下 localStorage 可能抛错，忽略即可 */ }
+    })();
+  </script>
 </head>
 <body>
   <div id="app"></div>

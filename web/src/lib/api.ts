@@ -57,6 +57,29 @@ export type TimelineItem = { date: string; type: string; title: string; person_i
 export type Repayment = { id: string; transaction_id: string; amount_fen: number; occurred_at: string; note?: string }
 export type PersonField = { id: string; person_id: string; label: string; value?: string; sort_order?: number }
 export type BackupItem = { name: string; size: number; time: string }
+/** 自动备份配置（与后端 internal/backup.Schedule 一一对应） */
+export type BackupSchedule = {
+  enabled: boolean
+  frequency: 'daily' | 'weekly' | 'custom'
+  at: string          // "HH:MM"，daily/weekly 生效
+  weekday: number     // 0=周日 … 6=周六，weekly 生效
+  every_min: number   // 自定义间隔（分钟）
+  keep: number        // 归档保留份数
+}
+/** 自动备份状态：配置 + 执行结果 */
+export type BackupStatus = {
+  schedule: BackupSchedule
+  enabled: boolean
+  label: string          // 周期中文描述
+  next_run: string       // RFC3339，空串表示未排期
+  next_run_in: string    // 倒计时
+  next_hint: string      // 例如"每天 04:00 执行"
+  last_run: string       // RFC3339，从未执行过则空串
+  last_path: string
+  last_error: string     // 上次失败原因
+  keep: number
+  backups_dir: string
+}
 export type TrendPoint = { day: string; score: number }
 export type SearchResult = { type: string; id: string; title: string; subtitle?: string; date?: string; path: string }
 

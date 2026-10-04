@@ -47,35 +47,24 @@ func TestNotifyRunTick(t *testing.T) {
 	s := newNotifyStore(t)
 
 	// 覆盖三种 push_time_hour 配置：未设置(默认9)、非法值(Sscanf 失败)、当前小时。
-	backupCalled := 0
-	backup := func(context.Context) { backupCalled++ }
-
 	// 未设置：走 err==nil && v=="" 分支
 	if err := s.SettingSet(ctx, "push_time_hour", ""); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s, backup)
-	runTick(ctx, s, nil) // backup==nil 分支
+	runTick(ctx, s)
 
 	// 非法值：Sscanf 失败，pushHour 保持默认
 	if err := s.SettingSet(ctx, "push_time_hour", "abc"); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s, backup)
+	runTick(ctx, s)
 
 	// 当前小时 + 分钟<5 时才触发 digest（apprise_urls 为空 → sendDigest 提前返回，不发网络）
 	if err := s.SettingSet(ctx, "push_time_hour", fmt.Sprint(time.Now().Hour())); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s, backup)
-	runTick(ctx, s, nil)
-
-	// backup 只应在 04:00 前 5 分钟触发；除非测试恰好运行在那个时刻，否则不应调用。
-	if time.Now().Hour() != 4 || time.Now().Minute() >= 5 {
-		if backupCalled != 0 {
-			t.Errorf("backup called outside 04:00 window: %d", backupCalled)
-		}
-	}
+	runTick(ctx, s)
+	runTick(ctx, s)
 }
 
 func TestNotifySnapshotAll(t *testing.T) {

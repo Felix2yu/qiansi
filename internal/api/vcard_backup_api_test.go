@@ -2,7 +2,6 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
@@ -939,12 +938,22 @@ func TestBackupRestoreHappyPath(t *testing.T) {
 	if r := second.raw(http.MethodPost, "/api/v1/backup/restore", body3, ct3); r.Code != 200 {
 		t.Fatalf("restore(兜底库) => %d: %s", r.Code, r.Body.String())
 	}
+	// export 的临时文件写在 DataDir（不是 Backups，避免污染归档目录）。
+	// 用独立实例构造"DataDir 是普通文件"的失败场景，不影响上面那个实例的 DB。
+	expFail := newTestServer(t)
+	if err := os.RemoveAll(expFail.Cfg.DataDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(expFail.Cfg.DataDir, []byte("i am a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r500 := expFail.do(http.MethodGet, "/api/v1/backup/export", nil)
+	if r500.Code != 500 || !strings.Contains(vcardBackupErr(t, r500), "生成快照失败") {
+		t.Errorf("DataDir 不可用时 export 应 500 生成快照失败, got %d: %s", r500.Code, r500.Body.String())
+	}
+	// 归档路径（Backups）不可用时，snapshot / list 的行为
 	os.RemoveAll(second.Cfg.Backups)
 	os.WriteFile(second.Cfg.Backups, []byte("i am a file"), 0o644)
-	r500 := second.do(http.MethodGet, "/api/v1/backup/export", nil)
-	if r500.Code != 500 || !strings.Contains(vcardBackupErr(t, r500), "生成快照失败") {
-		t.Errorf("兜底失败应 500 生成快照失败, got %d: %s", r500.Code, r500.Body.String())
-	}
 	if r := second.do(http.MethodPost, "/api/v1/backup/snapshot", nil); r.Code != 500 {
 		t.Errorf("backups 为文件时 snapshot 应 500, got %d", r.Code)
 	}
@@ -1000,7 +1009,9 @@ func TestBackupRestoreErrors(t *testing.T) {
 }
 
 // 每个场景用独立服务：快照文件名秒级时间戳，同秒重复 snapshot 会撞名
-func TestBackupDailyPrune(t *testing.T) {
+// 归档 + 保留份数裁剪已下沉到 backup 包，这里从 HTTP 端点验证行为等价：
+// 保存 keep=N 的自动备份配置后调用 /backup/auto/run。
+func TestBackupAutoPrune(t *testing.T) {
 	qiansiNames := func(dir string) []string {
 		entries, _ := os.ReadDir(dir)
 		names := []string{}
@@ -1010,6 +1021,17 @@ func TestBackupDailyPrune(t *testing.T) {
 			}
 		}
 		return names
+	}
+	// saveKeep 保存自动备份配置（启用 + 指定保留份数）
+	saveKeep := func(s *testServer, keep int) {
+		s.t.Helper()
+		rec := s.do(http.MethodPut, "/api/v1/backup/auto", map[string]any{
+			"enabled": true, "frequency": "daily", "at": "04:00", "weekday": 0,
+			"every_min": 1440, "keep": keep,
+		})
+		if rec.Code != http.StatusOK {
+			s.t.Fatalf("PUT /backup/auto => %d: %s", rec.Code, rec.Body.String())
+		}
 	}
 
 	t.Run("keep=2 删除最旧", func(t *testing.T) {
@@ -1023,7 +1045,11 @@ func TestBackupDailyPrune(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(s.Cfg.Backups, "not-qiansi-20230101-000001.db"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		s.API.dailyBackupIfNeeded(context.Background(), 2)
+		saveKeep(s, 2)
+		rec := s.do(http.MethodPost, "/api/v1/backup/auto/run", map[string]any{})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("POST /backup/auto/run => %d: %s", rec.Code, rec.Body.String())
+		}
 		names := qiansiNames(s.Cfg.Backups)
 		// 新建 1 个今日快照，总数裁剪到 2：今日快照 + 最旧的 1 个应已被删，只留最新 2 个
 		if len(names) != 2 {
@@ -1057,7 +1083,10 @@ func TestBackupDailyPrune(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		s.API.dailyBackupIfNeeded(context.Background(), 0) // keep<=0 → 7
+		saveKeep(s, 0) // keep<=0 → 归一为 7
+		if rec := s.do(http.MethodPost, "/api/v1/backup/auto/run", map[string]any{}); rec.Code != http.StatusOK {
+			t.Fatalf("POST /backup/auto/run => %d: %s", rec.Code, rec.Body.String())
+		}
 		names := qiansiNames(s.Cfg.Backups)
 		if len(names) != 7 {
 			t.Fatalf("默认 keep=7 应剩 7 个: %v", names)
@@ -1075,22 +1104,36 @@ func TestBackupDailyPrune(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
-		s.API.DailyBackupTick(context.Background()) // keep=7，6+1=7 个不裁剪
+		saveKeep(s, 7)
+		if rec := s.do(http.MethodPost, "/api/v1/backup/auto/run", map[string]any{}); rec.Code != http.StatusOK {
+			t.Fatalf("POST /backup/auto/run => %d: %s", rec.Code, rec.Body.String())
+		}
 		if names := qiansiNames(s.Cfg.Backups); len(names) != 7 {
-			t.Errorf("Tick 后应恰好 7 个: %v", names)
+			t.Errorf("keep=7，6+1=7 个不裁剪: %v", names)
 		}
 	})
 
-	// snapshot 失败分支：Backups 是普通文件 → 只记日志不 panic
-	t.Run("快照失败仅记日志", func(t *testing.T) {
+	// 归档失败分支：Backups 是普通文件 → 返回 500 + 明确提示，不 panic
+	t.Run("快照失败返回 500 且记录原因", func(t *testing.T) {
 		bad := newTestServer(t)
 		if err := os.WriteFile(bad.Cfg.Backups, []byte("file"), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		bad.API.DailyBackupTick(context.Background())
+		rec := bad.do(http.MethodPost, "/api/v1/backup/auto/run", map[string]any{})
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("快照失败应返回 500，实际 %d: %s", rec.Code, rec.Body.String())
+		}
+		if msg := vcardBackupErr(t, rec); !strings.Contains(msg, "备份失败") {
+			t.Errorf("错误提示应说明是备份失败，得到 %q", msg)
+		}
 		data, err := os.ReadFile(bad.Cfg.Backups)
 		if err != nil || string(data) != "file" {
 			t.Errorf("失败路径不应改动 Backups: %v %q", err, data)
+		}
+		// 失败原因落库，设置页可展示
+		st, err := os.Stat(bad.Cfg.Backups)
+		if err != nil || st.IsDir() {
+			t.Fatalf("Backups 应仍为普通文件: %v", err)
 		}
 	})
 }

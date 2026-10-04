@@ -2,8 +2,9 @@
   import { onMount } from 'svelte'
   import { route, navigate } from './lib/router'
   import { API, SEARCH_LABEL, type SearchResult } from './lib/api'
+  import { initTheme, theme, setThemeMode, nextMode, THEME_LABEL, type ThemeMode } from './lib/theme.svelte'
   import type { Component } from 'svelte'
-  import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search } from '@lucide/svelte'
+  import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search, Monitor, Sun, Moon } from '@lucide/svelte'
   import Today from './pages/Today.svelte'
 
   // 只有首页静态引入：其余页面各自成块，用到才下载（关系图/统计带 echarts，最重）
@@ -36,14 +37,18 @@
     { label: '设置', path: '/settings', icon: Settings },
   ]
 
+  // 侧边栏外观切换的三档，顺序即"从自动到最具体"
+  const THEME_ICONS: { mode: ThemeMode; icon: typeof Monitor }[] = [
+    { mode: 'system', icon: Monitor },
+    { mode: 'light', icon: Sun },
+    { mode: 'dark', icon: Moon },
+  ]
+
   let mobileOpen = $state(false)
 
-  // 保存过的主题色与暗色模式要在刷新后继续生效
-  onMount(() => {
-    const saved = localStorage.getItem('q_theme')
-    if (saved) document.documentElement.style.setProperty('--q-theme', saved)
-    if (localStorage.getItem('q_dark') === '1') document.documentElement.classList.add('dark')
-  })
+  // 主题：本地值同步应用（防首屏闪白），再从服务端同步偏好。
+  // 判定逻辑集中在 lib/theme.svelte.ts，这里只负责触发。
+  onMount(() => { initTheme() })
 
   // 全局搜索：输入即查，回车跳到第一个结果
   let searchQ = $state('')
@@ -150,15 +155,36 @@
         </a>
       {/each}
     </nav>
-    <div class="px-5 py-3 text-xs" style="color: var(--q-muted);">v0.1 · local-only</div>
+    <div class="px-5 py-3 flex items-center gap-1.5">
+      <div class="text-xs mr-auto" style="color: var(--q-muted);">v0.1 · local-only</div>
+      <!-- 外观快速切换：跟随系统 / 浅色 / 深色，图标表示当前选择 -->
+      <div class="flex items-center gap-0.5 rounded-lg p-0.5" style="background: var(--q-bg); border: 1px solid var(--q-border);">
+        {#each THEME_ICONS as t}
+          <button onclick={() => setThemeMode(t.mode)} title={THEME_LABEL[t.mode]} aria-label={THEME_LABEL[t.mode]}
+                  aria-pressed={theme.mode === t.mode}
+                  class="w-6 h-6 rounded flex items-center justify-center"
+                  style="color: {theme.mode === t.mode ? 'var(--q-theme)' : 'var(--q-muted)'};">
+            <t.icon size={13} />
+          </button>
+        {/each}
+      </div>
+    </div>
   </aside>
 
   <!-- mobile top bar -->
   <div class="md:hidden fixed top-0 inset-x-0 z-30 border-b flex items-center justify-between px-4 py-2" style="background: var(--q-surface); border-color: var(--q-border);">
     <div class="font-semibold">牵丝</div>
-    <button onclick={() => mobileOpen = !mobileOpen} class="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5">
-      {#if mobileOpen}<X size={22} />{:else}<Menu size={22} />{/if}
-    </button>
+    <div class="flex items-center gap-1">
+      <!-- 移动端逐档循环切换外观：系统 → 浅色 → 深色 → 系统 -->
+      <button onclick={() => setThemeMode(nextMode(theme.mode))} title={`外观：${THEME_LABEL[theme.mode]}`}
+              aria-label={`外观：${THEME_LABEL[theme.mode]}，点击切换`}
+              class="w-7 h-7 rounded flex items-center justify-center" style="color: var(--q-muted);">
+        {#if theme.mode === 'system'}<Monitor size={17} />{:else if theme.mode === 'light'}<Sun size={17} />{:else}<Moon size={17} />{/if}
+      </button>
+      <button onclick={() => mobileOpen = !mobileOpen} class="p-1 rounded hover:bg-black/5 dark:hover:bg-white/5" aria-label="菜单">
+        {#if mobileOpen}<X size={22} />{:else}<Menu size={22} />{/if}
+      </button>
+    </div>
   </div>
 
   {#if mobileOpen}

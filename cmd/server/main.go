@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/qiansi/app/internal/api"
+	bsched "github.com/qiansi/app/internal/backup/scheduler"
 	"github.com/qiansi/app/internal/config"
 	"github.com/qiansi/app/internal/db"
 	"github.com/qiansi/app/internal/notify"
@@ -36,14 +37,21 @@ func main() {
 
 	a := api.New(st, cfg)
 
+	// 自动备份调度器需要 store/db/cfg，与 HTTP 层共用同一份配置对象
+	backupRunner := bsched.New(st, database, cfg)
+
 	// uploads static
 	a.Router.Get("/uploads/*", http.StripPrefix("/uploads/", safeFileServer(cfg.Uploads)).ServeHTTP)
 
 	// SPA static files (expect ./web/dist or ./web to contain built SPA, or placeholder)
 	a.Router.Get("/*", spaHandler(cfg))
 
-	// notifications scheduler（顺带每日归档一份数据库快照）
-	go notify.RunScheduler(ctx, st, a.DailyBackupTick)
+	// notifications scheduler（每日亲密快照 + 每日摘要推送）
+	go notify.RunScheduler(ctx, st)
+
+	// 自动备份调度器：周期/时间点由用户在设置页配置，默认每日 04:00。
+	// 与 notify 分开跑 —— 两者的节奏（30 分钟 vs 30 秒）与配置来源都不同。
+	go backupRunner.Run(ctx)
 
 	srv := &http.Server{
 		Addr:         cfg.Addr,

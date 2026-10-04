@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/qiansi/app/internal/backup"
+	bsched "github.com/qiansi/app/internal/backup/scheduler"
 	"github.com/qiansi/app/internal/db"
 )
 
@@ -25,34 +27,29 @@ func (a *API) registerBackup(r chi.Router) {
 		r.Post("/restore", a.backupRestore)
 		r.Get("/list", a.backupList)
 		r.Post("/snapshot", a.backupSnapshot)
+		// 自动备份：配置读写 + 状态查询 + 立即执行
+		r.Get("/auto", a.backupAutoGet)
+		r.Put("/auto", a.backupAutoSet)
+		r.Post("/auto/run", a.backupAutoRun)
 	})
 }
 
-// snapshotDB 生成一份一致性快照到 dest。
-// 优先用 VACUUM INTO（原子且不受 WAL 写入干扰）；不可用时退回 checkpoint + 文件拷贝。
+// backupRunner 构造自动备份调度器。API 每次请求现构造：
+// Runner 只持有 store/db/cfg 三个指针，无内部可变状态（并发控制靠自身的 mutex），
+// 这样避免在 New() 里多一个字段依赖，也便于测试直接构造。
+func (a *API) backupRunner() *bsched.Runner {
+	return bsched.New(a.Store, a.Store.DB, a.Cfg)
+}
+
+// snapshotDB 生成一份一致性快照到 dest（委托给 backup 包，与调度器共用实现）。
 func (a *API) snapshotDB(ctx context.Context, dest string) error {
-	if _, err := a.Store.DB.ExecContext(ctx, "VACUUM INTO ?", dest); err == nil {
-		return nil
-	}
-	_, _ = a.Store.DB.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
-	src, err := os.Open(a.Cfg.DBPath)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-	out, err := os.Create(dest)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	if _, err := io.Copy(out, src); err != nil {
-		return err
-	}
-	return out.Sync()
+	return backup.Snapshot(ctx, a.Store.DB, a.Cfg.DBPath, dest)
 }
 
 func (a *API) backupExport(w http.ResponseWriter, r *http.Request) {
-	tmp := filepath.Join(a.Cfg.Backups, "export-"+time.Now().Format("20060102150405")+".db")
+	// 临时文件放 DataDir 而不是 Backups：后者是归档目录，混入导出的中间产物
+	// 会让「归档列表」出现非归档文件（虽不匹配 qiansi- 前缀而不被裁剪，但语义上不该同处一地）。
+	tmp := filepath.Join(a.Cfg.DataDir, "export-"+time.Now().Format("20060102150405")+".db")
 	if err := a.snapshotDB(r.Context(), tmp); err != nil {
 		writeErr(w, 500, "生成快照失败: "+err.Error())
 		return
@@ -81,14 +78,7 @@ func (a *API) backupSnapshot(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) archiveSnapshot(ctx context.Context) (string, error) {
-	if err := os.MkdirAll(a.Cfg.Backups, 0o755); err != nil {
-		return "", err
-	}
-	dest := filepath.Join(a.Cfg.Backups, "qiansi-"+time.Now().Format("20060102-150405")+".db")
-	if err := a.snapshotDB(ctx, dest); err != nil {
-		return "", err
-	}
-	return dest, nil
+	return backup.Archive(ctx, a.Store.DB, a.Cfg.DBPath, a.Cfg.Backups)
 }
 
 func (a *API) backupList(w http.ResponseWriter, r *http.Request) {
@@ -211,34 +201,40 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "people": cnt})
 }
 
-// DailyBackupTick 供调度器每日调用一次，最多保留最近 7 份归档快照。
-func (a *API) DailyBackupTick(ctx context.Context) {
-	a.dailyBackupIfNeeded(ctx, 7)
+// ===== 自动备份 =====
+
+// backupAutoGet 返回自动备份配置与执行状态（含下次执行时间）。
+func (a *API) backupAutoGet(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, 200, a.backupRunner().Status(r.Context(), time.Now()))
 }
 
-func (a *API) dailyBackupIfNeeded(ctx context.Context, keep int) {
-	if keep <= 0 {
-		keep = 7
-	}
-	if _, err := a.archiveSnapshot(ctx); err != nil {
-		log.Printf("[backup] snapshot failed: %v", err)
+// backupAutoSet 保存自动备份配置。
+//
+// 频率用路径语义之外的显式字段传输，非法值由 Schedule.Normalize 兜底为每日，
+// 因此这里不需要额外的 400 分支 —— 前端拿到的是归一化后的结果。
+func (a *API) backupAutoSet(w http.ResponseWriter, r *http.Request) {
+	var s backup.Schedule
+	if err := decode(r, &s); err != nil {
+		writeErr(w, 400, err.Error())
 		return
 	}
-	entries, err := os.ReadDir(a.Cfg.Backups)
+	runner := a.backupRunner()
+	if err := runner.SaveSchedule(r.Context(), s); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	// 配置变了，旧的排期时刻已失效，让下一次 tick 按新配置重算
+	writeJSON(w, 200, runner.Status(r.Context(), time.Now()))
+}
+
+// backupAutoRun 立即执行一次备份并回传最新状态。失败时返回 500 与错误文本。
+func (a *API) backupAutoRun(w http.ResponseWriter, r *http.Request) {
+	runner := a.backupRunner()
+	path, err := runner.RunNow(r.Context(), time.Now())
 	if err != nil {
+		writeErr(w, 500, "备份失败: "+err.Error())
 		return
 	}
-	names := []string{}
-	for _, e := range entries {
-		if !e.IsDir() && strings.HasPrefix(e.Name(), "qiansi-") && strings.HasSuffix(e.Name(), ".db") {
-			names = append(names, e.Name())
-		}
-	}
-	if len(names) <= keep {
-		return
-	}
-	sort.Strings(names) // 文件名含时间戳，字典序即时间序
-	for _, n := range names[:len(names)-keep] {
-		_ = os.Remove(filepath.Join(a.Cfg.Backups, n))
-	}
+	st := runner.Status(r.Context(), time.Now())
+	writeJSON(w, 200, map[string]any{"path": path, "status": st})
 }
