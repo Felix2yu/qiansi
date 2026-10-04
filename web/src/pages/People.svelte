@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { API, type Person, type Category, type Tag } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
+  import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { navigate } from '../lib/router'
   import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
 
@@ -34,6 +35,14 @@
   // 批量选择态
   let selectMode = $state(false)
   let selectedIds = $state<string[]>([])
+  // 需要手打确认词的危险操作（见 DangerConfirm）
+  let danger = $state<null | {
+    word: string
+    title: string
+    detail: string
+    confirmLabel: string
+    run: () => Promise<void>
+  }>(null)
   function toggleSelect(id: string) {
     selectedIds = selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]
   }
@@ -69,11 +78,29 @@
       alert('加入圈子失败：' + (err?.message || err))
     }
   }
-  async function deleteSelected() {
-    if (selectedIds.length === 0) return
-    if (!confirm(`确定删除选中的 ${selectedIds.length} 位联系人及其所有关联记录（往来/对话/记账/纪念日）？此操作不可恢复。`)) return
+  // 危险操作两段式：ask* 只开确认框，框里手打确认词之后才跑 do*。
+  // 确认时用的是开框那一刻选中的人数快照，免得弹窗挂着又改了勾选，删的和报的对不上。
+  function askDeleteSelected() {
+    const ids = [...selectedIds]
+    if (ids.length === 0) return
+    danger = {
+      word: '删除',
+      title: `删除选中的 ${ids.length} 位联系人`,
+      detail: '会一并删除他们的往来、对话、记账与纪念日等关联记录，此操作不可恢复。建议先到设置里生成一份快照。',
+      confirmLabel: `删除 ${ids.length} 位`,
+      // 跑完再关窗（DangerConfirm 不会自己关，否则 props 先被拆掉）
+      run: async () => {
+        try {
+          await deleteSelected(ids)
+        } finally {
+          danger = null
+        }
+      },
+    }
+  }
+  async function deleteSelected(ids: string[]) {
     try {
-      const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: selectedIds })
+      const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids })
       selectedIds = []
       await load()
       alert(`已删除 ${res.deleted} 位联系人`)
@@ -81,8 +108,22 @@
       alert('删除失败：' + (err?.message || err))
     }
   }
+  function askClearAll() {
+    danger = {
+      word: '清空全部',
+      title: '清空全部联系人',
+      detail: '整本账都会消失：所有往来、对话、记账与纪念日一并删除，且不可恢复。建议先点「导出 vCard」备份，清空后再重新导入。',
+      confirmLabel: '清空全部',
+      run: async () => {
+        try {
+          await clearAll()
+        } finally {
+          danger = null
+        }
+      },
+    }
+  }
   async function clearAll() {
-    if (!confirm('确定清空全部联系人吗？此操作不可恢复，会一并删除所有往来、对话、记账与纪念日等关联数据。\n建议先点「导出 vCard」备份，再清空后重新导入。')) return
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
       selectedIds = []
@@ -245,10 +286,10 @@
       <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-theme); color: #fff;" disabled={selectedIds.length === 0 || bulkCat === 0} onclick={addSelectedToCircle}>
         加入
       </button>
-      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" disabled={selectedIds.length === 0} onclick={deleteSelected}>
+      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" disabled={selectedIds.length === 0} onclick={askDeleteSelected}>
         删除选中
       </button>
-      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: #dc2626;" onclick={clearAll}>
+      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: #dc2626;" onclick={askClearAll}>
         清空全部
       </button>
     </div>
@@ -314,4 +355,15 @@
       <PersonForm person={editing} {categories} {tags} onsave={onSaved} onrelchange={() => load()} oncancel={() => (showForm = false)} />
     </div>
   </div>
+{/if}
+
+{#if danger}
+  <DangerConfirm
+    word={danger.word}
+    title={danger.title}
+    detail={danger.detail}
+    confirmLabel={danger.confirmLabel}
+    onconfirm={danger.run}
+    oncancel={() => (danger = null)}
+  />
 {/if}
