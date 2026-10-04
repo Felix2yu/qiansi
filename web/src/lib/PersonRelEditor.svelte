@@ -1,23 +1,20 @@
 <script lang="ts">
-  import { API, RELATION_TYPES, type Person, type Relationship } from './api'
-  import { self, loadSelf, selfFirst, isSelf, personLabel } from './self.svelte'
+  import { API, RELATION_TYPES, type Relationship } from './api'
+  import { self, loadSelf, isSelf } from './self.svelte'
   import { dict, ensure } from './dict.svelte'
+  import PersonPicker from './PersonPicker.svelte'
   import { Trash2, Plus, Pencil, X, Check } from '@lucide/svelte'
 
   // 关系维护：以 personId 为中心列出全部关系，支持添加、行内改类型/备注、删除
   let {
     personId,
-    people = null,
     onchange,
   }: {
     personId: string
-    /** 外部已加载的候选人列表；不传则组件自己拉 */
-    people?: Person[] | null
     onchange?: () => void
   } = $props()
 
   let rels = $state<Relationship[]>([])
-  let options = $state<Person[]>([])
   // 历史上已用过的关系类型（闺蜜、对象、挚友…），与预设合并后喂给 datalist
   let usedTypes = $state<string[]>([])
   let loading = $state(true)
@@ -32,15 +29,11 @@
   const typeOptions = $derived(
     Array.from(new Set([...RELATION_TYPES, ...usedTypes, ...rels.map(r => r.type).filter(Boolean)])))
 
-  // 人物或候选人变化时重新拉取；只依赖这两个，避免自己改 rels 时反复请求
+  // 人物变化时重新拉取；不依赖 rels，避免自己改完又反复请求
   $effect(() => {
     const pid = personId
     if (!pid) { rels = []; loading = false; return }
     load(pid)
-  })
-
-  $effect(() => {
-    if (people) options = people
   })
 
   async function load(pid = personId) {
@@ -59,15 +52,6 @@
     } finally { loading = false }
   }
 
-  async function loadOptions() {
-    await ensure('people')
-    options = dict.people
-  }
-
-  function candidates(excludeId: string) {
-    return selfFirst(options, excludeId)
-  }
-
   function otherName(r: Relationship) {
     const otherId = r.from_person_id === personId ? r.to_person_id : r.from_person_id
     const name = r.from_person_id === personId ? (r.to_name || '?') : (r.from_name || '?')
@@ -76,7 +60,6 @@
 
   async function openAdd() {
     showAdd = true
-    if (!people) await loadOptions()
     await loadSelf()
     // 给别人补关系时，最常见的另一端就是我自己
     if (!addForm.to_person_id && self.id && self.id !== personId) addForm.to_person_id = self.id
@@ -164,10 +147,7 @@
   {#if showAdd}
     <div class="rounded-lg p-2 space-y-2" style="background: var(--q-bg);">
       <div class="grid grid-cols-2 gap-2">
-        <select bind:value={addForm.to_person_id} class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
-          <option value="">选择对方…</option>
-          {#each candidates(personId) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-        </select>
+        <PersonPicker bind:value={addForm.to_person_id} exclude={[personId]} placeholder="选择对方…" clearable={false} />
         <input list={listId} bind:value={addForm.type} placeholder="关系类型（可自定义）"
                class="w-full px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
       </div>

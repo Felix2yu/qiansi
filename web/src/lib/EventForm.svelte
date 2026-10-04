@@ -1,15 +1,16 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { API, todayLocal, toFen, type Event, type EventType, type Person } from './api'
+  import { API, todayLocal, toFen, type Event, type EventType } from './api'
   import { selfFirst, personLabel, loadSelf, isSelf } from './self.svelte'
   import { dict, ensure } from './dict.svelte'
+  import { searchPeople, resolvePeople, type PersonLite } from './personSearch'
+  import PersonPicker from './PersonPicker.svelte'
   import { Trash2, Search } from '@lucide/svelte'
 
   let {
     editId = '',
     preset = {},
     types = null,
-    people = null,
     onsave,
     oncancel,
     onremove,
@@ -20,7 +21,6 @@
     preset?: { event_date?: string; participant_ids?: string[] }
     /** 传入可复用父级已加载的数据，不传则自行请求 */
     types?: EventType[] | null
-    people?: Person[] | null
     onsave?: () => void
     oncancel?: () => void
     /** 提供后编辑态显示删除按钮，由父级确认并删除 */
@@ -28,14 +28,19 @@
   } = $props()
 
   const typeList = $derived(types ?? dict.eventTypes)
-  const peopleList = $derived(people ?? dict.people)
 
   let loading = $state(false)
   let saving = $state(false)
   // 编辑时原有关联开销，用于删除时提示是否解挂账目
   let originExpenseFen = $state(0)
-  // 参与人较多时不能平铺全量，这里按关键字过滤
+  // 参与人较多时不能平铺全量，这里按关键字搜
   let peopleQuery = $state('')
+  let candidates = $state<PersonLite[]>([])
+  let searching = $state(false)
+  let searchFailed = $state(false)
+  // 已选参与人要能显示名字，详情与搜索结果都往这里存一份
+  let known = $state<Record<string, PersonLite>>({})
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
 
   type Form = {
     title: string; type_id: number; event_date: string
@@ -69,7 +74,8 @@
   untrack(() => {
     void loadSelf()
     if (!types) void ensure('eventTypes')
-    if (!people) void ensure('people')
+    void runSearch()
+    if (preset.participant_ids?.length) void remember(preset.participant_ids)
   })
 
   async function loadDetail(id: string) {
@@ -93,6 +99,12 @@
         gift_person_id: d.gift_person_id || '',
       }
       peopleQuery = ''
+      // 详情里已带姓名，直接记下，省得回查
+      const seen = (d.participants || []).filter(p => p.id)
+      if (seen.length) {
+        known = { ...known, ...Object.fromEntries(seen.map(p => [p.id, { id: p.id, name: p.name, nickname: p.nickname }])) }
+      }
+      void remember([...form.participant_ids, form.expense_person_id, form.gift_person_id])
     } catch (err: any) {
       alert('读取往来失败：' + (err?.message || err))
       oncancel?.()
@@ -101,17 +113,39 @@
     }
   }
 
-  const matchedPeople = $derived(
-    peopleQuery.trim()
-      ? selfFirst(peopleList.filter(p => p.name.includes(peopleQuery.trim()) || (p.nickname || '').includes(peopleQuery.trim())))
-      : selfFirst(peopleList)
-  )
-  const participants = $derived(peopleList.filter(p => form.participant_ids.includes(p.id)))
-  // 开销/礼金的归属人候选：参与人排前面，其余人也能选（礼单上常有没到场的人）
-  const ownerOptions = $derived([
-    ...selfFirst(participants),
-    ...selfFirst(peopleList.filter(p => !form.participant_ids.includes(p.id))),
-  ])
+  async function remember(ids: string[]) {
+    const missing = ids.filter(id => id && !known[id])
+    if (!missing.length) return
+    const list = await resolvePeople(missing)
+    known = { ...known, ...Object.fromEntries(list.map(p => [p.id, p])) }
+  }
+
+  let searchSeq = 0
+  async function runSearch() {
+    const seq = ++searchSeq
+    searching = true
+    try {
+      const list = selfFirst(await searchPeople(peopleQuery.trim()))
+      // 输入快过时丢掉迟到的那一次结果，免得列表闪回旧关键词
+      if (seq !== searchSeq) return
+      candidates = list
+      searchFailed = false
+      known = { ...known, ...Object.fromEntries(list.map(p => [p.id, p])) }
+    } catch {
+      if (seq === searchSeq) searchFailed = true
+    } finally {
+      if (seq === searchSeq) searching = false
+    }
+  }
+
+  function scheduleSearch() {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(runSearch, 200)
+  }
+
+  const pickedPeople = $derived(form.participant_ids.map(id => known[id]).filter(Boolean) as PersonLite[])
+  // 已选的人不再出现在候选里，点一下就是加人，不用去列表里找已选的那个
+  const unmatched = $derived(candidates.filter(p => !form.participant_ids.includes(p.id)))
 
   function toggleParticipant(id: string) {
     form.participant_ids = form.participant_ids.includes(id)
@@ -221,10 +255,8 @@
 
     <div class="grid grid-cols-2 gap-3">
       <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="开销（元，可空）" bind:value={form.expense_yuan} />
-      <select bind:value={form.expense_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-        <option value="">开销归属（默认首位参与人）</option>
-        {#each ownerOptions as p}<option value={p.id}>{personLabel(p)}{form.participant_ids.includes(p.id) ? '（参与人）' : ''}</option>{/each}
-      </select>
+      <PersonPicker bind:value={form.expense_person_id} selectedName={known[form.expense_person_id]?.name || ''}
+                    placeholder="开销归属（默认首位参与人）" />
     </div>
 
     <!-- 礼金：现场记完事就结账，保存时自动生成一条 kind=gift 的账目挂在这个往来上 -->
@@ -236,10 +268,8 @@
       </select>
     </div>
     {#if giftFen > 0}
-      <select bind:value={form.gift_person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-        <option value="">{form.gift_direction === 'in' ? '谁给的礼金（默认首位参与人）' : '随给谁（默认首位参与人）'}</option>
-        {#each ownerOptions as p}<option value={p.id}>{personLabel(p)}{form.participant_ids.includes(p.id) ? '（参与人）' : ''}</option>{/each}
-      </select>
+      <PersonPicker bind:value={form.gift_person_id} selectedName={known[form.gift_person_id]?.name || ''}
+                    placeholder={form.gift_direction === 'in' ? '谁给的礼金（默认首位参与人）' : '随给谁（默认首位参与人）'} />
     {/if}
 
     <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="备注" bind:value={form.summary}></textarea>
@@ -248,22 +278,31 @@
         <div class="text-xs" style="color: var(--q-muted);">参与人（已选 {form.participant_ids.length} 人）</div>
         <div class="relative">
           <Search size={12} class="absolute left-2 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
-          <input bind:value={peopleQuery} placeholder="搜索联系人"
+          <input bind:value={peopleQuery} oninput={scheduleSearch} placeholder="搜索联系人"
                  class="pl-7 pr-2 py-1 rounded-md text-xs outline-none w-36"
                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
         </div>
       </div>
+      {#if pickedPeople.length > 0}
+        <div class="flex flex-wrap gap-1 mb-1">
+          {#each pickedPeople as p}
+            <button class="flex items-center gap-1 text-xs px-2 py-1 rounded-md"
+                    style="background: var(--q-theme); color: white; border: 1px solid var(--q-theme);"
+                    onclick={() => toggleParticipant(p.id)}>{personLabel(p)} ×</button>
+          {/each}
+        </div>
+      {/if}
       <div class="flex flex-wrap gap-1 max-h-40 overflow-auto">
-        {#each matchedPeople as p}
+        {#each unmatched as p}
           <button class="flex items-center gap-1 text-xs px-2 py-1 rounded-md transition"
-                  style={form.participant_ids.includes(p.id)
-                    ? 'background: var(--q-theme); color: white; border: 1px solid var(--q-theme);'
-                    : isSelf(p.id)
-                      ? 'background: var(--q-bg); color: #f59e0b; border: 1px solid #f59e0b;'
-                      : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
+                  style={isSelf(p.id)
+                    ? 'background: var(--q-bg); color: #f59e0b; border: 1px solid #f59e0b;'
+                    : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
                   onclick={() => toggleParticipant(p.id)}>{personLabel(p)}</button>
         {:else}
-          <span class="text-xs" style="color: var(--q-muted);">没有匹配的联系人</span>
+          <span class="text-xs" style={searchFailed ? 'color: #dc2626;' : 'color: var(--q-muted);'}>
+            {searching ? '搜索中…' : searchFailed ? '搜索失败，请重试' : '没有匹配的联系人'}
+          </span>
         {/each}
       </div>
     </div>

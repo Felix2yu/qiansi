@@ -1,16 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api'
-  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
-  import { dict, ensure } from '../lib/dict.svelte'
+  import { loadSelf } from '../lib/self.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
   import { Plus, X, Check } from '@lucide/svelte'
 
   let list = $state<Reminder[]>([])
-  const people = $derived(dict.people)
   let showDone = $state(false)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
+  // 编辑时把待办自带的名字交给选人控件显示，省一次回查
+  let pickedName = $state('')
 
   function emptyForm() {
     return { title: '', due_at: todayLocal(), person_id: '', status: 'pending' }
@@ -22,13 +23,13 @@
   }
   onMount(() => {
     loadSelf()
-    ensure('people')
     load()
   })
 
   function openCreate() {
     editId = ''
     form = emptyForm()
+    pickedName = ''
     showForm = true
   }
 
@@ -44,6 +45,7 @@
     const notice = derivedNotice(r, '改')
     if (notice) { alert(notice); return }
     editId = r.id
+    pickedName = r.person_name || ''
     form = {
       title: r.title, due_at: (r.due_at || '').slice(0, 10),
       person_id: r.person_id || '', status: r.status || 'pending',
@@ -155,10 +157,7 @@
       <div class="space-y-3">
         <input bind:value={form.title} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="待办内容" />
         <input type="date" bind:value={form.due_at} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-        <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">关联联系人（可选）</option>
-          {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-        </select>
+        <PersonPicker bind:value={form.person_id} selectedName={pickedName} placeholder="关联联系人（可选）" />
       </div>
       <div class="flex justify-end gap-2 mt-5">
         <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>

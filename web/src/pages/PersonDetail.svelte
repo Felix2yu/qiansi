@@ -105,7 +105,7 @@
       const data = await res.json()
       // 存可直接渲染的 URL（/uploads/xxx）——avatar_attachment_id 是自由文本字段
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: data.url })
-      await Promise.all([load(), refresh('people')])
+      await load()
     } catch (err: any) {
       alert('头像上传失败：' + (err?.message || err))
     } finally {
@@ -119,7 +119,7 @@
     if (!person) return
     try {
       await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: '' })
-      await Promise.all([load(), refresh('people')])
+      await load()
     } catch (err: any) {
       alert('移除头像失败：' + (err?.message || err))
     }
@@ -129,7 +129,7 @@
     if (!person) return
     if (person.archived) await API.delete(`/api/v1/people/${id}/archive`)
     else await API.post(`/api/v1/people/${id}/archive`, {})
-    await Promise.all([load(), refresh('people')])
+    await load()
   }
 
   // 本人只能有一个，再设别人等于把指针挪过去
@@ -195,7 +195,7 @@
 
   async function remove() {
     if (person && confirm(`删除联系人「${person.name}」及其所有关联记录？`)) {
-      await API.delete(`/api/v1/people/${id}`); await refresh('people'); navigate('/people')
+      await API.delete(`/api/v1/people/${id}`); navigate('/people')
     }
   }
 
@@ -515,7 +515,7 @@
         <h2 class="font-semibold">编辑联系人</h2>
         <button onclick={() => (showEdit = false)}><X size={18} /></button>
       </div>
-      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load(); refresh('people') }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
+      <PersonForm {person} {categories} {tags} onsave={() => { showEdit = false; load() }} onrelchange={() => load()} oncancel={() => (showEdit = false)} />
     </div>
   </div>
 {/if}

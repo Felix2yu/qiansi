@@ -103,7 +103,7 @@
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids })
       selectedIds = []
-      await Promise.all([load(), refresh('people')])
+      await load()
       alert(`已删除 ${res.deleted} 位联系人`)
     } catch (err: any) {
       alert('删除失败：' + (err?.message || err))
@@ -128,7 +128,7 @@
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
       selectedIds = []
-      await Promise.all([load(), refresh('people')])
+      await load()
       alert(`已清空 ${res.deleted} 位联系人`)
     } catch (err: any) {
       alert('清空失败：' + (err?.message || err))
@@ -171,20 +171,19 @@
   }
   async function onSaved(saved: Person) {
     showForm = false
-    // 新建或改名都会让别的页面的选人下拉过期
-    await Promise.all([load(), refresh('people')])
+    await load()
     if (mode === 'new' && saved?.id) { navigate(`/people/${saved.id}`) }
   }
   async function remove(p: Person) {
     if (confirm(`删除联系人「${p.name}」及其所有关联记录？`)) {
       await API.delete(`/api/v1/people/${p.id}`)
-      await Promise.all([load(), refresh('people')])
+      await load()
       selectedIds = selectedIds.filter((id) => id !== p.id)
     }
   }
   async function unarchive(p: Person) {
     await API.delete(`/api/v1/people/${p.id}/archive`)
-    await Promise.all([load(), refresh('people')])
+    await load()
     selectedIds = selectedIds.filter((id) => id !== p.id)
   }
 
@@ -200,7 +199,7 @@
       if (res.updated > 0) parts.push(`更新姓名 ${res.updated} 人（与现有联系人按通讯录 ID 匹配）`)
       if (res.skipped > 0) parts.push(`跳过 ${res.skipped} 人（与现有联系人重复或缺少姓名）`)
       alert(`vCard 导入完成：${parts.join('，')}`)
-      await Promise.all([load(), refresh('people')])
+      await load()
     } catch (err: any) {
       alert('导入失败：' + (err?.message || err))
     } finally {

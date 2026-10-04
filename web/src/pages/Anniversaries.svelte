@@ -1,15 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { API, todayLocal, type Anniversary } from '../lib/api'
-  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
-  import { dict, ensure } from '../lib/dict.svelte'
+  import { loadSelf } from '../lib/self.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Anniversary[]>([])
-  const people = $derived(dict.people)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
+  // 编辑时把纪念日自带的名字交给选人控件显示，省一次回查
+  let pickedName = $state('')
 
   function emptyForm() {
     return { person_id: '', title: '', date: todayLocal(), is_lunar: false, repeat_yearly: true, remind_days: '7,3,1,0' }
@@ -20,18 +21,19 @@
   }
   onMount(() => {
     loadSelf()
-    ensure('people')
     load()
   })
 
   function openCreate() {
     editId = ''
     form = emptyForm()
+    pickedName = ''
     showForm = true
   }
 
   function openEdit(a: Anniversary) {
     editId = a.id
+    pickedName = a.person_name || ''
     form = {
       person_id: a.person_id || '', title: a.title, date: (a.date || '').slice(0, 10),
       is_lunar: !!a.is_lunar, repeat_yearly: !!a.repeat_yearly, remind_days: a.remind_days || '7,3,1,0',
@@ -118,9 +120,7 @@
     <div class="relative w-full max-w-lg rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <div class="flex items-center justify-between mb-4"><h2 class="font-semibold">{editId ? '编辑纪念日' : '新建纪念日'}</h2><button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button></div>
       <div class="space-y-3">
-        <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">自属（倒数日）</option>{#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-        </select>
+        <PersonPicker bind:value={form.person_id} selectedName={pickedName} placeholder="自属（倒数日）" />
         <input bind:value={form.title} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="标题（如：妈妈生日）" />
         <input type="date" bind:value={form.date} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
         <div class="flex items-center gap-4">

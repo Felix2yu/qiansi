@@ -5,7 +5,7 @@
   import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
-  import { selfFirst, personLabel } from '../lib/self.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
   import { dict, ensure, refresh, refreshAll } from '../lib/dict.svelte'
 
   let settings = $state<Record<string, string>>({})
@@ -53,7 +53,7 @@
     }
   }
 
-  onMount(() => { initTheme(); ensure('categories'); ensure('tags'); ensure('eventTypes'); ensure('people'); ensure('events'); load() })
+  onMount(() => { initTheme(); ensure('categories'); ensure('tags'); ensure('eventTypes'); ensure('events'); load() })
 
 
   async function saveNotify() {
@@ -93,7 +93,6 @@
   }
 
   // ===== 明细 CSV 与全量 JSON（N3）=====
-  const people = $derived(dict.people)
   const eventOptions = $derived(dict.events)
   let csvWhat = $state<'events' | 'transactions' | 'memos'>('events')
   let csvYear = $state<number | ''>('')
@@ -372,10 +371,9 @@
       </select>
       <input type="number" min="1900" max="2200" bind:value={csvYear} placeholder="年份（全部）"
              class="w-28 px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
-      <select bind:value={csvPerson} class="max-w-[10rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-        <option value="">全部人物</option>
-        {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-      </select>
+      <div class="w-40">
+        <PersonPicker bind:value={csvPerson} placeholder="全部人物" compact={true} />
+      </div>
       {#if csvWhat === 'transactions'}
         <select bind:value={csvEvent} class="max-w-[12rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
           <option value="">全部往来</option>

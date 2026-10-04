@@ -1,10 +1,10 @@
-import { API, type Category, type Event, type EventType, type Person, type Tag } from './api'
+import { API, type Category, type Event, type EventType, type Tag } from './api'
 
-// 全站共享的字典缓存。这些名单本来每次都一样：往来页、对话页、金钱页、待办页、
-// 纪念日页各自拉过 people?limit=500，翻页和切筛选还会再拉一轮。这里拉一次常驻，
+// 全站共享的字典缓存。这些名单本来每次都一样：类别、标签、事件类型、关系类型
+// 在往来的增删改里反复出现，翻页和切筛选还会再拉一轮。这里拉一次常驻，
 // 只有真的改动了名单才由改动方显式刷新。
+// 人物名单不在这里：它会长到成百上千，一律改成按需搜索（见 personSearch.ts）。
 export const dict = $state({
-  people: [] as Person[],
   eventTypes: [] as EventType[],
   categories: [] as Category[],
   tags: [] as Tag[],
@@ -13,10 +13,7 @@ export const dict = $state({
   events: [] as Event[],
 })
 
-const ROSTER_LIMIT = 500
-
 const SOURCES = {
-  people: { key: 'people', path: `/api/v1/people?limit=${ROSTER_LIMIT}` },
   eventTypes: { key: 'eventTypes', path: '/api/v1/event-types' },
   categories: { key: 'categories', path: '/api/v1/categories' },
   tags: { key: 'tags', path: '/api/v1/tags' },
@@ -60,14 +57,7 @@ export function refresh(name: DictName): Promise<void> {
   return ensure(name)
 }
 
-export const ensurePeople = () => ensure('people')
-export const refreshPeople = () => refresh('people')
-
 // 全量导入换掉的是整个库，谁都别再拿旧缓存。
 export async function refreshAll() {
   await Promise.all((Object.keys(SOURCES) as DictName[]).map((n) => refresh(n)))
-}
-
-export function personById(id: string): Person | undefined {
-  return dict.people.find((p) => p.id === id)
 }

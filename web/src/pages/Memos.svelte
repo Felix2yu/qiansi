@@ -2,15 +2,16 @@
   import { onMount } from 'svelte'
   import { API, MEMO_STATUS_LABEL, todayLocal, type Memo } from '../lib/api'
   import { Plus, X } from '@lucide/svelte'
-  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
-  import { dict, ensure } from '../lib/dict.svelte'
+  import { personLabel, loadSelf } from '../lib/self.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
 
   let list = $state<Memo[]>([])
-  const people = $derived(dict.people)
   let onlyPromises = $state(false)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
+  // 编辑时把列表里带的名字交给选人控件显示，省一次回查
+  let pickedName = $state('')
 
   function emptyForm() {
     return { person_id: '', speaker: 'other', content: '', said_at: todayLocal(), is_promise: false, due_date: '', status: 'open' }
@@ -34,18 +35,19 @@
   }
   onMount(() => {
     loadSelf()
-    ensure('people')
     load(true)
   })
 
   function openCreate() {
     editId = ''
     form = emptyForm()
+    pickedName = ''
     showForm = true
   }
 
   function openEdit(m: Memo) {
     editId = m.id
+    pickedName = m.person_name || ''
     form = {
       person_id: m.person_id || '', speaker: m.speaker || 'other', content: m.content,
       said_at: (m.said_at || '').slice(0, 10), is_promise: !!m.is_promise,
@@ -72,9 +74,10 @@
   }
   async function mark(m: Memo, status: string) { m.status = status; await API.put(`/api/v1/memos/${m.id}`, m); await load() }
   async function remove(id: string) { if (confirm('删除？')) { await API.delete(`/api/v1/memos/${id}`); await load() } }
-  function personName(id?: string) {
-    const p = people.find(x => x.id === id)
-    return p ? personLabel(p) : '（未关联）'
+  function memoWho(m: Memo) {
+    if (!m.person_id) return '（未关联）'
+    // 名字随列表一起回来，不再为了这几个字拉全量名单
+    return personLabel({ id: m.person_id, name: m.person_name || '（已删除）' })
   }
 </script>
 <div class="space-y-4">
@@ -105,7 +108,7 @@
           {#if m.status === 'open' && m.is_promise}<button onclick={() => mark(m, 'fulfilled')} style="color: #16a34a;">兑现</button>{/if}
           {#if m.status === 'open' && m.is_promise}<button onclick={() => mark(m, 'broken')} style="color: #dc2626;">未兑现</button>{/if}
           {#if m.status !== 'open'}<span class="px-2 py-0.5 rounded-full" style="background: var(--q-bg);">{MEMO_STATUS_LABEL[m.status] || m.status}</span>{/if}
-          <span>{personName(m.person_id)} · {m.speaker === 'me' ? '我说' : '对方说'} · {new Date(m.said_at).toLocaleDateString()}</span>
+          <span>{memoWho(m)} · {m.speaker === 'me' ? '我说' : '对方说'} · {new Date(m.said_at).toLocaleDateString()}</span>
           {#if m.due_date}<span>到期 {new Date(m.due_date).toLocaleDateString()}</span>{/if}
           <button onclick={() => togglePromise(m)}>{m.is_promise ? '取消承诺' : '标记承诺'}</button>
         </div>
@@ -132,10 +135,7 @@
         <button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button>
       </div>
       <div class="space-y-3">
-        <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">选择联系人（可选）</option>
-          {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-        </select>
+        <PersonPicker bind:value={form.person_id} selectedName={pickedName} placeholder="选择联系人（可选）" />
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.speaker} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
             <option value="other">对方说</option><option value="me">我说</option>

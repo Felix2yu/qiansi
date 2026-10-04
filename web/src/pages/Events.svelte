@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { API, TIMELINE_LABEL, yuan, todayLocal, type Event, type TimelineItem } from '../lib/api'
   import EventForm from '../lib/EventForm.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { Plus, X, Search } from '@lucide/svelte'
@@ -9,8 +10,7 @@
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
   let list = $state<Event[]>([])
   let timeline = $state<TimelineItem[]>([])
-  // 参与人下拉和表单用的名单走共享缓存，不再每页重拉
-  const people = $derived(dict.people)
+  // 事件类型字典走共享缓存，不再每页重拉
   const types = $derived(dict.eventTypes)
   let showForm = $state(false)
   let editId = $state('')
@@ -67,7 +67,6 @@
     if (onlyTimeline) { loadTimeline(); return }
     // 字典进缓存后，翻页与切筛选只剩 /api/v1/events 一个请求
     ensure('eventTypes')
-    ensure('people')
     load(true)
   })
 
@@ -119,11 +118,10 @@
     </ul>
   {:else}
     <div class="flex flex-wrap gap-2">
-      <select bind:value={filterPerson} onchange={() => load()} class="px-3 py-2 rounded-lg text-sm outline-none"
-              style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
-        <option value="">全部参与人</option>
-        {#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-      </select>
+      <div class="w-48">
+        <PersonPicker bind:value={filterPerson} placeholder="全部参与人" compact={true}
+                      onchange={() => load()} />
+      </div>
       <div class="relative flex-1 min-w-[180px]">
         <Search size={14} class="absolute left-3 top-1/2 -translate-y-1/2" style="color: var(--q-muted);" />
         <input bind:value={filterQuery} onkeydown={(e) => e.key === 'Enter' && load()} placeholder="搜索标题 / 地点 / 备注"
@@ -189,7 +187,7 @@
         <h2 class="font-semibold">{editId ? '编辑往来' : '新建往来'}</h2>
         <button onclick={closeForm}><X size={18} /></button>
       </div>
-      <EventForm {editId} preset={formPreset} {types} {people}
+      <EventForm {editId} preset={formPreset} {types}
                  onsave={afterForm} oncancel={closeForm} onremove={remove} />
     </div>
   </div>

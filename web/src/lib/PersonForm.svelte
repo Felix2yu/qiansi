@@ -1,8 +1,7 @@
 <script lang="ts">
-  import { untrack, onMount } from 'svelte'
+  import { untrack } from 'svelte'
   import { API, type Person, type Category, type Tag } from './api'
-  import { selfFirst, personLabel } from './self.svelte'
-  import { dict, ensure } from './dict.svelte'
+  import PersonPicker from './PersonPicker.svelte'
   import PersonRelEditor from './PersonRelEditor.svelte'
 
   let {
@@ -90,11 +89,7 @@
     return { family_name: '', given_name: '', nickname: '', gender: '', grade: 0, birthday: '', birthday_is_lunar: false, phone: '', wechat: '', location: '', notes: '', introduced_by_person_id: '' }
   }
 
-  // 引荐人候选：新建时也要能选，所以弹窗一挂载就要名单（走共享字典缓存）
-  const peopleOptions = $derived(dict.people)
-  onMount(() => { ensure('people') })
-  // 不能把自己设为自己的引荐人；其余人按「本人优先」排序
-  const introducerOptions = $derived(selfFirst(peopleOptions, person?.id ?? ''))
+  // 引荐人改为输入即搜：不再为了一个下拉框把整本名单拉下来
 
   // 人物对象变化（切换编辑目标）时重新灌入表单与标签
   $effect(() => {
@@ -277,11 +272,9 @@
   {/if}
   <div>
     <div class="text-xs mb-1" style="color: var(--q-muted);">通过谁认识（引荐人，留空 = 直接认识）</div>
-    <select bind:value={form.introduced_by_person_id}
-            class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-      <option value="">直接认识</option>
-      {#each introducerOptions as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-    </select>
+    <PersonPicker bind:value={form.introduced_by_person_id}
+                  selectedName={person?.introduced_by_name || ''}
+                  exclude={[person?.id ?? '']} placeholder="直接认识" />
     <p class="text-xs mt-1" style="color: var(--q-muted);">多层关系（同学的对象的闺蜜…）可在关系图上用「引荐链」一次录入。</p>
   </div>
   <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" placeholder="备注、爱好、口味…"

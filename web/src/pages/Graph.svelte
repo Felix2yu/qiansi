@@ -6,13 +6,14 @@
   import { CanvasRenderer } from 'echarts/renderers'
   import { API, RELATION_TYPES, type Person, type Relationship, type Category, type Tag } from '../lib/api'
   import { navigate, route } from '../lib/router'
-  import { self, loadSelf, selfFirst, personLabel } from '../lib/self.svelte'
+  import { self, loadSelf, personLabel } from '../lib/self.svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
   import {
     egoLayout, outwardLabel, circleFill, NO_CIRCLE_COLOR, edgePairKey, laneOf, pairKey,
     introEdgePairs, introChain, vennLayout, type VennCircle,
   } from '../lib/graphLayout'
   import { Plus, X, Link2, Route, Share2, Trash2 } from '@lucide/svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
 
   echarts.use([GraphChart, TooltipComponent, CanvasRenderer])
 
@@ -32,6 +33,8 @@
   // 圈层标尺只画连得上的人，剩下的人得说清楚去哪找
   let orphans = $state(0)
   let centered = $state(false)
+  // 整图一次只取 500 个节点，超出部分后端会如实报截断，不能让人以为人丢了
+  let graphMeta = $state({ truncated: false, total: 0, droppedEdges: 0 })
 
   let view = $state<ViewMode>('rel')
   // 关系视图筛选：空数组=不筛。选了只把不在其中的压暗而不是摘掉，节点一摘布局就跳。
@@ -50,8 +53,8 @@
   let formMode = $state<'rel' | 'chain'>('rel')
   let pending = $state<{ from: string; to: string } | null>(null)
   let form = $state({ from_person_id: '', to_person_id: '', type: RELATION_TYPES[0], remark: '' })
-  let chainRows = $state<{ type: string; personId: string; newName: string }[]>([
-    { type: '同学', personId: '', newName: '' },
+  let chainRows = $state<{ type: string; personId: string; newName: string; isNew: boolean }[]>([
+    { type: '同学', personId: '', newName: '', isNew: false },
   ])
   let busy = $state(false)
   let dragEndedAt = 0
@@ -64,6 +67,7 @@
     people = r.people
     rels = r.relationships
     tagsByPerson = r.tags ?? {}
+    graphMeta = { truncated: !!r.truncated, total: r.total_people ?? 0, droppedEdges: r.dropped_edges ?? 0 }
     // 圈子可能刚被从设置里删掉，选择里留着死 id 会把维恩图选空
     vennSel = vennSel.filter(id => categories.some(c => c.id === id))
     catFilter = catFilter.filter(id => categories.some(c => c.id === id))
@@ -338,7 +342,7 @@
     form = { from_person_id: from, to_person_id: to, type: RELATION_TYPES[0], remark: '' }
     pending = from && to ? { from, to } : null
     if (mode === 'chain') {
-      chainRows = [{ type: '同学', personId: '', newName: '' }]
+      chainRows = [{ type: '同学', personId: '', newName: '', isNew: false }]
     }
     showForm = true
   }
@@ -363,17 +367,22 @@
   }
 
   function addChainRow() {
-    chainRows = [...chainRows, { type: '', personId: '', newName: '' }]
+    chainRows = [...chainRows, { type: '', personId: '', newName: '', isNew: false }]
   }
   function removeChainRow(i: number) {
     chainRows = chainRows.filter((_, idx) => idx !== i)
+  }
+  // 每一跳要么选一个已有的人，要么当场新建；两种输入不能同时留着
+  function toggleChainNew(i: number) {
+    chainRows = chainRows.map((r, idx) => idx !== i ? r
+      : { ...r, isNew: !r.isNew, personId: r.isNew ? r.personId : '', newName: r.isNew ? '' : r.newName })
   }
 
   // 引荐链提交：缺人的先建（仅姓名，引荐人=上一跳），再逐跳建边。
   // 已有人物不覆盖其引荐人；边已存在（409）视为跳过。中途失败不回滚，提示断点。
   async function submitChain() {
     if (!self.id) { alert('请先在人物详情里把自己设为「本人」'); return }
-    const rows = chainRows.filter(r => r.type.trim() && (r.personId || r.newName.trim()))
+    const rows = chainRows.filter(r => r.type.trim() && ((r.isNew ? r.newName.trim() : r.personId)))
     if (rows.length === 0) { alert('至少填写一跳：关系类型 + 人物'); return }
     busy = true
     const failures: string[] = []
@@ -382,7 +391,7 @@
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i]
         let pid = row.personId
-        const isNew = pid === '__new'
+        const isNew = row.isNew
         if (isNew) {
           // 第一跳与我直达，不设引荐人；其后每人的引荐人都是上一跳
           const body: any = { name: row.newName.trim() }
@@ -390,8 +399,10 @@
           const created = await API.post<Person>('/api/v1/people', body)
           pid = created.id
         } else if (prevId !== self.id) {
-          // 已有人物：仅在还没记录引荐人时补上，不覆盖
+          // 已有人物：仅在还没记录引荐人时补上，不覆盖。
+          // 图上只画了前 500 人，搜到的人可能不在这一页里，取不到就按 id 回查。
           const existing = people.find(p => p.id === pid)
+            ?? await API.get<{ person: Person }>(`/api/v1/people/${pid}`).then(r => r.person).catch(() => undefined)
           if (existing && !existing.introduced_by_person_id) {
             const full: any = {
               ...existing,
@@ -413,8 +424,8 @@
         prevId = pid
       }
       closeForm()
-      // 链上可能新建了人、用到了新关系类型，两份缓存都要跟上
-      await Promise.all([load(), refresh('people'), refresh('relTypes')])
+      // 链上可能敲了新关系类型，字典要跟上
+      await Promise.all([load(), refresh('relTypes')])
       if (failures.length) alert('部分环节未成功：\n' + failures.join('\n'))
     } finally {
       busy = false
@@ -507,6 +518,12 @@
       </div>
 
       <div bind:this={chartDiv} style="width: 100%; height: 640px; border-radius: 12px; background: var(--q-surface); border: 1px solid var(--q-border);"></div>
+      {#if graphMeta.truncated}
+        <button class="w-full text-center text-sm py-2" style="color: var(--q-muted);" onclick={() => navigate('/people')}>
+          通讯录共 {graphMeta.total} 人，图里只画前 {people.length} 人（按等级、最近更新排）
+          {#if graphMeta.droppedEdges > 0}，另有 {graphMeta.droppedEdges} 条关系因端点未进图而暂未显示{/if} · 去通讯录
+        </button>
+      {/if}
       {#if centered && orphans > 0}
         <button class="w-full text-center text-sm py-2" style="color: var(--q-muted);" onclick={() => navigate('/people')}>
           另有 {orphans} 人还没有关系连线，未进图 · 去通讯录
@@ -586,16 +603,16 @@
           </div>
         {/if}
         <div class="space-y-3">
-          <div class="grid grid-cols-2 gap-3">
-            <select bind:value={form.from_person_id} disabled={!!pending} class="w-full px-3 py-2 rounded-lg text-sm outline-none disabled:opacity-60" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-              <option value="">甲方…</option>
-              {#each selfFirst(people, form.to_person_id) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-            </select>
-            <select bind:value={form.to_person_id} disabled={!!pending} class="w-full px-3 py-2 rounded-lg text-sm outline-none disabled:opacity-60" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-              <option value="">乙方…</option>
-              {#each selfFirst(people, form.from_person_id) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-            </select>
-          </div>
+          {#if pending}
+            <p class="text-xs" style="color: var(--q-muted);">这一对来自图上的连线，直接填关系类型即可。</p>
+          {:else}
+            <div class="grid grid-cols-2 gap-3">
+              <PersonPicker bind:value={form.from_person_id} exclude={[form.to_person_id]}
+                            placeholder="甲方…" clearable={false} />
+              <PersonPicker bind:value={form.to_person_id} exclude={[form.from_person_id]}
+                            placeholder="乙方…" clearable={false} />
+            </div>
+          {/if}
           <input list="rel-type-options" bind:value={form.type} placeholder="关系类型（可自定义：闺蜜、对象、挚友…）"
                  class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
           <datalist id="rel-type-options">
@@ -622,14 +639,18 @@
               <input list="rel-type-options" bind:value={row.type} placeholder="关系，如 同学/对象/闺蜜"
                      class="w-32 px-2 py-2 rounded-lg text-sm outline-none shrink-0" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
               <span style="color: var(--q-muted);">→</span>
-              <select bind:value={row.personId} class="flex-1 min-w-0 px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-                <option value="">选择已有联系人…</option>
-                <option value="__new">＋ 当场新建一个人</option>
-                {#each selfFirst(people, self.id) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-              </select>
-              {#if row.personId === '__new'}
-                <input bind:value={row.newName} placeholder="新人姓名" class="w-28 px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              {#if row.isNew}
+                <input bind:value={row.newName} placeholder="新人姓名" class="flex-1 min-w-0 px-2 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              {:else}
+                <div class="flex-1 min-w-0">
+                  <PersonPicker bind:value={row.personId} placeholder="选择已有联系人…" clearable={false} />
+                </div>
               {/if}
+              <button class="px-2 py-1.5 rounded-lg text-xs shrink-0" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
+                      title={row.isNew ? '改为选择已有联系人' : '不选人，当场新建一个'}
+                      onclick={() => toggleChainNew(i)}>
+                {row.isNew ? '改选人' : '＋新建'}
+              </button>
               {#if chainRows.length > 1}
                 <button class="p-1 shrink-0" style="color: var(--q-muted);" onclick={() => removeChainRow(i)}><Trash2 size={14} /></button>
               {/if}

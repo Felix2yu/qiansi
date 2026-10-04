@@ -505,10 +505,10 @@ func (a *API) relTypes(w http.ResponseWriter, r *http.Request) {
 
 // graph also returns nodes and their tags
 func (a *API) graph(w http.ResponseWriter, r *http.Request) {
-	people, rels, tags, err := a.Store.RelationshipGraph(r.Context())
+	data, err := a.Store.RelationshipGraph(r.Context())
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"people": people, "relationships": rels, "tags": tags})
+	writeJSON(w, 200, data)
 }

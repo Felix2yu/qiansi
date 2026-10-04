@@ -427,6 +427,9 @@ WHERE ep.event_id IN (`+ph+`) ORDER BY ep.event_id,ep.rowid`, args...)
 type Memo struct {
 	ID        string `json:"id"`
 	PersonID  string `json:"person_id,omitempty"`
+	// PersonName 只用于读取：对话列表要显示「谁说的」，
+	// 但前端已经不再为了这几个名字拉全量名单。
+	PersonName string `json:"person_name,omitempty"`
 	Speaker   string `json:"speaker"`
 	Content   string `json:"content"`
 	SaidAt    string `json:"said_at"`
@@ -470,7 +473,7 @@ func (s *Store) MemoDelete(ctx context.Context, id string) error {
 
 func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool, limit, offset int) ([]*Memo, error) {
 	if limit <= 0 { limit = 50 }
-	q := `SELECT m.id,m.person_id,m.speaker,m.content,m.said_at,m.is_promise,m.due_date,m.status,m.created_at FROM memos m WHERE 1=1`
+	q := `SELECT m.id,m.person_id,p.name,m.speaker,m.content,m.said_at,m.is_promise,m.due_date,m.status,m.created_at FROM memos m LEFT JOIN people p ON p.id=m.person_id WHERE 1=1`
 	var args []any
 	if personID != "" {
 		q += " AND m.person_id=?"; args = append(args, personID)
@@ -486,11 +489,12 @@ func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool
 	list := []*Memo{}
 	for rows.Next() {
 		m := &Memo{}
-		var personIDStr, due sql.NullString
-		if err := rows.Scan(&m.ID, &personIDStr, &m.Speaker, &m.Content, &m.SaidAt, &m.IsPromise, &due, &m.Status, &m.CreatedAt); err != nil {
+		var personIDStr, name, due sql.NullString
+		if err := rows.Scan(&m.ID, &personIDStr, &name, &m.Speaker, &m.Content, &m.SaidAt, &m.IsPromise, &due, &m.Status, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		if personIDStr.Valid { m.PersonID = personIDStr.String }
+		if name.Valid { m.PersonName = name.String }
 		if due.Valid { m.DueDate = due.String }
 		list = append(list, m)
 	}
@@ -1549,18 +1553,50 @@ func (s *Store) RelationshipTypes(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) RelationshipGraph(ctx context.Context) ([]*Person, []*Relationship, map[string][]*Tag, error) {
-	people, err := s.PersonList(ctx, "", 0, 0, false, 0, 500, 0)
-	if err != nil { return nil, nil, nil, err }
+// graphNodeLimit 是整图一次能取回的节点上限。图谱要画全量关系，
+// 只能整页取人；超过这个数就按等级/最近更新截断，并把截断如实报出去。
+const graphNodeLimit = 500
+
+// GraphData 关系图的一页数据。截断不是静默的：被丢掉的人与因此悬空的边
+// 都计数返回，前端据此提示「图里只有前 N 人」。
+type GraphData struct {
+	People        []*Person          `json:"people"`
+	Relationships []*Relationship    `json:"relationships"`
+	Tags          map[string][]*Tag  `json:"tags"`
+	TotalPeople   int                `json:"total_people"`
+	Truncated     bool               `json:"truncated"`
+	DroppedEdges  int                `json:"dropped_edges"`
+}
+
+func (s *Store) RelationshipGraph(ctx context.Context) (*GraphData, error) {
+	out := &GraphData{People: []*Person{}, Relationships: []*Relationship{}, Tags: map[string][]*Tag{}}
+	people, err := s.PersonList(ctx, "", 0, 0, false, 0, graphNodeLimit, 0)
+	if err != nil { return nil, err }
+	total, err := s.PersonCount(ctx)
+	if err != nil { return nil, err }
 	rels, err := s.RelationshipList(ctx)
-	if err != nil { return nil, nil, nil, err }
+	if err != nil { return nil, err }
 	ids := make([]string, len(people))
+	kept := make(map[string]bool, len(people))
 	for i, p := range people {
 		ids[i] = p.ID
+		kept[p.ID] = true
+	}
+	// 端点没进这一页的边直接丢掉，否则图上会出现没有节点的悬空连线
+	for _, r := range rels {
+		if kept[r.FromPerson] && kept[r.ToPerson] {
+			out.Relationships = append(out.Relationships, r)
+		} else {
+			out.DroppedEdges++
+		}
 	}
 	tags, err := s.TagsFor(ctx, ids)
-	if err != nil { return nil, nil, nil, err }
-	return people, rels, tags, nil
+	if err != nil { return nil, err }
+	out.People = people
+	out.Tags = tags
+	out.TotalPeople = total
+	out.Truncated = total > len(people)
+	return out, nil
 }
 
 // ===== Attachments =====

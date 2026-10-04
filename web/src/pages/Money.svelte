@@ -3,15 +3,17 @@
   import { API, yuan, toFen, todayLocal, KIND_LABEL, DIRECTION_LABEL,
            type Transaction, type Repayment } from '../lib/api'
   import { Plus, X, Trash2 } from '@lucide/svelte'
-  import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
+  import { personLabel, loadSelf } from '../lib/self.svelte'
   import { dict, ensure } from '../lib/dict.svelte'
+  import PersonPicker from '../lib/PersonPicker.svelte'
 
   let list = $state<Transaction[]>([])
-  const people = $derived(dict.people)
   const events = $derived(dict.events)
   let showForm = $state(false)
   let editId = $state('')
   let form = $state(emptyForm())
+  // 编辑时把账目自带的名字交给选人控件显示，省一次回查
+  let pickedName = $state('')
   // 还款面板
   let repayOf = $state<Transaction | null>(null)
   let repayList = $state<Repayment[]>([])
@@ -42,7 +44,6 @@
   }
   onMount(() => {
     loadSelf()
-    ensure('people')
     ensure('events')
     load(true)
   })
@@ -50,12 +51,14 @@
   function openCreate() {
     editId = ''
     form = emptyForm()
+    pickedName = ''
     showForm = true
   }
 
   async function openEdit(t: Transaction) {
     const full = await API.get(`/api/v1/transactions/${t.id}`) as Transaction
     editId = full.id
+    pickedName = full.person_name || ''
     form = {
       person_id: full.person_id, kind: full.kind, direction: full.direction,
       amount_yuan: yuan(full.amount_fen), title: full.title || '',
@@ -85,7 +88,10 @@
 
   async function remove(id: string) { if (confirm('删除这笔记录？')) { await API.delete(`/api/v1/transactions/${id}`); await load() } }
 
-  function personName(id: string) { const p = people.find(x => x.id === id); return p ? personLabel(p) : '?' }
+  // 名字随账目一起回来，不再为了这几个字拉全量名单
+  function who(t: { person_id: string; person_name?: string }) {
+    return personLabel({ id: t.person_id, name: t.person_name || '（已删除）' })
+  }
   function remaining(t: Transaction) { return Math.max(0, t.amount_fen - (t.repaid_fen || 0)) }
 
   async function openRepay(t: Transaction) {
@@ -149,7 +155,7 @@
           {t.direction === 'out' ? '出' : '入'}
         </div>
         <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium truncate">{personName(t.person_id)}{t.title && ` · ${t.title}`}</div>
+          <div class="text-sm font-medium truncate">{who(t)}{t.title && ` · ${t.title}`}</div>
           <div class="text-xs mt-0.5" style="color: var(--q-muted);">
             ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} · {DIRECTION_LABEL[t.direction] || t.direction} · {new Date(t.occurred_at).toLocaleDateString()}
             {#if t.kind === 'loan'}
@@ -188,9 +194,7 @@
     <div class="relative w-full max-w-lg rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <div class="flex items-center justify-between mb-4"><h2 class="font-semibold">{editId ? '编辑' : '新建'}</h2><button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button></div>
       <div class="space-y-3">
-        <select bind:value={form.person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-          <option value="">选择联系人</option>{#each selfFirst(people) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
-        </select>
+        <PersonPicker bind:value={form.person_id} selectedName={pickedName} placeholder="选择联系人" clearable={false} />
         <div class="grid grid-cols-2 gap-3">
           <select bind:value={form.kind} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);">
             <option value="loan">借还</option><option value="gift">礼物</option><option value="expense">花销</option><option value="other">其它</option>
@@ -228,7 +232,7 @@
     <button type="button" aria-label="关闭弹窗" class="absolute inset-0 cursor-default" style="background: rgba(0,0,0,0.3); border: 0;" onclick={() => (repayOf = null)}></button>
     <div class="relative w-full max-w-lg rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
       <div class="flex items-center justify-between mb-4">
-        <h2 class="font-semibold">还款流水 · {personName(repayOf.person_id)}</h2>
+        <h2 class="font-semibold">还款流水 · {who(repayOf)}</h2>
         <button onclick={() => repayOf = null}><X size={18} /></button>
       </div>
       <div class="text-sm mb-3" style="color: var(--q-muted);">
