@@ -45,6 +45,12 @@
   ]
 
   let mobileOpen = $state(false)
+  let mobileSearch = $state(false)
+
+  // 全屏搜索层弹出时把光标放进输入框：手机上多一次点击就多一次放弃
+  function autofocus(el: HTMLInputElement) {
+    el.focus()
+  }
 
   // 主题：本地值同步应用（防首屏闪白），再从服务端同步偏好。
   // 判定逻辑集中在 lib/theme.svelte.ts，这里只负责触发。
@@ -73,12 +79,13 @@
   }
 
   function onSearchKey(e: KeyboardEvent) {
-    if (e.key === 'Escape') { searchOpen = false; return }
+    if (e.key === 'Escape') { searchOpen = false; mobileSearch = false; return }
     if (e.key === 'Enter' && searchResults.length > 0) openResult(searchResults[0])
   }
 
   function openResult(r: SearchResult) {
     searchOpen = false
+    mobileSearch = false
     navigate(r.type === 'person' ? r.path : r.path)
   }
 
@@ -179,6 +186,12 @@
   <div class="md:hidden fixed top-0 inset-x-0 z-30 border-b flex items-center justify-between px-4 py-2" style="background: var(--q-surface); border-color: var(--q-border);">
     <div class="font-semibold">牵丝</div>
     <div class="flex items-center gap-1">
+      <!-- 移动端唯一的查询入口：手机才是「当场想起一个人」的终端，搜索不能只活在侧栏 -->
+      <button onclick={() => { searchQ = ''; searchResults = []; searchOpen = false; mobileSearch = true }}
+              title="搜索" aria-label="搜索"
+              class="w-7 h-7 rounded flex items-center justify-center" style="color: var(--q-muted);">
+        <Search size={17} />
+      </button>
       <!-- 移动端逐档循环切换外观：系统 → 浅色 → 深色 → 系统 -->
       <button onclick={() => setThemeMode(nextMode(theme.mode))} title={`外观：${THEME_LABEL[theme.mode]}`}
               aria-label={`外观：${THEME_LABEL[theme.mode]}，点击切换`}
@@ -201,6 +214,39 @@
           <span>{it.label}</span>
         </a>
       {/each}
+    </div>
+  {/if}
+
+  <!-- 移动端全屏搜索层：与侧栏搜索共用同一份 query 与结果，不另起一套逻辑 -->
+  {#if mobileSearch}
+    <div class="md:hidden fixed inset-0 z-40 flex flex-col" style="background: var(--q-bg);">
+      <div class="flex items-center gap-2 px-3 py-2 border-b" style="background: var(--q-surface); border-color: var(--q-border);">
+        <input use:autofocus bind:value={searchQ} oninput={runSearch} onkeydown={onSearchKey}
+               placeholder="搜索人物、往来、对话…"
+               class="flex-1 min-w-0 px-3 py-2 rounded-lg text-sm outline-none"
+               style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+        <button class="px-2 py-1 text-sm" style="color: var(--q-muted);"
+                onclick={() => { mobileSearch = false; searchQ = ''; searchResults = []; searchOpen = false }}>取消</button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        {#if searchResults.length === 0}
+          <div class="text-center py-10 text-sm" style="color: var(--q-muted);">
+            {searchQ.trim() ? '没有匹配的记录' : '输入名字、事由或对话内容'}
+          </div>
+        {:else}
+          <ul>
+            {#each searchResults as r}
+              <li>
+                <button class="w-full text-left px-4 py-3 flex items-center gap-2 border-b"
+                        style="border-color: var(--q-border); color: var(--q-text);" onclick={() => openResult(r)}>
+                  <span class="text-[10px] px-1.5 py-0.5 rounded shrink-0" style="background: var(--q-surface); color: var(--q-muted);">{SEARCH_LABEL[r.type] || r.type}</span>
+                  <span class="truncate">{r.title}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
     </div>
   {/if}
 
