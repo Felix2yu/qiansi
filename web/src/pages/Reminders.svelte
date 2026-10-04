@@ -30,8 +30,17 @@
     showForm = true
   }
 
+  // 派生待办（纪念日、承诺）不在 reminders 表里，id 是合成串：
+  // 改与删都要回到各自的来源页，否则 PUT/DELETE 打在不存在的行上假装成功。
+  function derivedNotice(r: Reminder, action: '改' | '删'): string {
+    if (r.id.startsWith('anniv:')) return `纪念日自动生成的提醒请到「纪念日」里${action}`
+    if (r.id.startsWith('promise:')) return `到期承诺自动生成的待办请到「对话」里${action}`
+    return ''
+  }
+
   function openEdit(r: Reminder) {
-    if (r.id.startsWith('anniv:')) { alert('纪念日自动生成的提醒请到「纪念日」里调整'); return }
+    const notice = derivedNotice(r, '改')
+    if (notice) { alert(notice); return }
     editId = r.id
     form = {
       title: r.title, due_at: (r.due_at || '').slice(0, 10),
@@ -83,7 +92,8 @@
     await load()
   }
   async function remove(r: Reminder) {
-    if (r.id.startsWith('anniv:')) { alert('纪念日提醒请到「纪念日」里删除'); return }
+    const notice = derivedNotice(r, '删')
+    if (notice) { alert(notice); return }
     if (confirm('删除？')) { await API.delete(`/api/v1/reminders/${r.id}`); await load() }
   }
 </script>

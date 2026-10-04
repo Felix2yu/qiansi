@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -296,6 +297,20 @@ func (a *API) txGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, t)
 }
 
+// normalizeTx 收口「欠账」的语义：只有借还（loan）才有未结清这回事。
+//
+// 礼物/花销/其它是一笔了结的支出，前端不再给出「已结清」勾选，这里直接置位，
+// 免得一条勾漏的礼物被算进首页的「我借出（未还）」并生成「某人待还 ¥N」的建议。
+// kind 为空按「其它」处理，否则会留下既不是借还、又没有结清语义的死角数据。
+func normalizeTx(t *store.Transaction) {
+	if t.Kind == "" {
+		t.Kind = "other"
+	}
+	if t.Kind != "loan" {
+		t.Settled = true
+	}
+}
+
 func (a *API) txCreate(w http.ResponseWriter, r *http.Request) {
 	var t store.Transaction
 	if err := decode(r, &t); err != nil {
@@ -306,6 +321,7 @@ func (a *API) txCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "occurred_at required")
 		return
 	}
+	normalizeTx(&t)
 	if err := a.Store.TransactionCreate(r.Context(), &t); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -321,6 +337,7 @@ func (a *API) txUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.ID = id
+	normalizeTx(&t)
 	if err := a.Store.TransactionUpdate(r.Context(), &t); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -490,13 +507,40 @@ func (a *API) registerReminders(r chi.Router) {
 	})
 }
 
+// reminderList 待办页列表。
+//
+// 除了 reminders 表里的行，还把纪念日与承诺派生出的待办一并列出：页面标题一直写着
+// 「自定义 & 自动生成」，但过去只查表，派生项只在今日页露面，用户在待办页看到的
+// 偏偏是空表。派生项不在表里，分页只能在合并排序之后切，所以表里的行先取全。
 func (a *API) reminderList(w http.ResponseWriter, r *http.Request) {
-	list, err := a.Store.ReminderList(r.Context(),
-		r.URL.Query().Get("status"),
-		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
+	ctx := r.Context()
+	status := r.URL.Query().Get("status")
+	limit := parseIntQuery(r, "limit", 50)
+	offset := parseIntQuery(r, "offset", 0)
+	list, err := a.Store.ReminderList(ctx, status, 0, 0)
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if status == "" || status == "pending" {
+		if annivs, err := a.Store.AnniversaryUpcoming(ctx, 0); err == nil {
+			list = append(list, annivs...)
+		}
+		if promises, err := a.Store.PromiseUpcoming(ctx, 0); err == nil {
+			list = append(list, promises...)
+		}
+		sort.SliceStable(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
+	}
+	if limit > 0 {
+		if offset >= len(list) {
+			list = []*store.Reminder{}
+		} else {
+			end := offset + limit
+			if end > len(list) {
+				end = len(list)
+			}
+			list = list[offset:end]
+		}
 	}
 	writeJSON(w, 200, list)
 }
@@ -531,8 +575,20 @@ func (a *API) reminderCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, rm)
 }
 
+// derivedReminder 判断 id 是不是派生待办的合成串（纪念日 / 承诺）。
+//
+// 这类行不在 reminders 表里：UPDATE/DELETE 会静默影响 0 行并回成功，
+// 用户以为改掉了，刷新后又原样出现，所以除了「完成」都要挡回去。
+func derivedReminder(id string) bool {
+	return strings.HasPrefix(id, "anniv:") || strings.HasPrefix(id, "promise:")
+}
+
 func (a *API) reminderUpdate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if derivedReminder(id) {
+		writeErr(w, 400, "这条是自动生成的待办，请到纪念日或对话里修改")
+		return
+	}
 	var rm store.Reminder
 	if err := decode(r, &rm); err != nil {
 		writeErr(w, 400, err.Error())
@@ -548,6 +604,10 @@ func (a *API) reminderUpdate(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) reminderDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	if derivedReminder(id) {
+		writeErr(w, 400, "这条是自动生成的待办，请到纪念日或对话里删除")
+		return
+	}
 	if err := a.Store.ReminderDelete(r.Context(), id); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -560,6 +620,7 @@ func (a *API) reminderDelete(w http.ResponseWriter, r *http.Request) {
 // 纪念日衍生待办的 id 是合成串 "anniv:<anniversary_id>:<date>:<offset>"，
 // 它们并不存在于 reminders 表，走 UPDATE 会静默影响 0 行并返回 204，
 // 用户以为已完成，刷新后又原样出现。这里单独落一条 dismiss 记录。
+// 承诺衍生待办（"promise:<memo_id>"）同理，但语义更实：完成 = 承诺兑现。
 func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if strings.HasPrefix(id, "anniv:") {
@@ -570,6 +631,19 @@ func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.Store.AnniversaryDismiss(r.Context(), annivID, occurrence); err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
+	if strings.HasPrefix(id, "promise:") {
+		memoID := strings.TrimPrefix(id, "promise:")
+		if memoID == "" {
+			writeErr(w, 400, "bad promise reminder id")
+			return
+		}
+		if err := a.Store.MemoFulfill(r.Context(), memoID); err != nil {
 			writeErr(w, 500, err.Error())
 			return
 		}

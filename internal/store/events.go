@@ -664,16 +664,22 @@ func (s *Store) ReminderDone(ctx context.Context, id string) error {
 	return err
 }
 
+// ReminderList 列出 reminders 表里的待办。
+//
+// limit<=0 表示不限：API 层要把纪念日/承诺的派生待办合并进来后再分页，
+// 表里的行必须先取全，否则合并后的顺序与 offset 都对不上。
 func (s *Store) ReminderList(ctx context.Context, status string, limit, offset int) ([]*Reminder, error) {
-	if limit <= 0 { limit = 50 }
 	q := `SELECT r.id,r.person_id,r.ref_type,r.ref_id,r.title,r.due_at,r.status,r.created_at,r.completed_at,p.name
 FROM reminders r LEFT JOIN people p ON r.person_id=p.id WHERE 1=1`
 	var args []any
 	if status != "" {
 		q += " AND r.status=?"; args = append(args, status)
 	}
-	q += " ORDER BY r.due_at ASC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
+	q += " ORDER BY r.due_at ASC"
+	if limit > 0 {
+		q += " LIMIT ? OFFSET ?"
+		args = append(args, limit, offset)
+	}
 	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil { return nil, err }
 	defer rows.Close()
@@ -693,8 +699,9 @@ FROM reminders r LEFT JOIN people p ON r.person_id=p.id WHERE 1=1`
 	return list, rows.Err()
 }
 
-// ReminderUpcoming returns explicit reminders plus anniversary-derived entries
-// whose next solar occurrence falls within `horizonDays`.
+// ReminderUpcoming returns explicit reminders plus entries derived from
+// anniversaries (next solar occurrence within `horizonDays`) and from open
+// promises whose due date has arrived or passed.
 //
 // 时间基准统一为本地时区（见 store.nowLocal 注释）；horizonDays<=0 表示不限。
 func (s *Store) ReminderUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
@@ -728,8 +735,13 @@ WHERE r.status='pending'`
 	annivs, err := s.AnniversaryUpcoming(ctx, horizonDays)
 	if err == nil {
 		list = append(list, annivs...)
-		sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
 	}
+	// Merge open promises that have reached (or passed) their due date
+	promises, err := s.PromiseUpcoming(ctx, horizonDays)
+	if err == nil {
+		list = append(list, promises...)
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
 	return list, nil
 }
 
@@ -840,6 +852,68 @@ func (s *Store) AnniversaryDismiss(ctx context.Context, anniversaryID, occurrenc
 	_, err := s.DB.ExecContext(ctx,
 		"INSERT OR IGNORE INTO anniversary_dismiss(anniversary_id,occurrence,created_at) VALUES(?,?,?)",
 		anniversaryID, occurrence, nowUTC())
+	return err
+}
+
+// PromiseUpcoming 把「答应帮 TA 办的事」派生成待办：只取承诺、仍挂着、且写了到期日的。
+//
+// 承诺是人情往来里最容易失信、后果最重的一类记录，但它过去只躺在 memos 表里，
+// 到期那天既不出现在待办里，也不进每日摘要 —— 提醒链断在最需要它的一环。
+//
+// 与纪念日不同，承诺本身有状态（open/fulfilled/broken），勾掉即转 fulfilled，
+// 不需要额外的 dismiss 表；逾期的照旧返回，因为「到期没办」才是最该被看到的一条。
+// horizonDays<=0 表示不设上限。
+func (s *Store) PromiseUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
+	q := `SELECT m.id,m.person_id,m.content,m.due_date,p.name FROM memos m
+LEFT JOIN people p ON p.id=m.person_id
+WHERE m.is_promise=1 AND m.status='open' AND m.due_date IS NOT NULL AND m.due_date <> ''`
+	var args []any
+	if horizonDays > 0 {
+		// 到期日可能存成 YYYY-MM-DD 或带时间的串，取前 10 位按日期比较
+		q += " AND substr(m.due_date,1,10)<=?"
+		args = append(args, daysFromTodayLocal(horizonDays))
+	}
+	q += " ORDER BY substr(m.due_date,1,10) ASC"
+	rows, err := s.DB.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []*Reminder{}
+	for rows.Next() {
+		var id, content, dueDate, personID, personName sql.NullString
+		if err := rows.Scan(&id, &personID, &content, &dueDate, &personName); err != nil {
+			return nil, err
+		}
+		day := dueDate.String
+		if len(day) > 10 {
+			day = day[:10]
+		}
+		if day == "" {
+			continue
+		}
+		text := strings.TrimSpace(content.String)
+		if r := []rune(text); len(r) > 40 {
+			text = string(r[:40]) + "…"
+		}
+		list = append(list, &Reminder{
+			ID:         "promise:" + id.String,
+			PersonID:   personID.String,
+			RefType:    "promise",
+			RefID:      id.String,
+			Title:      "承诺：" + text,
+			DueAt:      day + "T09:00:00",
+			Status:     "pending",
+			PersonName: personName.String,
+		})
+	}
+	return list, rows.Err()
+}
+
+// MemoFulfill 把一条承诺记为已兑现。只动承诺项，避免误改普通对话的状态。
+func (s *Store) MemoFulfill(ctx context.Context, memoID string) error {
+	_, err := s.DB.ExecContext(ctx,
+		"UPDATE memos SET status='fulfilled' WHERE id=? AND is_promise=1", memoID)
 	return err
 }
 
