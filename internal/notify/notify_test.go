@@ -46,40 +46,131 @@ func TestNotifyRunTick(t *testing.T) {
 	ctx := context.Background()
 	s := newNotifyStore(t)
 
-	// 覆盖三种 push_time_hour 配置：未设置(默认9)、非法值(Sscanf 失败)、当前小时。
+	// 覆盖三种 push_time_hour 配置：未设置(默认9)、非法值、当前小时。
 	// 未设置：走 err==nil && v=="" 分支
 	if err := s.SettingSet(ctx, "push_time_hour", ""); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s)
+	runTick(ctx, s, time.Now())
 
-	// 非法值：Sscanf 失败，pushHour 保持默认
+	// 非法值：解析失败，pushHour 回落到默认
 	if err := s.SettingSet(ctx, "push_time_hour", "abc"); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s)
+	runTick(ctx, s, time.Now())
 
-	// 当前小时 + 分钟<5 时才触发 digest（apprise_urls 为空 → sendDigest 提前返回，不发网络）
+	// 已过配置时刻 → 触发 digest（apprise_urls 为空 → sendDigest 提前返回，不发网络）
 	if err := s.SettingSet(ctx, "push_time_hour", fmt.Sprint(time.Now().Hour())); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	runTick(ctx, s)
-	runTick(ctx, s)
+	runTick(ctx, s, time.Now())
+	runTick(ctx, s, time.Now())
+}
+
+// M3 回归防护：旧实现是 `Hour()==N && Minute()<5` 的窗口判定，配 30 分钟 ticker，
+// tick 相位由进程启动时刻决定，多数部署永远撞不进那个 5 分钟窗口 —— 配了推送也收不到。
+func TestNotifyDailyTasksFireAfterTheirHour(t *testing.T) {
+	ctx := context.Background()
+	s := newNotifyStore(t)
+	if err := s.SettingSet(ctx, "push_time_hour", "9"); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	if err := s.SettingSet(ctx, "apprise_urls", ""); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	p := &store.Person{Name: "甲乙"}
+	if err := s.PersonCreate(ctx, p); err != nil {
+		t.Fatalf("PersonCreate: %v", err)
+	}
+
+	// 相位不在任何 5 分钟窗口里：14:37
+	at := func(h, m int) time.Time {
+		y, mo, d := time.Now().Local().Date()
+		return time.Date(y, mo, d, h, m, 0, 0, time.Local)
+	}
+	runTick(ctx, s, at(14, 37))
+
+	var snapDay, digestDay string
+	want := at(14, 37).Format("2006-01-02")
+	if err := s.DB.QueryRow("SELECT day FROM intimacy_snapshots WHERE person_id=?", p.ID).Scan(&snapDay); err != nil {
+		t.Fatalf("快照未按 03:00 之后补跑: %v", err)
+	}
+	if snapDay != want {
+		t.Errorf("快照日期 = %s, want 本地日期 %s", snapDay, want)
+	}
+	if digestDay, _ = s.SettingGet(ctx, keyDigestDay); digestDay != want {
+		t.Errorf("摘要记账日 = %q, want %s（14:37 已过 09:00，应补发一次）", digestDay, want)
+	}
+
+	// 同一天再来一次：已经做成，不重复推送
+	if err := s.SettingSet(ctx, "apprise_urls", "json://127.0.0.1:1"); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	if err := s.ReminderCreate(ctx, &store.Reminder{Title: "回礼", DueAt: want + "T09:00:00", Status: "pending"}); err != nil {
+		t.Fatalf("ReminderCreate: %v", err)
+	}
+	runTick(ctx, s, at(15, 3))
+	if v, _ := s.SettingGet(ctx, keyDigestDay); v != want {
+		t.Errorf("同日重复触发：记账日被改成了 %q", v)
+	}
+
+	// 换到第二天：重新排期
+	if err := s.SettingSet(ctx, keySnapshotDay, ""); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	if err := s.SettingSet(ctx, keyDigestDay, ""); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	runTick(ctx, s, at(8, 0)) // 08:00：过 03:00 → 快照跑；未到 09:00 → 摘要不跑
+	if v, _ := s.SettingGet(ctx, keySnapshotDay); v == "" {
+		t.Errorf("次日 08:00 应补跑快照")
+	}
+	if v, _ := s.SettingGet(ctx, keyDigestDay); v != "" {
+		t.Errorf("次日 08:00 不该发 09:00 的摘要, got %q", v)
+	}
+}
+
+// 推送失败不记账：否则一次网络抖动就丢掉整天的摘要。
+func TestNotifyDigestFailureRetriesSameDay(t *testing.T) {
+	ctx := context.Background()
+	s := newNotifyStore(t)
+	// 合法 scheme、关闭端口 → Send 立刻失败，不出网
+	if err := s.SettingSet(ctx, "apprise_urls", "json://127.0.0.1:1"); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	if err := s.SettingSet(ctx, "push_time_hour", "9"); err != nil {
+		t.Fatalf("SettingSet: %v", err)
+	}
+	now := time.Now().Local().AddDate(0, 0, 1)
+	now = time.Date(now.Year(), now.Month(), now.Day(), 10, 0, 0, 0, time.Local)
+	due := time.Now().Local().AddDate(0, 0, 2).Format("2006-01-02T09:00:00")
+	if err := s.ReminderCreate(ctx, &store.Reminder{Title: "还钱给小李", DueAt: due, Status: "pending"}); err != nil {
+		t.Fatalf("ReminderCreate: %v", err)
+	}
+
+	runTick(ctx, s, now)
+	if v, _ := s.SettingGet(ctx, keyDigestDay); v == now.Format("2006-01-02") {
+		t.Errorf("推送失败却记了账，今天再也不会重试")
+	}
 }
 
 func TestNotifySnapshotAll(t *testing.T) {
 	ctx := context.Background()
 
-	// PersonList 出错（people 表被删）→ 静默返回，不 panic
+	// PersonList 出错（people 表被删）→ 返回错误，调用方不记账、下次重试
 	broken := newNotifyStore(t)
 	if _, err := broken.DB.Exec("DROP TABLE people"); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
-	snapshotAll(ctx, broken)
+	if err := snapshotAll(ctx, broken, time.Now()); err == nil {
+		t.Error("people 表缺失时快照应返回错误")
+	}
 
 	// 空库：不应 panic、不应写入
 	s := newNotifyStore(t)
-	snapshotAll(ctx, s)
+	if err := snapshotAll(ctx, s, time.Now()); err != nil {
+		t.Fatalf("snapshotAll(empty): %v", err)
+	}
 	var n int
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
@@ -97,7 +188,9 @@ func TestNotifySnapshotAll(t *testing.T) {
 	if err := s.PersonCreate(ctx, p2); err != nil {
 		t.Fatalf("PersonCreate: %v", err)
 	}
-	snapshotAll(ctx, s)
+	if err := snapshotAll(ctx, s, time.Now()); err != nil {
+		t.Fatalf("snapshotAll: %v", err)
+	}
 
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
@@ -106,7 +199,9 @@ func TestNotifySnapshotAll(t *testing.T) {
 		t.Errorf("snapshots = %d, want 2", n)
 	}
 	// 重复执行走 INSERT OR REPLACE，不应翻倍
-	snapshotAll(ctx, s)
+	if err := snapshotAll(ctx, s, time.Now()); err != nil {
+		t.Fatalf("snapshotAll again: %v", err)
+	}
 	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count again: %v", err)
 	}

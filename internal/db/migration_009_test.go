@@ -64,7 +64,8 @@ func TestMigration009IntroducedBy(t *testing.T) {
 		t.Fatalf("删掉引荐人后应 SET NULL，得到 %q", intro.String)
 	}
 
-	if got := getVersion(ctx, d); got != 9 {
-		t.Fatalf("schema_version = %d，期望跑到 009", got)
+	// 只断言「至少跑到 009」：后面再加迁移文件时不必回来改这里（与 008 的写法一致）
+	if got := getVersion(ctx, d); got < 9 {
+		t.Fatalf("schema_version = %d，期望至少 009", got)
 	}
 }

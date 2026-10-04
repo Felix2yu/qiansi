@@ -36,7 +36,7 @@ func newFixture(t *testing.T) *fixture {
 		t.Fatal(err)
 	}
 	st := store.New(db)
-	return &fixture{r: New(st, db, cfg), st: st, dir: dir, ctx: context.Background()}
+	return &fixture{r: New(st, cfg), st: st, dir: dir, ctx: context.Background()}
 }
 
 func (f *fixture) save(t *testing.T, s Schedule) {
@@ -73,7 +73,7 @@ func TestSaveSchedulePersistsAndNormalizes(t *testing.T) {
 	f := newFixture(t)
 	f.save(t, Schedule{Enabled: true, Frequency: "hourly", At: "99:99", Keep: 1000})
 	// 重新构造 Runner 读库，确认真的落盘了（不是只改了内存）
-	got := New(f.st, f.st.DB, f.r.Cfg).LoadSchedule(f.ctx)
+	got := New(f.st, f.r.Cfg).LoadSchedule(f.ctx)
 	if got.Frequency != "daily" || got.At != "04:00" || got.Keep != 200 {
 		t.Fatalf("应归一化后落盘，得到 %+v", got)
 	}
