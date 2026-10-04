@@ -149,6 +149,9 @@
               {#if e.expense_fen}
                 <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);">花费 ¥{yuan(e.expense_fen)}</span>
               {/if}
+              {#if e.gift_amount_fen}
+                <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);">{e.gift_direction === 'in' ? '收到礼金' : '随礼'} ¥{yuan(e.gift_amount_fen)}</span>
+              {/if}
             </div>
             {#if e.summary}<div class="text-sm mt-1 line-clamp-2" style="color: var(--q-muted);">{e.summary}</div>{/if}
           </div>

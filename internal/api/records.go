@@ -81,6 +81,10 @@ func (a *API) eventCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if err := prepareEventGift(&body.Event, body.ParticipantIDs); err != nil {
+		badRequestErr(w, err)
+		return
+	}
 	if err := a.Store.EventCreate(r.Context(), &body.Event, body.ParticipantIDs, expense); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -123,6 +127,33 @@ func eventExpense(e *store.Event, participantIDs []string) (*store.EventExpense,
 	}, nil
 }
 
+// prepareEventGift 把事件表单上的礼金翻译成要落账的那笔往来（N2）。
+// 金额为空/0 表示「这一场没有礼金」，store 会在同一事务里清掉原有那笔。
+// 归属人沿用开销的约定：没指定就用首位参与人，一个人都没有就不该凭空记一笔账。
+func prepareEventGift(e *store.Event, participantIDs []string) error {
+	if e.GiftAmountFen == 0 {
+		e.GiftDirection = ""
+		e.GiftPersonID = ""
+		return nil
+	}
+	if e.GiftAmountFen < 0 {
+		return errors.New("gift_amount_fen 不能为负")
+	}
+	if err := oneOf("gift_direction", e.GiftDirection, "out", "in"); err != nil {
+		return err
+	}
+	if e.GiftDirection == "" {
+		e.GiftDirection = "out"
+	}
+	if e.GiftPersonID == "" && len(participantIDs) > 0 {
+		e.GiftPersonID = participantIDs[0]
+	}
+	if e.GiftPersonID == "" {
+		return errors.New("记录礼金需要至少一位参与人（或指定礼金归属人）")
+	}
+	return nil
+}
+
 func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	var body struct {
@@ -151,6 +182,10 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	expense, err := eventExpense(&body.Event, body.ParticipantIDs)
 	if err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	if err := prepareEventGift(&body.Event, body.ParticipantIDs); err != nil {
+		badRequestErr(w, err)
 		return
 	}
 	if err := a.Store.EventUpdate(r.Context(), &body.Event, body.ParticipantIDs, expense); err != nil {

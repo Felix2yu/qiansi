@@ -35,6 +35,13 @@ type Event struct {
 	ExpenseFen      int            `json:"expense_fen,omitempty"` // 关联开销合计（分）
 	ExpensePersonID string         `json:"expense_person_id,omitempty"`
 	Expenses        []*Transaction `json:"expenses,omitempty"`
+	// 事件自带的那笔礼金（N2）。金额/方向/归属都是 transactions 的投影，
+	// 写入时它们是表单上填的意图，读出时是账本上的现状；
+	// GiftTransactionID 指向被事件认领的那一条，手工登记的礼单不在其列。
+	GiftTransactionID string `json:"gift_transaction_id,omitempty"`
+	GiftAmountFen     int    `json:"gift_amount_fen,omitempty"`
+	GiftDirection     string `json:"gift_direction,omitempty"`
+	GiftPersonID      string `json:"gift_person_id,omitempty"`
 }
 
 func encodeLocations(locs []string) string {
@@ -105,7 +112,65 @@ VALUES(?,?,'expense','out',?,?,?,NULL,1,?,?,?)`,
 	return err
 }
 
-// EventCreate 写入事件、参与人与它自带的那笔开销。
+// applyEventGift 在同一事务里对齐事件自带的那笔礼金（N2）。
+//
+// 与开销不同，这里只认 events.gift_transaction_id 指的那一条，绝不按 event_id 批量删：
+// 一场宴席的礼单往往是几十笔 kind='gift'（每位来客一条，从金钱页手工挂上来），
+// 事件表单再保存一次就把别人的账清光了。
+//
+// 指针失效的两种情况都当作「没有认领」：账目被删（外键 ON DELETE SET NULL 已经把列清空，
+// 但同一事务里读到的可能还是旧值），或被人改挂到了别的事件上——那种情况下它属于另一个事件。
+func applyEventGift(ctx context.Context, tx *sql.Tx, e *Event) error {
+	owned := e.GiftTransactionID
+	if owned != "" {
+		var evID sql.NullString
+		err := tx.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE id=?", owned).Scan(&evID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err != nil || !evID.Valid || evID.String != e.ID {
+			owned = ""
+		}
+	}
+	if e.GiftAmountFen <= 0 {
+		had := e.GiftTransactionID != ""
+		e.GiftTransactionID = ""
+		if owned != "" {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE id=?", owned); err != nil {
+				return err
+			}
+		}
+		if !had {
+			return nil // 从来没有过礼金，不必回写指针
+		}
+		// 指针失效（指向别的事件）时也要落一个 NULL，别留一个永远认领不到的引用
+		_, err := tx.ExecContext(ctx, "UPDATE events SET gift_transaction_id=NULL WHERE id=?", e.ID)
+		return err
+	}
+	title := nullableString(e.Title)
+	if owned == "" {
+		owned = uuid.NewString()
+		_, err := tx.ExecContext(ctx, `INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id)
+VALUES(?,?,'gift',?,?,?,?,NULL,1,?,?,?)`,
+			owned, e.GiftPersonID, e.GiftDirection, e.GiftAmountFen, title, e.EventDate, e.EventDate, nowUTC(), e.ID)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err := tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,kind='gift',direction=?,amount_fen=?,title=?,occurred_at=?,event_id=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
+			e.GiftPersonID, e.GiftDirection, e.GiftAmountFen, title, e.EventDate, e.ID, e.EventDate, owned)
+		if err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, "UPDATE events SET gift_transaction_id=? WHERE id=?", owned, e.ID)
+	if err == nil {
+		e.GiftTransactionID = owned // 让新建事件的响应也带得上这个 id
+	}
+	return err
+}
+
+// EventCreate 写入事件、参与人与它自带的那笔开销和礼金。
 // expense 为 nil 表示「这个事件没有开销」，会顺带清掉该事件下 kind='expense' 的往来。
 func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	if e.ID == "" {
@@ -113,6 +178,7 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 	}
 	e.CreatedAt = nowUTC()
 	e.UpdatedAt = e.CreatedAt
+	e.GiftTransactionID = "" // 新建没有可认领的账，客户端传什么都不认
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -131,10 +197,13 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
 		return err
 	}
+	if err := applyEventGift(ctx, tx, e); err != nil {
+		return err
+	}
 	return tx.Commit()
 }
 
-// EventUpdate 语义同 EventCreate：事件字段、参与人、开销在一次事务里落定，
+// EventUpdate 语义同 EventCreate：事件字段、参与人、开销与礼金在一次事务里落定，
 // 任何一步失败都整体回滚，不会出现「事件改了、账没改」。
 func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	e.UpdatedAt = nowUTC()
@@ -154,6 +223,19 @@ func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []stri
 		}
 	}
 	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
+		return err
+	}
+	// 礼金指针由服务端说了算：表单回不回传、传了什么，都不能让它去认领别的事件的账，
+	// 也不能因为漏传就把原有那笔丢成永远认领不到的孤儿。
+	var stored sql.NullString
+	if err := tx.QueryRowContext(ctx, "SELECT gift_transaction_id FROM events WHERE id=?", e.ID).Scan(&stored); err != nil {
+		return err
+	}
+	e.GiftTransactionID = ""
+	if stored.Valid {
+		e.GiftTransactionID = stored.String
+	}
+	if err := applyEventGift(ctx, tx, e); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -176,15 +258,26 @@ func (s *Store) EventDelete(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
-// expense_fen 只统计支出方向（收到的礼金/回礼属入账，不算开销）
+// expense_fen 只统计支出方向（收到的礼金/回礼属入账，不算开销），
+// 并且排掉事件自带那笔礼金：它已经由 gift_amount_fen 单独显示，
+// 再算进「花费」会让同一笔 800 在一张卡片上出现两次。
+// 后面三列是事件自带那笔礼金的投影：金额/方向/归属都从 transactions 读，
+// 事件表里只留一个认领用的 id。
 const eventColumns = `e.id,e.title,e.type_id,e.event_date,e.location,e.locations,e.has_gift,e.gift,e.summary,e.created_at,e.updated_at,et.name,et.color,
-(SELECT COALESCE(SUM(t.amount_fen),0) FROM transactions t WHERE t.event_id=e.id AND t.direction='out')`
+(SELECT COALESCE(SUM(t.amount_fen),0) FROM transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id),
+e.gift_transaction_id,
+(SELECT t.amount_fen FROM transactions t WHERE t.id=e.gift_transaction_id),
+(SELECT t.direction FROM transactions t WHERE t.id=e.gift_transaction_id),
+(SELECT t.person_id FROM transactions t WHERE t.id=e.gift_transaction_id)`
 
 func scanEvent(rows *sql.Rows) (*Event, error) {
 	e := &Event{}
 	var tn, tc, locs sql.NullString
+	var giftTx, giftDir, giftPerson sql.NullString
+	var giftFen sql.NullInt64
 	if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &locs, &e.HasGift, &e.Gift, &e.Summary,
-		&e.CreatedAt, &e.UpdatedAt, &tn, &tc, &e.ExpenseFen); err != nil {
+		&e.CreatedAt, &e.UpdatedAt, &tn, &tc, &e.ExpenseFen,
+		&giftTx, &giftFen, &giftDir, &giftPerson); err != nil {
 		return nil, err
 	}
 	if tn.Valid {
@@ -192,6 +285,18 @@ func scanEvent(rows *sql.Rows) (*Event, error) {
 	}
 	if tc.Valid {
 		e.TypeColor = &tc.String
+	}
+	if giftTx.Valid {
+		e.GiftTransactionID = giftTx.String
+	}
+	if giftFen.Valid {
+		e.GiftAmountFen = int(giftFen.Int64)
+	}
+	if giftDir.Valid {
+		e.GiftDirection = giftDir.String
+	}
+	if giftPerson.Valid {
+		e.GiftPersonID = giftPerson.String
 	}
 	e.Locations = decodeLocations(locs.String)
 	if len(e.Locations) == 0 && e.Location != "" {

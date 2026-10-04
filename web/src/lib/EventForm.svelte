@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { API, todayLocal, type Event, type EventType, type Person } from './api'
+  import { API, todayLocal, toFen, type Event, type EventType, type Person } from './api'
   import { selfFirst, personLabel, loadSelf, isSelf } from './self.svelte'
   import { Trash2, Search } from '@lucide/svelte'
 
@@ -42,6 +42,7 @@
     title: string; type_id: number; event_date: string
     locations: string[]; has_gift: boolean; gift: string; summary: string
     participant_ids: string[]; expense_yuan: string; expense_person_id: string
+    gift_yuan: string; gift_direction: string; gift_person_id: string
   }
 
   function blank(): Form {
@@ -50,10 +51,13 @@
       locations: [''], has_gift: false, gift: '', summary: '',
       participant_ids: [...(preset?.participant_ids || [])],
       expense_yuan: '', expense_person_id: '',
+      gift_yuan: '', gift_direction: 'out', gift_person_id: '',
     }
   }
 
   let form = $state<Form>(blank())
+  // 礼金金额一变就决定要不要问归属人，省得空着时也摊一排下拉框
+  const giftFen = $derived(toFen(form.gift_yuan))
 
   // 切换新建 / 编辑目标时刷新表单；seq 用于丢弃过期的详情响应
   let loadSeq = 0
@@ -84,6 +88,10 @@
         participant_ids: (d.participants || []).map(p => p.id),
         expense_yuan: own ? (own.amount_fen / 100).toFixed(2) : (d.expense_fen ? (d.expense_fen / 100).toFixed(2) : ''),
         expense_person_id: own?.person_id || '',
+        // 礼金三项都从事件自带那笔账上读回，编辑时不改动就不该再复制一条
+        gift_yuan: d.gift_amount_fen ? (d.gift_amount_fen / 100).toFixed(2) : '',
+        gift_direction: d.gift_direction || 'out',
+        gift_person_id: d.gift_person_id || '',
       }
       peopleQuery = ''
     } catch (err: any) {
@@ -100,6 +108,11 @@
       : selfFirst(peopleList)
   )
   const participants = $derived(peopleList.filter(p => form.participant_ids.includes(p.id)))
+  // 开销/礼金的归属人候选：参与人排前面，其余人也能选（礼单上常有没到场的人）
+  const ownerOptions = $derived([
+    ...selfFirst(participants),
+    ...selfFirst(peopleList.filter(p => !form.participant_ids.includes(p.id))),
+  ])
 
   function toggleParticipant(id: string) {
     form.participant_ids = form.participant_ids.includes(id)
@@ -142,6 +155,14 @@
       else if (form.participant_ids.length === 0) { alert('填写开销时需要选择参与人或指定开销归属人'); return }
     } else if (editId) {
       body.expense_fen = 0 // 清空原有开销
+    }
+    if (giftFen > 0) {
+      body.gift_amount_fen = giftFen
+      body.gift_direction = form.gift_direction === 'in' ? 'in' : 'out'
+      if (form.gift_person_id) body.gift_person_id = form.gift_person_id
+      else if (form.participant_ids.length === 0) { alert('填写礼金时需要选择参与人或指定礼金归属人'); return }
+    } else if (editId) {
+      body.gift_amount_fen = 0 // 清空原有礼金（store 会连带删掉那笔账）
     }
     saving = true
     try {
@@ -203,10 +224,24 @@
       <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="开销（元，可空）" bind:value={form.expense_yuan} />
       <select bind:value={form.expense_person_id} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
         <option value="">开销归属（默认首位参与人）</option>
-        {#each selfFirst(participants) as p}<option value={p.id}>{personLabel(p)}（参与人）</option>{/each}
-        {#each selfFirst(peopleList.filter(p => !form.participant_ids.includes(p.id))) as p}<option value={p.id}>{personLabel(p)}</option>{/each}
+        {#each ownerOptions as p}<option value={p.id}>{personLabel(p)}{form.participant_ids.includes(p.id) ? '（参与人）' : ''}</option>{/each}
       </select>
     </div>
+
+    <!-- 礼金：现场记完事就结账，保存时自动生成一条 kind=gift 的账目挂在这个往来上 -->
+    <div class="grid grid-cols-2 gap-3">
+      <input type="number" step="0.01" min="0" class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="礼金（元，可空）" bind:value={form.gift_yuan} />
+      <select bind:value={form.gift_direction} class="px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="out">随出去（我给的）</option>
+        <option value="in">收到（别人给的）</option>
+      </select>
+    </div>
+    {#if giftFen > 0}
+      <select bind:value={form.gift_person_id} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="">{form.gift_direction === 'in' ? '谁给的礼金（默认首位参与人）' : '随给谁（默认首位参与人）'}</option>
+        {#each ownerOptions as p}<option value={p.id}>{personLabel(p)}{form.participant_ids.includes(p.id) ? '（参与人）' : ''}</option>{/each}
+      </select>
+    {/if}
 
     <textarea class="w-full px-3 py-2 rounded-lg text-sm outline-none min-h-[80px]" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" placeholder="备注" bind:value={form.summary}></textarea>
     <div>
