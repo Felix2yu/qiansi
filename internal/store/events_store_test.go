@@ -705,6 +705,123 @@ func TestEventStore_AnniversaryUpcomingLunarAndDismiss(t *testing.T) {
 	}
 }
 
+// ===== 承诺派生待办（M4） =====
+
+func evMemo(s *Store, personID, content, due, status string, promise bool) *Memo {
+	return &Memo{
+		PersonID: personID, Speaker: "me", Content: content,
+		SaidAt: evLocalStamp(-3), IsPromise: promise, DueDate: due, Status: status,
+	}
+}
+
+func TestEventStore_PromiseUpcoming(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := evMustPerson(t, s, "老王")
+
+	due := evMemo(s, p.ID, "帮老王搬家", evDate(2), "open", true)
+	overdue := evMemo(s, p.ID, "还老王的相机", evDate(-5), "open", true)
+	noDue := evMemo(s, p.ID, "有空一起吃饭", "", "open", true)
+	done := evMemo(s, p.ID, "已经办掉的", evDate(1), "fulfilled", true)
+	far := evMemo(s, p.ID, "下个月的事", evDate(30), "open", true)
+	chat := evMemo(s, p.ID, "他只是随口一提", evDate(1), "open", false)
+	for i, m := range []*Memo{due, overdue, noDue, done, far, chat} {
+		if err := s.MemoCreate(ctx, m); err != nil {
+			t.Fatalf("MemoCreate %d: %v", i, err)
+		}
+	}
+
+	list, err := s.PromiseUpcoming(ctx, 0)
+	if err != nil {
+		t.Fatalf("PromiseUpcoming: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("派生待办 = %d 条（应含逾期、近期、远期各一条）: %+v", len(list), list)
+	}
+	// 按到期日升序，逾期的排最前
+	if list[0].RefID != overdue.ID || list[1].RefID != due.ID || list[2].RefID != far.ID {
+		t.Fatalf("排序不符: %+v", list)
+	}
+	first := list[0]
+	if first.ID != "promise:"+overdue.ID {
+		t.Errorf("合成 id 不符: %s", first.ID)
+	}
+	if first.RefType != "promise" || first.Status != "pending" || first.PersonName != "老王" {
+		t.Errorf("派生字段不符: %+v", first)
+	}
+	if first.DueAt != evDate(-5)+"T09:00:00" {
+		t.Errorf("due_at 应为本地日期 + 09:00，got %s", first.DueAt)
+	}
+	if first.Title != "承诺：还老王的相机" {
+		t.Errorf("title 不符: %s", first.Title)
+	}
+
+	// horizon 生效：7 天内不含 30 天后那条，但逾期的一直在
+	near, err := s.PromiseUpcoming(ctx, 7)
+	if err != nil || len(near) != 2 || near[1].RefID != due.ID {
+		t.Fatalf("horizon=7 结果不符: %v / %+v", err, near)
+	}
+
+	// ReminderUpcoming 把承诺并进待办（这是 M4 的核心：到期既不进待办也不进推送）
+	merged, err := s.ReminderUpcoming(ctx, 7)
+	if err != nil {
+		t.Fatalf("ReminderUpcoming: %v", err)
+	}
+	found := 0
+	for _, r := range merged {
+		if strings.HasPrefix(r.ID, "promise:") {
+			found++
+		}
+	}
+	if found != 2 {
+		t.Fatalf("ReminderUpcoming 应并入 2 条承诺, got %d: %+v", found, merged)
+	}
+
+	// 勾掉 = 兑现，派生项随之消失（承诺有真实状态，不需要 dismiss 表）
+	if err := s.MemoFulfill(ctx, overdue.ID); err != nil {
+		t.Fatalf("MemoFulfill: %v", err)
+	}
+	after, err := s.ReminderUpcoming(ctx, 7)
+	if err != nil {
+		t.Fatalf("ReminderUpcoming after fulfill: %v", err)
+	}
+	for _, r := range after {
+		if r.ID == "promise:"+overdue.ID {
+			t.Fatalf("已兑现的承诺仍在待办里")
+		}
+	}
+
+	// 非承诺的对话不能被 MemoFulfill 改状态
+	if err := s.MemoFulfill(ctx, chat.ID); err != nil {
+		t.Fatalf("MemoFulfill(chat): %v", err)
+	}
+	var status string
+	if err := s.DB.QueryRow("SELECT status FROM memos WHERE id=?", chat.ID).Scan(&status); err != nil {
+		t.Fatalf("读对话状态: %v", err)
+	}
+	if status != "open" {
+		t.Errorf("普通对话状态被改成了 %s", status)
+	}
+}
+
+func TestEventStore_PromiseUpcomingTruncatesLongContent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := evMustPerson(t, s, "小林")
+	long := strings.Repeat("帮", 60)
+	m := evMemo(s, p.ID, long, evDate(1), "open", true)
+	if err := s.MemoCreate(ctx, m); err != nil {
+		t.Fatalf("MemoCreate: %v", err)
+	}
+	list, err := s.PromiseUpcoming(ctx, 7)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("派生结果不符: %v / %+v", err, list)
+	}
+	if r := []rune(list[0].Title); len(r) > 44 || !strings.HasSuffix(list[0].Title, "…") {
+		t.Errorf("长内容应截成 40 字 + …，got %d runes: %s", len(r), list[0].Title)
+	}
+}
+
 // ===== Reminders =====
 
 func TestEventStore_Reminders(t *testing.T) {
