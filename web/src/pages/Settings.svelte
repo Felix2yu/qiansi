@@ -2,7 +2,6 @@
   import { onMount } from 'svelte'
   import { API, type BackupItem, type BackupStatus } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
-  import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
@@ -121,7 +120,6 @@
   let csvPerson = $state('')
   let csvEvent = $state('')
   let ioMsg = $state('')
-  let ioDanger = $state<null | { word: string; title: string; detail: string; confirmLabel: string; run: () => Promise<void> }>(null)
   let jsonInput: HTMLInputElement | undefined = $state()
 
   function say(msg: string) {
@@ -168,22 +166,18 @@
       toast.error('这不是牵丝的全量导出文件')
       return
     }
-    ioDanger = {
-      word: '覆盖导入',
+    if (!(await ask({
       title: '用这份 JSON 覆盖当前全部数据',
       detail: `文件导出于 ${fmtTime(parsed.exported_at || '')}。导入前会自动归档一份当前数据库到 backups/，出问题可以从那里捞回来。附件的图片文件不在 JSON 里，需要另外拷贝 uploads 目录。`,
+      danger: true,
       confirmLabel: '覆盖导入',
-      run: async () => {
-        try {
-          const res = await API.post<{ tables: number; rows: number }>('/api/v1/import/json', parsed)
-          say(`已导入 ${res.rows} 行，覆盖 ${res.tables} 张表`)
-          await Promise.all([load(), refreshAll()])
-        } catch (err: any) {
-          toast.fail('导入失败', err)
-        } finally {
-          ioDanger = null
-        }
-      },
+    }))) return
+    try {
+      const res = await API.post<{ tables: number; rows: number }>('/api/v1/import/json', parsed)
+      say(`已导入 ${res.rows} 行，覆盖 ${res.tables} 张表`)
+      await Promise.all([load(), refreshAll()])
+    } catch (err: any) {
+      toast.fail('导入失败', err)
     }
   }
 
@@ -521,14 +515,3 @@
     {/if}
   </section>
 </div>
-
-{#if ioDanger}
-  <DangerConfirm
-    word={ioDanger.word}
-    title={ioDanger.title}
-    detail={ioDanger.detail}
-    confirmLabel={ioDanger.confirmLabel}
-    onconfirm={ioDanger.run}
-    oncancel={() => (ioDanger = null)}
-  />
-{/if}

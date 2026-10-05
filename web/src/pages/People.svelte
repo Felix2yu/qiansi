@@ -2,12 +2,12 @@
   import { onMount } from 'svelte'
   import { API, yuanShort, netLabel, contactAgo, type Person } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
-  import DangerConfirm from '../lib/DangerConfirm.svelte'
   import { navigate } from '../lib/router'
   import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
 
   let { mode = 'list' }: { mode?: string } = $props()
 
@@ -38,14 +38,6 @@
   // 批量选择态
   let selectMode = $state(false)
   let selectedIds = $state<string[]>([])
-  // 需要手打确认词的危险操作（见 DangerConfirm）
-  let danger = $state<null | {
-    word: string
-    title: string
-    detail: string
-    confirmLabel: string
-    run: () => Promise<void>
-  }>(null)
   function toggleSelect(id: string) {
     selectedIds = selectedIds.includes(id) ? selectedIds.filter((x) => x !== id) : [...selectedIds, id]
   }
@@ -81,57 +73,45 @@
       toast.fail('加入圈子失败', err)
     }
   }
-  // 危险操作两段式：ask* 只开确认框，框里手打确认词之后才跑 do*。
-  // 确认时用的是开框那一刻选中的人数快照，免得弹窗挂着又改了勾选，删的和报的对不上。
-  function askDeleteSelected() {
+  // 危险操作只留一个确认框：要手打确认词太磨人，误触的代价由回收站来兜。
+  // 批量删除是软删除，可逐个从回收站找回，所以不再强调「不可恢复」，
+  // 但仍报明会连带哪些记录——让人知道删的不止这几个人。
+  async function askDeleteSelected() {
     const ids = [...selectedIds]
     if (ids.length === 0) return
-    danger = {
-      word: '删除',
-      title: `删除选中的 ${ids.length} 位联系人`,
-      detail: '会一并删除他们的往来、对话、记账与纪念日等关联记录，此操作不可恢复。建议先到设置里生成一份快照。',
+    if (!(await ask({
+      title: `删除选中的 ${ids.length} 位联系人？`,
+      detail: `他们的往来、对话、记账与纪念日会一并进回收站，可在回收站逐个找回。`,
+      danger: true,
       confirmLabel: `删除 ${ids.length} 位`,
-      // 跑完再关窗（DangerConfirm 不会自己关，否则 props 先被拆掉）
-      run: async () => {
-        try {
-          await deleteSelected(ids)
-        } finally {
-          danger = null
-        }
-      },
-    }
+    }))) return
+    await deleteSelected(ids)
   }
   async function deleteSelected(ids: string[]) {
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids })
       selectedIds = []
       await load()
-      toast.ok(`已删除 ${res.deleted} 位联系人`)
+      toast.ok(`已删除 ${res.deleted} 位联系人，可在回收站找回`)
     } catch (err: any) {
       toast.fail('删除失败', err)
     }
   }
-  function askClearAll() {
-    danger = {
-      word: '清空全部',
-      title: '清空全部联系人',
-      detail: '整本账都会消失：所有往来、对话、记账与纪念日一并删除，且不可恢复。建议先点「导出 vCard」备份，清空后再重新导入。',
+  async function askClearAll() {
+    if (!(await ask({
+      title: '清空全部联系人？',
+      detail: '所有往来、对话、记账与纪念日会一并进回收站。回收站里的记录恢复前不会出现在任何列表里，彻底清空才真的删除。',
+      danger: true,
       confirmLabel: '清空全部',
-      run: async () => {
-        try {
-          await clearAll()
-        } finally {
-          danger = null
-        }
-      },
-    }
+    }))) return
+    await clearAll()
   }
   async function clearAll() {
     try {
       const res = await API.delete<{ deleted: number }>('/api/v1/people', { ids: [] })
       selectedIds = []
       await load()
-      toast.ok(`已清空 ${res.deleted} 位联系人`)
+      toast.ok(`已清空 ${res.deleted} 位联系人，可在回收站找回`)
     } catch (err: any) {
       toast.fail('清空失败', err)
     }
@@ -180,21 +160,16 @@
     await load()
     if (mode === 'new' && saved?.id) { navigate(`/people/${saved.id}`) }
   }
-  // 单人删除走的是不可恢复的硬删除：这里先用确认弹窗，是否升级成手打确认词还待定
+  // 单人删除同样进回收站：5 秒内可就地撤销，之后回回收站找回
   async function remove(p: Person) {
     if (!(await ask({
       title: `删除联系人「${p.name}」及其所有关联记录？`,
-      detail: '往来、对话、记账与纪念日一并删除，删除后无法恢复。',
+      detail: '往来、对话、记账与纪念日会一并进回收站，' + RECOVER_NOTE,
       danger: true,
       confirmLabel: '删除',
     }))) return
-    try {
-      await API.delete(`/api/v1/people/${p.id}`)
-      toast.ok('已删除')
-      await load()
+    if (await trashOne('person', p.id, load, `已删除「${p.name}」`)) {
       selectedIds = selectedIds.filter((id) => id !== p.id)
-    } catch (err) {
-      toast.fail('删除失败', err)
     }
   }
   async function unarchive(p: Person) {
@@ -390,15 +365,4 @@
       <PersonForm person={editing} {categories} {tags} onsave={onSaved} onrelchange={() => load()} oncancel={() => (showForm = false)} />
     </div>
   </div>
-{/if}
-
-{#if danger}
-  <DangerConfirm
-    word={danger.word}
-    title={danger.title}
-    detail={danger.detail}
-    confirmLabel={danger.confirmLabel}
-    onconfirm={danger.run}
-    oncancel={() => (danger = null)}
-  />
 {/if}

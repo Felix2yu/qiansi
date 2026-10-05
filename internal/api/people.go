@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -220,43 +218,35 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, p)
 }
 
-// deletePersonFull 删除联系人及其头像附件文件；关联记录（往来/对话/记账/
-// 纪念日/提醒/标签/关系/自定义字段）由外键 ON DELETE CASCADE 级联清理。
-func (a *API) deletePersonFull(ctx context.Context, id string) error {
+// purgePerson 真删除一个人：头像文件与关联记录一并清掉，靠外键级联收尾。
+// 只有回收站的「彻底删除」走这里；普通的删除是软删除，什么都不能碰。
+func (a *API) purgePerson(ctx context.Context, id string) error {
 	atts, err := a.Store.PersonDetachAttachments(ctx, id)
 	if err != nil {
 		return err
 	}
-	if err := a.Store.PersonDelete(ctx, id); err != nil {
+	if err := a.Store.PersonPurge(ctx, id); err != nil {
 		return err
 	}
-	for _, att := range atts {
-		if att == nil {
-			continue
-		}
-		p := filepath.Join(a.Cfg.Uploads, att.StoredName)
-		if filepath.Clean(p) == p {
-			_ = os.Remove(p)
-		}
-		_, _ = a.Store.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
-	}
+	a.removeAttachmentFiles(ctx, atts)
 	return nil
 }
 
+// peopleDelete 把联系人收进回收站：只置 deleted_at。
+// 他名下的往来/对话/账目随 live_* 视图一起消失，头像留在原地，
+// 恢复时人和照片都在，不必重新上传。
 func (a *API) peopleDelete(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	if err := a.deletePersonFull(r.Context(), id); err != nil {
+	if err := a.Store.PersonDelete(r.Context(), chi.URLParam(r, "id")); err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	w.WriteHeader(204)
 }
 
-// peopleDeleteBulk 批量/清空删除联系人。请求体 {"ids":[...]}：
-//   - 提供 id 列表：删除这些联系人（按 X-ABUID 重导入时可再建，不丢 vCard 来源）
-//   - ids 为空或字段缺失：清空全部联系人（含已归档）
+// peopleDeleteBulk 批量删除联系人，ids 为空表示删除全部可见联系人。
 //
-// 关联数据同样由外键级联清理，头像文件一并删除。
+// 这里取的是「还没进回收站」的人（PersonList 走 live_people），所以连着点两次
+// 也不会把回收站里的人一起清掉——清空回收站是另一个动作，得由用户显式发起。
 func (a *API) peopleDeleteBulk(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		IDs []string `json:"ids"`
@@ -283,7 +273,7 @@ func (a *API) peopleDeleteBulk(w http.ResponseWriter, r *http.Request) {
 		if id == "" {
 			continue
 		}
-		if err := a.deletePersonFull(ctx, id); err != nil {
+		if err := a.Store.PersonDelete(ctx, id); err != nil {
 			if isNoRows(err) {
 				continue // 这一条已经在别处删掉了，不算失败，也不该中断整批
 			}

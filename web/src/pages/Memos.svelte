@@ -6,6 +6,7 @@
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
 
   let list = $state<Memo[]>([])
   let onlyPromises = $state(false)
@@ -113,17 +114,9 @@
     }
   }
 
-  // 硬删除没有反悔余地：undo 需要服务端留一份可恢复的中间态，目前做不到，
-  // 所以这里靠确认框挡一下，而不是给一个假按钮
   async function remove(m: Memo) {
-    if (!(await ask({ title: '删除这条对话记录？', detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/memos/${m.id}`)
-      toast.ok('已删除')
-      await load()
-    } catch (err: any) {
-      toast.fail('删除失败', err)
-    }
+    if (!(await ask({ title: '删除这条对话记录？', detail: RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
+    await trashOne('memo', m.id, load, '已删除')
   }
   function memoWho(m: Memo) {
     if (!m.person_id) return '（未关联）'

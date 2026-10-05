@@ -36,11 +36,13 @@ const introMaxDepth = 20
 func (s *Store) IntroPath(ctx context.Context, selfID, personID string) (*IntroPath, error) {
 	// 递归从这个人出发往上跳；引荐人已被删掉时 JOIN 自然没有下一行，
 	// 最后一行的 intro 还留着值，就是断链的证据。
+	// 走 live_people：引荐人在回收站里等同于暂时不存在，路径照样标成断链，
+	// 恢复之后又自己接上。
 	rows, err := s.DB.QueryContext(ctx, `WITH RECURSIVE chain(id,name,intro,depth) AS (
-  SELECT id, name, NULLIF(introduced_by_person_id,''), 0 FROM people WHERE id=?
+  SELECT id, name, NULLIF(introduced_by_person_id,''), 0 FROM live_people WHERE id=?
   UNION ALL
   SELECT p.id, p.name, NULLIF(p.introduced_by_person_id,''), c.depth+1
-  FROM people p JOIN chain c ON p.id=c.intro WHERE c.depth < ?
+  FROM live_people p JOIN chain c ON p.id=c.intro WHERE c.depth < ?
 ) SELECT id,name,intro,depth FROM chain ORDER BY depth`, personID, introMaxDepth)
 	if err != nil {
 		return nil, err

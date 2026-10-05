@@ -144,7 +144,9 @@ func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 		return err
 	}
 	p.UpdatedAt = nowUTC()
-	if err := execOne(ctx, s.DB, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,archived=?,x_abuid=?,updated_at=?,introduced_by_person_id=? WHERE id=?`,
+	// deleted_at IS NULL：改一个已经在回收站里的人当作不存在，
+	// 否则另一个标签页里的旧表单会「保存成功」却什么都看不见。
+	if err := execOne(ctx, s.DB, `UPDATE people SET name=?,family_name=?,given_name=?,nickname=?,gender=?,birthday=?,birthday_is_lunar=?,avatar_attachment_id=?,phone=?,wechat=?,location=?,notes=?,grade=?,archived=?,x_abuid=?,updated_at=?,introduced_by_person_id=? WHERE id=? AND deleted_at IS NULL`,
 		p.Name, p.FamilyName, p.GivenName, p.Nickname, p.Gender, p.Birthday, p.BirthdayIsLunar, p.AvatarAttachmentID,
 		p.Phone, p.Wechat, p.Location, p.Notes, p.Grade, p.Archived, p.XAbUID, p.UpdatedAt, nullableString(p.IntroducedByPersonID), p.ID); err != nil {
 		return err
@@ -261,15 +263,15 @@ func (s *Store) PersonStatsFor(ctx context.Context, ids []string) (map[string]*P
   SELECT person_id,
          SUM(CASE WHEN direction='out' THEN amount_fen ELSE 0 END) AS out_fen,
          SUM(CASE WHEN direction='in'  THEN amount_fen ELSE 0 END) AS in_fen
-  FROM transactions WHERE kind='gift' GROUP BY person_id),
+  FROM live_transactions WHERE kind='gift' GROUP BY person_id),
 contact AS (
   SELECT person_id, MAX(d) AS d FROM (
-    SELECT person_id, substr(occurred_at,1,10) AS d FROM transactions
-    UNION ALL SELECT person_id, substr(said_at,1,10) FROM memos
-    UNION ALL SELECT ep.person_id, substr(e.event_date,1,10) FROM event_participants ep JOIN events e ON e.id=ep.event_id
+    SELECT person_id, substr(occurred_at,1,10) AS d FROM live_transactions
+    UNION ALL SELECT person_id, substr(said_at,1,10) FROM live_memos
+    UNION ALL SELECT ep.person_id, substr(e.event_date,1,10) FROM event_participants ep JOIN live_events e ON e.id=ep.event_id
   ) WHERE d <> '' GROUP BY person_id)
 SELECT p.id, COALESCE(gift.out_fen,0), COALESCE(gift.in_fen,0), COALESCE(contact.d,'')
-FROM people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON contact.person_id=p.id`)
+FROM live_people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON contact.person_id=p.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +391,17 @@ func hasHan(s string) bool {
 	return false
 }
 
+// PersonDelete 把联系人收进回收站：只置 deleted_at，不碰任何关联记录。
+// 他名下的往来/对话/账目靠 live_* 视图一起消失，恢复时把标记清空就全回来了。
+// 真删除走 PersonPurge（回收站里的「彻底删除」）。
 func (s *Store) PersonDelete(ctx context.Context, id string) error {
+	return execOne(ctx, s.DB, "UPDATE people SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+}
+
+// PersonPurge 真删除一个人。他的头像文件由 API 层负责删，这里只清行。
+// 外键级联会带走自定义字段、参与人、关系边、账目、纪念日与亲密度快照——
+// 这一步不可逆，调用方必须已经让用户确认过。
+func (s *Store) PersonPurge(ctx context.Context, id string) error {
 	return execOne(ctx, s.DB, "DELETE FROM people WHERE id=?", id)
 }
 
@@ -435,7 +447,7 @@ func (s *Store) PersonDuplicates(ctx context.Context, name, phone, wechat, exclu
 		return []*Person{}, nil
 	}
 	q := `SELECT p.id,p.name,p.nickname,p.phone,p.wechat,p.grade,p.archived
-FROM people p WHERE (` + strings.Join(conds, " OR ") + ")"
+FROM live_people p WHERE (` + strings.Join(conds, " OR ") + ")"
 	if excludeID != "" {
 		q += " AND p.id<>?"
 		args = append(args, excludeID)
@@ -597,8 +609,8 @@ VALUES(?,?,?,?,?,1,'7,3,1,0',?, 'birthday')`,
 
 func (s *Store) PersonGet(ctx context.Context, id string) (*Person, error) {
 	row := s.DB.QueryRowContext(ctx, `SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.archived,p.x_abuid,p.created_at,p.updated_at,p.birthday_anniversary_id,p.introduced_by_person_id,
-(SELECT pi.name FROM people pi WHERE pi.id=p.introduced_by_person_id)
-FROM people p WHERE p.id=?`, id)
+(SELECT pi.name FROM live_people pi WHERE pi.id=p.introduced_by_person_id)
+FROM live_people p WHERE p.id=?`, id)
 	p := &Person{}
 	var grade int
 	var birthdayAnniv sql.NullString
@@ -666,7 +678,7 @@ func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int
 	// 圈子不在这个查询里取：多对多之后 JOIN 会一人出多行，
 	// 下面的 LIMIT/OFFSET 是按行分页的，每页人数就会被圈子数压掉。改成取完当页再批量补。
 	query := fmt.Sprintf(`SELECT p.id,p.name,p.family_name,p.given_name,p.nickname,p.gender,p.birthday,p.birthday_is_lunar,p.avatar_attachment_id,p.phone,p.wechat,p.location,p.notes,p.grade,p.archived,p.x_abuid,p.created_at,p.updated_at,p.introduced_by_person_id
-FROM people p
+FROM live_people p
 WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 	args = append(args, limit, offset)
 	rows, err := s.DB.QueryContext(ctx, query, args...)
@@ -703,7 +715,7 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 
 func (s *Store) PersonCount(ctx context.Context) (int, error) {
 	var n int
-	err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM people WHERE archived=0").Scan(&n)
+	err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM live_people WHERE archived=0").Scan(&n)
 	return n, err
 }
 
@@ -818,7 +830,7 @@ func (s *Store) PeopleAddCategories(ctx context.Context, ids []string, categoryI
 			args = append(args, id)
 		}
 		r, err := tx.ExecContext(ctx, `INSERT INTO person_categories(person_id,category_id)
-SELECT p.id,? FROM people p WHERE p.id IN (`+ph+`) ON CONFLICT DO NOTHING`, args...)
+SELECT p.id,? FROM live_people p WHERE p.id IN (`+ph+`) ON CONFLICT DO NOTHING`, args...)
 		if err != nil {
 			return 0, err
 		}

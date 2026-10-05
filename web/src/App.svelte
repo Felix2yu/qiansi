@@ -4,7 +4,7 @@
   import { API, SEARCH_LABEL, type SearchResult } from './lib/api'
   import { initTheme, theme, setThemeMode, nextMode, THEME_LABEL, type ThemeMode } from './lib/theme.svelte'
   import type { Component } from 'svelte'
-  import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search, Monitor, Sun, Moon } from '@lucide/svelte'
+  import { Home, Users, CalendarDays, MessageCircle, Wallet, Bell, LineChart, History, Network, Settings, Menu, X, Search, Monitor, Sun, Moon, Trash2 } from '@lucide/svelte'
   import Toaster from './lib/Toaster.svelte'
   import AskHost from './lib/AskHost.svelte'
   import { toast } from './lib/toast.svelte'
@@ -23,6 +23,7 @@
     Reminders: () => import('./pages/Reminders.svelte'),
     Graph: () => import('./pages/Graph.svelte'),
     Analytics: () => import('./pages/Analytics.svelte'),
+    Trash: () => import('./pages/Trash.svelte'),
     Settings: () => import('./pages/Settings.svelte'),
   }
 
@@ -37,6 +38,7 @@
     { label: '时间线', path: '/timeline', icon: History },
     { label: '关系图', path: '/graph', icon: Network },
     { label: '统计', path: '/analytics', icon: LineChart },
+    { label: '回收站', path: '/trash', icon: Trash2 },
     { label: '设置', path: '/settings', icon: Settings },
   ]
 
@@ -114,7 +116,7 @@
     const map: Record<string, string> = {
       '/people': 'People', '/events': 'Events', '/memos': 'Memos',
       '/money': 'Money', '/anniversaries': 'Anniversaries', '/reminders': 'Reminders',
-      '/timeline': 'Timeline', '/graph': 'Graph', '/analytics': 'Analytics', '/settings': 'Settings'
+      '/timeline': 'Timeline', '/graph': 'Graph', '/analytics': 'Analytics', '/trash': 'Trash', '/settings': 'Settings'
     }
     return map[p] || 'Today'
   }

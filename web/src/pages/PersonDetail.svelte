@@ -10,6 +10,7 @@
   import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
   import { Trash2, Edit3, ArrowLeft, X, Plus, Archive, Upload, UserCheck, ImageOff, Pencil, Check, Route } from '@lucide/svelte'
 
   let { id = '' }: { id?: string } = $props()
@@ -67,16 +68,9 @@
     await loadWords()
   }
   async function removeEvent(eventId: string, title: string, expenseFen?: number) {
-    const detail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : '删除后无法恢复。'
+    const detail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : RECOVER_NOTE
     if (!(await ask({ title: `确定删除「${title}」吗？`, detail, danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/events/${eventId}`)
-      toast.ok('已删除')
-    } catch (err: any) {
-      toast.fail('删除失败', err)
-      return
-    }
-    await afterEventForm()
+    await trashOne('event', eventId, afterEventForm, '已删除')
   }
 
   async function loadWords() {
@@ -216,16 +210,25 @@
   }
   $effect(() => { if (id) load() })
 
+  // 从详情页删人要先离开这一页，就地撤销的按钮留给谁刷新？所以这里不给撤销，
+  // 直接把去处说清楚：回收站里一次点击就能恢复（列表页删人仍有 5 秒撤销）。
   async function remove() {
     if (!person) return
-    if (!(await ask({ title: `删除联系人「${person.name}」及其所有关联记录？`, detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
+    const name = person.name
+    if (!(await ask({
+      title: `删除联系人「${name}」及其所有关联记录？`,
+      detail: '往来、对话、记账与纪念日会一并进回收站，' + RECOVER_NOTE,
+      danger: true,
+      confirmLabel: '删除',
+    }))) return
     try {
       await API.delete(`/api/v1/people/${id}`)
-      toast.ok('已删除')
-      navigate('/people')
     } catch (err) {
       toast.fail('删除失败', err)
+      return
     }
+    toast.info(`已删除「${name}」，可在回收站找回`)
+    navigate('/people')
   }
 
   async function addField() {

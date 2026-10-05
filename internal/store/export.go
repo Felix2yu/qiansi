@@ -53,10 +53,10 @@ func (f ExportFilter) yearPersonCond(dateCol, personCol string) (string, []any) 
 }
 
 const exportEventCols = `e.event_date,e.title,COALESCE(et.name,''),COALESCE(e.location,''),
-COALESCE((SELECT group_concat(p.name,'、') FROM event_participants ep JOIN people p ON p.id=ep.person_id WHERE ep.event_id=e.id),''),
-COALESCE((SELECT t.direction FROM transactions t WHERE t.id=e.gift_transaction_id),''),
-COALESCE((SELECT t.amount_fen FROM transactions t WHERE t.id=e.gift_transaction_id),0),
-(SELECT COALESCE(SUM(t.amount_fen),0) FROM transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id),
+COALESCE((SELECT group_concat(p.name,'、') FROM event_participants ep JOIN live_people p ON p.id=ep.person_id WHERE ep.event_id=e.id),''),
+COALESCE((SELECT t.direction FROM live_transactions t WHERE t.id=e.gift_transaction_id),''),
+COALESCE((SELECT t.amount_fen FROM live_transactions t WHERE t.id=e.gift_transaction_id),0),
+(SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id),
 e.has_gift,COALESCE(e.gift,''),COALESCE(e.summary,'')`
 
 func (s *Store) exportEvents(ctx context.Context, f ExportFilter) ([]string, [][]string, error) {
@@ -75,7 +75,7 @@ func (s *Store) exportEvents(ctx context.Context, f ExportFilter) ([]string, [][
 		conds = append(conds, "e.id=?")
 		args = append(args, f.EventID)
 	}
-	qry := "SELECT " + exportEventCols + " FROM events e LEFT JOIN event_types et ON et.id=e.type_id"
+	qry := "SELECT " + exportEventCols + " FROM live_events e LEFT JOIN event_types et ON et.id=e.type_id"
 	if len(conds) > 0 {
 		qry += " WHERE " + strings.Join(conds, " AND ")
 	}
@@ -106,8 +106,8 @@ func (s *Store) exportTransactions(ctx context.Context, f ExportFilter) ([]strin
 	qry := `SELECT t.occurred_at,COALESCE(p.name,''),t.kind,t.direction,t.amount_fen,
 COALESCE(t.title,''),COALESCE(t.due_date,''),t.settled,COALESCE(t.settled_at,''),
 COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0),
-COALESCE((SELECT ev.title FROM events ev WHERE ev.id=t.event_id),'')
-FROM transactions t LEFT JOIN people p ON p.id=t.person_id`
+COALESCE((SELECT ev.title FROM live_events ev WHERE ev.id=t.event_id),'')
+FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id`
 	cond, args := f.yearPersonCond("t.occurred_at", "t.person_id")
 	if f.EventID != "" {
 		if cond == "" {
@@ -142,7 +142,7 @@ FROM transactions t LEFT JOIN people p ON p.id=t.person_id`
 
 func (s *Store) exportMemos(ctx context.Context, f ExportFilter) ([]string, [][]string, error) {
 	qry := `SELECT m.said_at,COALESCE(p.name,''),m.speaker,m.content,m.is_promise,COALESCE(m.due_date,''),m.status
-FROM memos m LEFT JOIN people p ON p.id=m.person_id`
+FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id`
 	// 对话不挂事件，EventID 这一层对 memos 无意义
 	cond, args := f.yearPersonCond("m.said_at", "m.person_id")
 	rows, err := s.DB.QueryContext(ctx, qry+cond+" ORDER BY m.said_at DESC", args...)

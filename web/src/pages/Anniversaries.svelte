@@ -5,6 +5,7 @@
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
   import { Plus, X } from '@lucide/svelte'
 
   let list = $state<Anniversary[]>([])
@@ -67,16 +68,10 @@
     await load()
   }
 
-  // 硬删除没有反悔余地：服务端没有可恢复的中间态，这里靠确认框挡一下
+  // 删除只进回收站：撤销窗口过后仍能在回收站请回来
   async function remove(a: Anniversary) {
-    if (!(await ask({ title: `删除「${a.title}」？`, detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/anniversaries/${a.id}`)
-      toast.ok('已删除')
-      await load()
-    } catch (err: any) {
-      toast.fail('删除失败', err)
-    }
+    if (!(await ask({ title: `删除「${a.title}」？`, detail: RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
+    await trashOne('anniversary', a.id, load, '已删除')
   }
 
   /** 每年重复的纪念日只有月日有意义，展示时补上今年的年份便于阅读 */

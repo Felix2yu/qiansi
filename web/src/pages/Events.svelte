@@ -7,6 +7,7 @@
   import { dict, ensure, refresh } from '../lib/dict.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
   import { Plus, X, Search } from '@lucide/svelte'
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props()
@@ -80,20 +81,13 @@
     load(true)
   })
 
-  // 往来是硬删除，服务端没有可恢复的中间态，所以只靠确认框挡一次
+  // 删除只进回收站：5 秒内就地撤销，之后仍能从回收站请回来
   async function remove(id: string, title: string, expenseFen?: number) {
     const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : ''
-    if (!(await ask({ title: `删除「${title}」？`, detail: tail + '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/events/${id}`)
-    } catch (err: any) {
-      toast.fail('删除失败', err)
-      return
-    }
+    if (!(await ask({ title: `删除「${title}」？`, detail: tail + RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
+    if (!(await trashOne('event', id, () => Promise.all([load(), refresh('events')]), '已删除'))) return
     showForm = false
     editId = ''
-    toast.ok('已删除')
-    await Promise.all([load(), refresh('events')])
   }
 
   function locText(e: Event) {

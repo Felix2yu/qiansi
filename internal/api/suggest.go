@@ -20,7 +20,7 @@ func (a *API) suggest() []Suggestion {
 	st := a.Store.DB
 
 	// 1. People not updated recently
-	rows, err := st.QueryContext(ctx, `SELECT p.id,p.name FROM people p
+	rows, err := st.QueryContext(ctx, `SELECT p.id,p.name FROM live_people p
 WHERE p.archived=0 AND substr(p.updated_at,1,10) < ?
 ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
 	if err == nil {
@@ -59,8 +59,8 @@ ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
 FROM (
   SELECT t.person_id AS pid,
          t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
-  FROM transactions t WHERE t.direction='out' AND t.kind='loan' AND t.settled=0
-) x JOIN people p ON p.id=x.pid
+  FROM live_transactions t WHERE t.direction='out' AND t.kind='loan' AND t.settled=0
+) x JOIN live_people p ON p.id=x.pid
 GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 	if err == nil {
 		defer rows.Close()
@@ -78,7 +78,7 @@ GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 
 	// 4. Open promises past due
 	rows, err = st.QueryContext(ctx, `SELECT COALESCE(p.id,''), COALESCE(p.name,''), m.content, COALESCE(m.due_date,'')
-FROM memos m LEFT JOIN people p ON p.id=m.person_id
+FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id
 WHERE m.is_promise=1 AND m.status='open' AND m.due_date<>'' AND date(m.due_date) < ?`, store.TodayLocal())
 	if err == nil {
 		defer rows.Close()

@@ -6,6 +6,7 @@
   import { Plus, X, Check } from '@lucide/svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
   import { completeReminder } from '../lib/reminderActions'
 
   let list = $state<Reminder[]>([])
@@ -131,14 +132,8 @@
   async function remove(r: Reminder) {
     const notice = derivedNotice(r, '删')
     if (notice) { toast.info(notice); return }
-    if (!(await ask({ title: '删除这条待办？', detail: '删除后无法恢复。', danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/reminders/${r.id}`)
-      toast.ok('已删除')
-      await load()
-    } catch (err: any) {
-      toast.fail('删除失败', err)
-    }
+    if (!(await ask({ title: '删除这条待办？', detail: RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
+    await trashOne('reminder', r.id, load, '已删除')
   }
 </script>
 <div class="space-y-4">

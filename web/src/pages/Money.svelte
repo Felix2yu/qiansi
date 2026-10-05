@@ -8,6 +8,7 @@
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
+  import { RECOVER_NOTE, trashOne } from '../lib/trash'
 
   let list = $state<Transaction[]>([])
   const events = $derived(dict.events)
@@ -105,14 +106,8 @@
   }
 
   async function remove(id: string) {
-    if (!(await ask({ title: '删除这笔记录？', detail: '删除后无法恢复，相关的还款登记也会一并失效。', danger: true, confirmLabel: '删除' }))) return
-    try {
-      await API.delete(`/api/v1/transactions/${id}`)
-      toast.ok('已删除')
-      await load()
-    } catch (err) {
-      toast.fail('删除失败', err)
-    }
+    if (!(await ask({ title: '删除这笔记录？', detail: '这笔账目连同它的还款登记一起进回收站，' + RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
+    await trashOne('transaction', id, load, '已删除')
   }
 
   // 名字随账目一起回来，不再为了这几个字拉全量名单
