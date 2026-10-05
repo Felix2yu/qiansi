@@ -967,8 +967,9 @@ FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 }
 
 // ReminderUpcoming returns explicit reminders plus entries derived from
-// anniversaries (next solar occurrence within `horizonDays`) and from open
-// promises whose due date has arrived or passed.
+// anniversaries (next solar occurrence within `horizonDays`), from open
+// promises whose due date has arrived or passed, and from the contact rhythm
+// (people whose 「多久该联系」 window has run out — see ContactUpcoming).
 //
 // 时间基准统一为本地时区（见 store.nowLocal 注释）；horizonDays<=0 表示不限。
 func (s *Store) ReminderUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
@@ -1007,6 +1008,10 @@ WHERE r.status='pending'`
 	promises, err := s.PromiseUpcoming(ctx, horizonDays)
 	if err == nil {
 		list = append(list, promises...)
+	}
+	// Merge people whose contact rhythm has run out (N5)
+	if contacts, err := s.ContactUpcoming(ctx); err == nil {
+		list = append(list, contacts...)
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
 	return list, nil

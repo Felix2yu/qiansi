@@ -49,7 +49,7 @@ var dumpOrder = []string{
 	"settings", "categories", "tags", "event_types", "people",
 	"person_categories", "person_fields", "relationships",
 	"events", "event_participants", "transactions", "repayments",
-	"memos", "anniversaries", "anniversary_dismiss", "reminders",
+	"memos", "anniversaries", "anniversary_dismiss", "contact_checkins", "reminders",
 	"attachments", "intimacy_snapshots", "notification_logs",
 }
 

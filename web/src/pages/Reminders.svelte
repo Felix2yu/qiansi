@@ -41,11 +41,14 @@
     showForm = true
   }
 
-  // 派生待办（纪念日、承诺）不在 reminders 表里，id 是合成串：
+  // 派生待办（纪念日、承诺、联系节奏）不在 reminders 表里，id 是合成串：
   // 改与删都要回到各自的来源页，否则 PUT/DELETE 打在不存在的行上假装成功。
   function derivedNotice(r: Reminder, action: '改' | '删'): string {
     if (r.id.startsWith('anniv:')) return `纪念日自动生成的提醒请到「纪念日」里${action}`
     if (r.id.startsWith('promise:')) return `到期承诺自动生成的待办请到「对话」里${action}`
+    if (r.id.startsWith('contact:')) return action === '改'
+      ? '这条按联系节奏自动生成，要改节奏请去「设置 · 联系节奏」'
+      : '这条按联系节奏自动生成，勾掉（记一次「联系过了」）它就不再催'
     return ''
   }
 
@@ -109,10 +112,10 @@
     return API.put(`/api/v1/reminders/${r.id}`, { ...r, status: 'pending', completed_at: '' })
   }
 
-  // 派生待办的「完成」写的是来源记录（承诺兑现 / 关闭本次提醒），
+  // 派生待办的「完成」写的是来源记录（承诺兑现 / 关闭本次提醒 / 联系打卡），
   // 这里没有对应的反向接口，所以不给撤销按钮，只指路
   function isDerived(r: Reminder) {
-    return r.id.startsWith('anniv:') || r.id.startsWith('promise:')
+    return r.id.startsWith('anniv:') || r.id.startsWith('promise:') || r.id.startsWith('contact:')
   }
 
   async function done(r: Reminder) {

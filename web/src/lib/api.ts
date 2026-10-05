@@ -128,12 +128,28 @@ export type BackupStatus = {
 }
 export type TrendPoint = { day: string; score: number }
 export type SearchResult = { type: string; id: string; title: string; subtitle?: string; date?: string; path: string }
+/** 联系节奏：一个亲密度等级对应「多久该联系一次」（天） */
+export type RhythmTier = { grade: number; days: number }
+/** 渐远名单上的一行 */
+export type DriftPerson = {
+  person_id: string
+  name: string
+  grade: number
+  last_contact?: string
+  anchor: string
+  anchor_from: 'contact' | 'created' | string
+  days: number
+  due_at: string
+  days_since: number
+  overdue_days: number
+  overdue: boolean
+}
 
 // ===== 枚举本地化：后端存英文，界面统一显示中文 =====
 export const KIND_LABEL: Record<string, string> = { loan: '借还', gift: '礼物', expense: '花销', other: '其它' }
 export const DIRECTION_LABEL: Record<string, string> = { out: '我支出', in: '我收入' }
 export const MEMO_STATUS_LABEL: Record<string, string> = { open: '进行中', fulfilled: '已兑现', broken: '未兑现' }
-export const REF_TYPE_LABEL: Record<string, string> = { custom: '手动', anniversary: '纪念日', birthday: '生日', memo: '对话', transaction: '金钱', promise: '承诺' }
+export const REF_TYPE_LABEL: Record<string, string> = { custom: '手动', anniversary: '纪念日', birthday: '生日', memo: '对话', transaction: '金钱', promise: '承诺', contact: '该联系' }
 export const TIMELINE_LABEL: Record<string, string> = { event: '往来', memo: '对话', transaction: '金钱', anniversary: '纪念日' }
 export const SEARCH_LABEL: Record<string, string> = { person: '人物', event: '往来', memo: '对话', transaction: '金钱', anniversary: '纪念日' }
 export const RELATION_TYPES = ['家人', '亲戚', '朋友', '同学', '同事', '邻居', '合作伙伴', '其它']
@@ -174,6 +190,9 @@ export function contactAgo(day?: string): string {
   if (n < 30) return `${n} 天前`
   return day.slice(0, 10)
 }
+
+/** 亲密度档位的写法：5 级最亲密（♥ 越多越近），0 级没填 */
+export const gradeLabel = (grade: number) => (grade > 0 ? '♥'.repeat(grade) : '未设置')
 
 /** 元字符串转分；非法输入返回 0，避免把 NaN 写进库 */
 export function toFen(input: string | number): number {

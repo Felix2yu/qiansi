@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, type BackupItem, type BackupStatus } from '../lib/api'
+  import { navigate } from '../lib/router'
+  import { API, gradeLabel, type BackupItem, type BackupStatus, type RhythmTier } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
-  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet, UserCheck } from '@lucide/svelte'
+  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet, UserCheck, HeartPulse } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { setSelf } from '../lib/self.svelte'
@@ -62,6 +63,50 @@
   let autoSaving = $state(false)
   let autoRunning = $state(false)
 
+  // 联系节奏（六档天数）：和自动备份的 schedule 一样，是这台机器上的偏好，
+  // 后端存成 settings 里的一个 JSON 键，GET 永远回齐六档。
+  let rhythm = $state<RhythmTier[]>([])
+  let rhythmSaving = $state(false)
+  const RHYTHM_MAX = 3650
+
+  async function loadRhythm() {
+    const r = await API.get<RhythmTier[]>('/api/v1/contact-rhythm').catch((err) => {
+      toast.fail('读取联系节奏失败', err)
+      return null
+    })
+    if (r) rhythm = r
+  }
+
+  // 存完用服务端的回读覆盖本地：它才是归一化后的那份，六个数字要对得上
+  async function saveRhythm() {
+    rhythmSaving = true
+    try {
+      rhythm = await API.put<RhythmTier[]>('/api/v1/contact-rhythm', rhythm)
+      toast.ok('已保存联系节奏')
+    } catch (err) {
+      toast.fail('保存联系节奏失败', err)
+    } finally {
+      rhythmSaving = false
+    }
+  }
+
+  async function resetRhythm() {
+    if (!(await ask({
+      title: '恢复默认联系节奏？',
+      detail: '六档天数会退回 7 / 7 / 30 / 30 / 90 / 90 天。',
+      confirmLabel: '恢复默认',
+    }))) return
+    rhythmSaving = true
+    try {
+      rhythm = await API.delete<RhythmTier[]>('/api/v1/contact-rhythm')
+      toast.ok('已恢复默认节奏')
+    } catch (err) {
+      toast.fail('恢复默认节奏失败', err)
+    } finally {
+      rhythmSaving = false
+    }
+  }
+
   async function load() {
     // 读失败就把屏幕上已有的值留着：填成空再点保存会覆盖掉服务端的真配置
     const s = await API.get<Record<string, string>>('/api/v1/settings').catch((err) => {
@@ -80,7 +125,7 @@
       return null
     })
     if (b) backups = b
-    await loadAuto()
+    await Promise.all([loadAuto(), loadRhythm()])
   }
 
   async function loadAuto() {
@@ -368,6 +413,40 @@
     <h2 class="text-sm font-medium mb-3">往来事件类型</h2>
     <TermList items={eventTypes} endpoint="/api/v1/event-types" noun="类型" placeholder="类型名"
               defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={() => refresh('eventTypes')} />
+  </section>
+
+  <!-- 联系节奏 -->
+  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><HeartPulse size={14} /> 联系节奏</h2>
+    <p class="text-xs mb-4 leading-relaxed" style="color: var(--q-muted);">
+      按亲密度设定「多久该联系一次」。距最近一次往来、对话或「联系过了」打卡超过这个天数，就自动派生一条待办并随每日推送发出；
+      勾掉待办就等于打过招呼，下一次到期日自动推后。
+    </p>
+    {#if rhythm.length > 0}
+      <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 max-w-lg">
+        {#each rhythm as t (t.grade)}
+          <label class="flex items-center justify-between gap-2 text-sm">
+            <span class="shrink-0" style="color: var(--q-muted);">{gradeLabel(t.grade)}</span>
+            <span class="flex items-center gap-1.5">
+              <input type="number" min={1} max={RHYTHM_MAX} bind:value={t.days}
+                     aria-label={`${gradeLabel(t.grade)}的联系天数`}
+                     class="w-20 px-2 py-1 rounded-lg text-sm outline-none text-right"
+                     style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              <span class="text-xs" style="color: var(--q-muted);">天</span>
+            </span>
+          </label>
+        {/each}
+      </div>
+      <div class="flex items-center gap-2 mt-4">
+        <button class="px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
+                style="background: var(--q-theme);" disabled={rhythmSaving} onclick={saveRhythm}>
+          {rhythmSaving ? '保存中…' : '保存'}
+        </button>
+        <button class="px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
+                style="background: var(--q-bg); border: 1px solid var(--q-border);" disabled={rhythmSaving} onclick={resetRhythm}>恢复默认</button>
+        <button class="text-xs ml-auto" style="color: var(--q-theme);" onclick={() => navigate('/drift')}>看渐远名单</button>
+      </div>
+    {/if}
   </section>
 
   <!-- 通知 -->

@@ -104,12 +104,15 @@
     load(true)
   })
 
-  // 首启引导用 /events?new=1 把「记一次往来」变成一次点击。这里用 effect 而不是 onMount：
+  // 首启引导用 /events?new=1 把「记一次往来」变成一次点击；渐远名单上的「记一笔」
+  // 再带一个 with=<人物 id>，替用户把参与人填好。这里用 effect 而不是 onMount：
   // 这一页可能早就挂好了（切页不销毁组件），那时 onMount 永远不会再跑。
   $effect(() => {
     if (onlyTimeline) return
     if ($route.query.new !== '1') return
+    const withId = $route.query.with
     openNew()
+    if (withId) formPreset = { ...formPreset, participant_ids: [withId] }
     navigate('/events')
   })
 

@@ -19,24 +19,11 @@ func (a *API) suggest() []Suggestion {
 	ctx := context.Background()
 	st := a.Store.DB
 
-	// 1. People not updated recently
-	rows, err := st.QueryContext(ctx, `SELECT p.id,p.name FROM live_people p
-WHERE p.archived=0 AND substr(p.updated_at,1,10) < ?
-ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var personID, name string
-			if err := rows.Scan(&personID, &name); err == nil {
-				out = append(out, Suggestion{
-					Type: "久未联系", PersonID: personID, PersonName: name,
-					Message: "已有一段时间没有往来了，打个招呼吧",
-				})
-			}
-		}
-	}
+	// 「久未联系」这一类已经由联系节奏引擎接管：它过去拿 people.updated_at
+	// 当「最近一次接触」，改一次备注就把人从名单里摘出去，而且阈值写死 14 天。
+	// 现在逾期的人直接派生成待办（见 store.ContactUpcoming），今日页的待办区就是它。
 
-	// 2. Upcoming anniversaries within 7 days
+	// 1. Upcoming anniversaries within 7 days
 	//
 	// 必须走 NextOccurrence 计算「下一次发生」：直接比较 date(a.date) 只在
 	// 建档当年命中一次，之后每年重复的纪念日再也不会出现在建议里。
@@ -50,12 +37,12 @@ ORDER BY p.grade DESC, p.updated_at ASC LIMIT 10`, store.DaysAgoLocal(14))
 		}
 	}
 
-	// 3. Unsettled lent money
+	// 2. Unsettled lent money
 	//
 	// 先按每笔交易扣掉各自还款，再按人汇总。直接在聚合里写 t.id 会让 SQLite
 	// 取未定义的某一行，多笔借款时数字是错的。
 	// kind='loan' 与首页欠账口径一致：礼物/花销不是借款，不该出现在「待还」里。
-	rows, err = st.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(SUM(x.remaining),0) AS unpaid
+	rows, err := st.QueryContext(ctx, `SELECT p.id,p.name,COALESCE(SUM(x.remaining),0) AS unpaid
 FROM (
   SELECT t.person_id AS pid,
          t.amount_fen - COALESCE((SELECT SUM(r.amount_fen) FROM repayments r WHERE r.transaction_id=t.id),0) AS remaining
@@ -76,7 +63,7 @@ GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 		}
 	}
 
-	// 4. Open promises past due
+	// 3. Open promises past due
 	rows, err = st.QueryContext(ctx, `SELECT COALESCE(p.id,''), COALESCE(p.name,''), m.content, COALESCE(m.due_date,'')
 FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id
 WHERE m.is_promise=1 AND m.status='open' AND m.due_date<>'' AND date(m.due_date) < ?`, store.TodayLocal())

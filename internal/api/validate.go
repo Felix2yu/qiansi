@@ -224,6 +224,38 @@ func validateAnniv(a *store.Anniversary) error {
 	return nil
 }
 
+// validateRhythm 校联系节奏表。六个等级一个都不许少：少一档就等于那一档悄悄退回默认值，
+// 用户以为自己在改「常来往」的节奏，保存完那一档又变回 30 天。
+func validateRhythm(tiers []store.RhythmTier) error {
+	seen := map[int]bool{}
+	for _, t := range tiers {
+		if t.Grade < 0 || t.Grade > 5 {
+			return fmt.Errorf("亲密度等级只能是 0–5，收到 %d", t.Grade)
+		}
+		if seen[t.Grade] {
+			return fmt.Errorf("亲密度等级 %s 重复了", gradeLabel(t.Grade))
+		}
+		seen[t.Grade] = true
+		if t.Days < 1 || t.Days > store.MaxRhythmDays {
+			return fmt.Errorf("%s 的节奏要在 1–%d 天之间，收到 %d", gradeLabel(t.Grade), store.MaxRhythmDays, t.Days)
+		}
+	}
+	for g := 0; g <= 5; g++ {
+		if !seen[g] {
+			return fmt.Errorf("缺少 %s 这一档，六个等级都要给天数", gradeLabel(g))
+		}
+	}
+	return nil
+}
+
+// gradeLabel 与选人、统计页同一套说法：♥ 的个数就是亲密度，0 是「未设置」。
+func gradeLabel(g int) string {
+	if g <= 0 {
+		return "未设置"
+	}
+	return "♥×" + strconv.Itoa(g)
+}
+
 func validateReminder(r *store.Reminder) error {
 	due, err := normStamp("due_at", r.DueAt)
 	if err != nil {

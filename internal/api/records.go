@@ -612,7 +612,7 @@ func (a *API) registerReminders(r chi.Router) {
 
 // reminderList 待办页列表。
 //
-// 除了 reminders 表里的行，还把纪念日与承诺派生出的待办一并列出：页面标题一直写着
+// 除了 reminders 表里的行，还把纪念日、承诺与联系节奏派生出的待办一并列出：页面标题一直写着
 // 「自定义 & 自动生成」，但过去只查表，派生项只在今日页露面，用户在待办页看到的
 // 偏偏是空表。派生项不在表里，分页只能在合并排序之后切，所以表里的行先取全。
 func (a *API) reminderList(w http.ResponseWriter, r *http.Request) {
@@ -631,6 +631,9 @@ func (a *API) reminderList(w http.ResponseWriter, r *http.Request) {
 		}
 		if promises, err := a.Store.PromiseUpcoming(ctx, 0); err == nil {
 			list = append(list, promises...)
+		}
+		if contacts, err := a.Store.ContactUpcoming(ctx); err == nil {
+			list = append(list, contacts...)
 		}
 		sort.SliceStable(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
 	}
@@ -682,18 +685,18 @@ func (a *API) reminderCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, rm)
 }
 
-// derivedReminder 判断 id 是不是派生待办的合成串（纪念日 / 承诺）。
+// derivedReminder 判断 id 是不是派生待办的合成串（纪念日 / 承诺 / 联系节奏）。
 //
 // 这类行不在 reminders 表里：UPDATE/DELETE 会静默影响 0 行并回成功，
 // 用户以为改掉了，刷新后又原样出现，所以除了「完成」都要挡回去。
 func derivedReminder(id string) bool {
-	return strings.HasPrefix(id, "anniv:") || strings.HasPrefix(id, "promise:")
+	return strings.HasPrefix(id, "anniv:") || strings.HasPrefix(id, "promise:") || strings.HasPrefix(id, "contact:")
 }
 
 func (a *API) reminderUpdate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if derivedReminder(id) {
-		writeErr(w, 400, "这条是自动生成的待办，请到纪念日或对话里修改")
+		writeErr(w, 400, "这条是自动生成的待办，改不了；要改请回到它的来源（纪念日 / 承诺 / 联系节奏）")
 		return
 	}
 	var rm store.Reminder
@@ -724,7 +727,7 @@ func (a *API) reminderUpdate(w http.ResponseWriter, r *http.Request) {
 func (a *API) reminderDelete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if derivedReminder(id) {
-		writeErr(w, 400, "这条是自动生成的待办，请到纪念日或对话里删除")
+		writeErr(w, 400, "这条是自动生成的待办，删不掉；勾掉它才算完成")
 		return
 	}
 	if err := a.Store.ReminderDelete(r.Context(), id); err != nil {
@@ -763,6 +766,21 @@ func (a *API) reminderDone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := a.Store.MemoFulfill(r.Context(), memoID); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		w.WriteHeader(204)
+		return
+	}
+	// 联系节奏派生待办（"contact:<person_id>"）：勾掉 = 「联系过了，只是没记进来」，
+	// 记一次打卡把锚点前移，而不是在 reminders 表里凭空改一行状态。
+	if strings.HasPrefix(id, "contact:") {
+		personID := strings.TrimPrefix(id, "contact:")
+		if personID == "" {
+			writeErr(w, 400, "bad contact reminder id")
+			return
+		}
+		if err := a.Store.ContactCheckin(r.Context(), personID); err != nil {
 			writeStoreErr(w, err)
 			return
 		}
