@@ -189,8 +189,15 @@ func TestCircleMembershipCascades(t *testing.T) {
 	if err := s.PersonDelete(ctx, gone.ID); err != nil {
 		t.Fatalf("PersonDelete: %v", err)
 	}
+	// 进回收站的人不动成员关系：恢复后他还在原来的圈子里
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM person_categories"); n != 2 {
+		t.Fatalf("软删除不该动成员关系，剩余 %d", n)
+	}
+	if err := s.PersonPurge(ctx, gone.ID); err != nil {
+		t.Fatalf("PersonPurge: %v", err)
+	}
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM person_categories"); n != 1 {
-		t.Fatalf("删人应级联清掉他的成员关系，剩余 %d", n)
+		t.Fatalf("彻底删人应级联清掉他的成员关系，剩余 %d", n)
 	}
 	if err := s.CategoryDelete(ctx, cat.ID); err != nil {
 		t.Fatalf("CategoryDelete: %v", err)

@@ -1135,25 +1135,40 @@ func TestAPIAttachDeleteUnknownAndRows(t *testing.T) {
 		t.Fatalf("文件未删除")
 	}
 
-	// 联系人删除时也应清理其附件文件与行
+	// 联系人进回收站：头像文件与附件行都原地留着，恢复后人和照片都在
 	pid := apiCreatePersonMap(t, s, map[string]any{"name": "带头像的人"})["id"].(string)
 	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": pid}, "avatar.png", apiPNGBytes())
 	out := decodeMap(t, s.raw(http.MethodPost, "/api/v1/attachments/", body, ct))
 	stored := strings.TrimPrefix(out["url"].(string), "/uploads/")
-	if _, err := s.Store.DB.Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", out["attachment"].(map[string]any)["id"], pid); err != nil {
+	attID := out["attachment"].(map[string]any)["id"]
+	if _, err := s.Store.DB.Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", attID, pid); err != nil {
 		t.Fatalf("set avatar: %v", err)
 	}
 	apiWantStatus(t, http.MethodDelete, "people delete", s.do(http.MethodDelete, "/api/v1/people/"+pid, nil), http.StatusNoContent)
-	if _, err := os.Stat(filepath.Join(s.Cfg.Uploads, stored)); !os.IsNotExist(err) {
-		t.Fatalf("联系人删除后附件文件仍在: %v", err)
+	if _, err := os.Stat(filepath.Join(s.Cfg.Uploads, stored)); err != nil {
+		t.Fatalf("联系人进回收站后附件文件应保留: %v", err)
 	}
+	if n := apiAttachmentRows(t, s, stored); n != 1 {
+		t.Fatalf("联系人进回收站后附件行应保留，得到 %d", n)
+	}
+
+	// 回收站里彻底删除才清掉文件与行
+	apiWantStatus(t, http.MethodDelete, "trash purge", s.do(http.MethodDelete, "/api/v1/trash/person/"+pid, nil), http.StatusNoContent)
+	if _, err := os.Stat(filepath.Join(s.Cfg.Uploads, stored)); !os.IsNotExist(err) {
+		t.Fatalf("彻底删除后附件文件仍在: %v", err)
+	}
+	if n := apiAttachmentRows(t, s, stored); n != 0 {
+		t.Fatalf("彻底删除后附件行未清理，得到 %d", n)
+	}
+}
+
+func apiAttachmentRows(t *testing.T, s *testServer, stored string) int {
+	t.Helper()
 	var n int
 	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM attachments WHERE stored_name=?", stored).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
-	if n != 0 {
-		t.Fatal("联系人删除后附件行未清理")
-	}
+	return n
 }
 
 // ===== misc.go: 通知 / randStr / dashboard =====
@@ -1490,7 +1505,7 @@ func TestAPIPeopleDeleteStoreError(t *testing.T) {
 	}
 
 	pid := apiCreatePersonMap(t, s, map[string]any{"name": "删不掉"})["id"].(string)
-	// 挂上头像：删除失败前这一步已把 avatar_attachment_id 置为 NULL
+	// 挂上头像：软删除不该碰它
 	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": pid}, "avatar.png", apiPNGBytes())
 	rec := s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantStatus(t, http.MethodPost, "/api/v1/attachments/", rec, http.StatusOK)
@@ -1499,15 +1514,14 @@ func TestAPIPeopleDeleteStoreError(t *testing.T) {
 		t.Fatalf("set avatar: %v", err)
 	}
 
-	apiTrigger(t, s, "CREATE TRIGGER blk_del BEFORE DELETE ON people BEGIN SELECT RAISE(ABORT,'no delete'); END")
+	// 删除是 UPDATE deleted_at，触发器要拦在写标记这一步上
+	apiTrigger(t, s, "CREATE TRIGGER blk_del BEFORE UPDATE OF deleted_at ON people BEGIN SELECT RAISE(ABORT,'no delete'); END")
 	t.Cleanup(func() {
 		_, _ = s.Store.DB.Exec("DROP TRIGGER IF EXISTS blk_del")
 	})
 
-	// 摘附件成功、DELETE people 失败 => 500
 	rec = s.do(http.MethodDelete, "/api/v1/people/"+pid, nil)
 	apiWantStatus(t, http.MethodDelete, "/api/v1/people/{id}", rec, http.StatusInternalServerError)
-	// 该次失败已把 avatar_attachment_id 置空，此处只按 SQL 校验记录仍在
 	if n := apiPeopleRowCount(t, s); n != 1 {
 		t.Fatalf("删除失败后联系人数量 = %d, want 1", n)
 	}
@@ -1521,6 +1535,15 @@ func TestAPIPeopleDeleteStoreError(t *testing.T) {
 
 	apiTrigger(t, s, "DROP TRIGGER IF EXISTS blk_del")
 	apiWantStatus(t, http.MethodDelete, "/api/v1/people/{id}", s.do(http.MethodDelete, "/api/v1/people/"+pid, nil), http.StatusNoContent)
+	// 进回收站：行还在表里，只是不再可见
+	if n := apiPeopleRowCount(t, s); n != 1 {
+		t.Fatalf("软删除后基础表应仍有 1 条，得到 %d", n)
+	}
+	if rec := s.do(http.MethodGet, "/api/v1/people/"+pid, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("回收站里的人 GET /people/{id} => %d, want 404", rec.Code)
+	}
+	// 从回收站彻底删除才真的少一行
+	apiWantStatus(t, http.MethodDelete, "trash purge", s.do(http.MethodDelete, "/api/v1/trash/person/"+pid, nil), http.StatusNoContent)
 	if n := apiPeopleRowCount(t, s); n != 0 {
 		t.Fatalf("删除后仍有 %d 条记录", n)
 	}

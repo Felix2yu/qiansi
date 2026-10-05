@@ -42,7 +42,8 @@ func TestMemoList_CarriesPersonName(t *testing.T) {
 	}
 }
 
-// 人被删掉之后对话的 person_id 置空（ON DELETE SET NULL），名字必须跟着空掉，
+// 联系人进了回收站，他名下的对话一起藏起来；联系人被彻底删除后对话的
+// person_id 置空（ON DELETE SET NULL），名字必须跟着空掉，
 // 否则列表上会留一个指向不存在的人的名字。
 func TestMemoList_NameFollowsPersonDelete(t *testing.T) {
 	s := newTestStore(t)
@@ -57,6 +58,16 @@ func TestMemoList_NameFollowsPersonDelete(t *testing.T) {
 	list, err := s.MemoList(ctx, "", false, 0, 0)
 	if err != nil {
 		t.Fatalf("MemoList: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("备忘条数 = %d，联系人还在回收站时期望整体藏起来", len(list))
+	}
+	if err := s.PersonPurge(ctx, me.ID); err != nil {
+		t.Fatalf("PersonPurge: %v", err)
+	}
+	list, err = s.MemoList(ctx, "", false, 0, 0)
+	if err != nil {
+		t.Fatalf("MemoList(彻底删除后): %v", err)
 	}
 	if len(list) != 1 {
 		t.Fatalf("备忘条数 = %d，期望删人后仍保留 1 条", len(list))

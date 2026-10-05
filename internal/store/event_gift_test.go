@@ -196,7 +196,8 @@ func TestEventGift_DoesNotStealReassignedRow(t *testing.T) {
 	}
 }
 
-// 从金钱页删掉礼金账：外键把指针清成 NULL，下次保存重新记一笔，不能留下悬空引用
+// 礼金账被彻底删除（回收站里清空）：外键把指针清成 NULL，下次保存重新记一笔，
+// 不能留下悬空引用。收进回收站是另一回事，由 trash_test.go 覆盖。
 func TestEventGift_SelfHealsAfterTxDeleted(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -205,8 +206,8 @@ func TestEventGift_SelfHealsAfterTxDeleted(t *testing.T) {
 		GiftAmountFen: 2600, GiftDirection: "out", GiftPersonID: host.ID}
 	egCreate(t, s, e, []string{host.ID})
 
-	if err := s.TransactionDelete(ctx, e.GiftTransactionID); err != nil {
-		t.Fatalf("TransactionDelete: %v", err)
+	if err := s.TransactionPurge(ctx, e.GiftTransactionID); err != nil {
+		t.Fatalf("TransactionPurge: %v", err)
 	}
 	got, _ := s.EventGet(ctx, e.ID)
 	if got.GiftTransactionID != "" || got.GiftAmountFen != 0 {
@@ -222,7 +223,8 @@ func TestEventGift_SelfHealsAfterTxDeleted(t *testing.T) {
 	}
 }
 
-// 删往来留账：钱确实花过，只是不再挂在事件上（礼金与开销同一套做法）
+// 删往来留账：钱确实花过。进回收站时账目还挂着（恢复事件要连账一起回来），
+// 从回收站彻底删掉才解绑（礼金与开销同一套做法）。
 func TestEventGift_DeleteEventKeepsGiftRow(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
@@ -237,6 +239,16 @@ func TestEventGift_DeleteEventKeepsGiftRow(t *testing.T) {
 	var evID *string
 	if err := s.DB.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
 		t.Fatalf("礼金账目随事件一起消失了: %v", err)
+	}
+	if evID == nil || *evID != e.ID {
+		t.Fatalf("事件进回收站后账目应仍挂在 %s，got %v", e.ID, evID)
+	}
+	if err := s.EventPurge(ctx, e.ID); err != nil {
+		t.Fatalf("EventPurge: %v", err)
+	}
+	evID = nil
+	if err := s.DB.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
+		t.Fatalf("彻底删除后礼金账目消失了: %v", err)
 	}
 	if evID != nil {
 		t.Fatalf("删事件后账目仍挂在它上面: %v", *evID)

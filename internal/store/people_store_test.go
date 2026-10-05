@@ -462,8 +462,16 @@ func TestPeopleDeleteAndCascade(t *testing.T) {
 	if _, err := s.PersonGet(ctx, p.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("删除后应查不到，错误 = %v", err)
 	}
-	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", p.ID); n != 0 {
-		t.Fatalf("纪念日应随人物级联删除，剩余 %d", n)
+	// 进回收站只是藏起来：关联记录一行都不动，恢复时原样回来
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", p.ID); n != 1 {
+		t.Fatalf("纪念日应留在表里等着恢复，剩余 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM live_anniversaries WHERE person_id=?", p.ID); n != 0 {
+		t.Fatalf("联系人还在回收站时纪念日不该可见，可见 %d", n)
+	}
+	// 已经在回收站里 → 再删一次 ErrNoRows
+	if err := s.PersonDelete(ctx, p.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("PersonDelete(回收站里) 应 ErrNoRows: %v", err)
 	}
 	// 删不存在的 ID → ErrNoRows
 	if err := s.PersonDelete(ctx, "never-existed"); !errors.Is(err, sql.ErrNoRows) {
@@ -471,6 +479,16 @@ func TestPeopleDeleteAndCascade(t *testing.T) {
 	}
 	if err := s.PersonDelete(pCancelledCtx(), p.ID); err == nil {
 		t.Errorf("已取消的 ctx 应返回错误")
+	}
+	// 彻底删除才由外键级联收尾
+	if err := s.PersonPurge(ctx, p.ID); err != nil {
+		t.Fatalf("PersonPurge: %v", err)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", p.ID); n != 0 {
+		t.Fatalf("纪念日应随人物级联删除，剩余 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM person_fields WHERE person_id=?", p.ID); n != 0 {
+		t.Fatalf("自定义字段应随人物级联删除，剩余 %d", n)
 	}
 }
 

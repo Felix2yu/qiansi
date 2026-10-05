@@ -153,7 +153,7 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 		t.Fatalf("非法参与人 EventUpdate 应该报错")
 	}
 
-	// 删除事件后关联交易 event_id 应被解除
+	// 删除事件是进回收站：账目还挂在它上面，恢复之后照旧连得上
 	if err := s.EventDelete(ctx, e.ID); err != nil {
 		t.Fatalf("EventDelete: %v", err)
 	}
@@ -164,8 +164,19 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TransactionGet: %v", err)
 	}
+	if tg.EventID != e.ID {
+		t.Fatalf("软删除不该解除 transactions.event_id, got %q", tg.EventID)
+	}
+	// 从回收站里彻底删掉才真的解绑
+	if err := s.EventPurge(ctx, e.ID); err != nil {
+		t.Fatalf("EventPurge: %v", err)
+	}
+	tg, err = s.TransactionGet(ctx, tx1.ID)
+	if err != nil {
+		t.Fatalf("TransactionGet(彻底删除后): %v", err)
+	}
 	if tg.EventID != "" {
-		t.Fatalf("EventDelete 应解除 transactions.event_id, got %q", tg.EventID)
+		t.Fatalf("EventPurge 应解除 transactions.event_id, got %q", tg.EventID)
 	}
 }
 
@@ -527,9 +538,16 @@ func TestEventStore_Transactions(t *testing.T) {
 	if tx3.EventTitle != ev.Title {
 		t.Fatalf("event_title 应回填 %q, got %q", ev.Title, tx3.EventTitle)
 	}
-	// 删除事件：往来留着（钱确实花过），只是不再挂在事件上
+	// 删除事件＝进回收站：往来还挂在它上面，等事件被恢复
 	if err := s.EventDelete(ctx, ev.ID); err != nil {
 		t.Fatalf("EventDelete: %v", err)
+	}
+	if got, err := s.TransactionGet(ctx, tx3.ID); err != nil || got.EventID != ev.ID {
+		t.Fatalf("事件进回收站后 event_id 应保留 %q, got %q err=%v", ev.ID, got.EventID, err)
+	}
+	// 彻底删除才将往来留在账上、解掉挂载
+	if err := s.EventPurge(ctx, ev.ID); err != nil {
+		t.Fatalf("EventPurge: %v", err)
 	}
 	if got, err := s.TransactionGet(ctx, tx3.ID); err != nil || got.EventID != "" {
 		t.Fatalf("事件删除后 event_id 应置空, got %q err=%v", got.EventID, err)
@@ -615,7 +633,14 @@ func TestEventStore_Transactions(t *testing.T) {
 	if _, err := s.TransactionGet(ctx, tx1.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("删除后应 ErrNoRows")
 	}
-	// 还款随事务级联删除
+	// 进回收站不碰还款：本金恢复后账还是那笔账
+	if l, err := s.RepaymentsOf(ctx, tx1.ID); err != nil || len(l) != 1 {
+		t.Fatalf("软删除不该动还款: %v / %d", err, len(l))
+	}
+	if err := s.TransactionPurge(ctx, tx1.ID); err != nil {
+		t.Fatalf("TransactionPurge: %v", err)
+	}
+	// 彻底删除才随事务级联删除
 	if l, err := s.RepaymentsOf(ctx, tx1.ID); err != nil || len(l) != 0 {
 		t.Fatalf("级联删除还款失败: %v / %d", err, len(l))
 	}
