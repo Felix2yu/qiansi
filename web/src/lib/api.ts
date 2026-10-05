@@ -154,6 +154,19 @@ export const TIMELINE_LABEL: Record<string, string> = { event: '往来', memo: '
 export const SEARCH_LABEL: Record<string, string> = { person: '人物', event: '往来', memo: '对话', transaction: '金钱', anniversary: '纪念日' }
 export const RELATION_TYPES = ['家人', '亲戚', '朋友', '同学', '同事', '邻居', '合作伙伴', '其它']
 
+/** 性别的码值与配色：库里只存 M / F（空 = 未填），编辑控件和头像底色共用这一份定义 */
+export const GENDER_OPTIONS = [
+  { code: 'M', label: '男', color: '#3b82f6' },
+  { code: 'F', label: '女', color: '#ec4899' },
+] as const
+
+const genderOption = (g?: string) => GENDER_OPTIONS.find(o => o.code === g)
+
+export const genderLabel = (g?: string) => genderOption(g)?.label || ''
+
+/** 头像底色：男蓝女粉，没填性别的人保持原来的主题色 */
+export const avatarBg = (g?: string) => genderOption(g)?.color || 'var(--q-theme)'
+
 export const yuan = (fen: number) => (fen / 100).toFixed(2)
 
 /** 列表卡片用的紧凑金额：整元去掉小数，一行里全是 .00 反而看不清 */

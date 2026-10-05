@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { API, TIMELINE_LABEL, todayLocal, toFen, yuan, netLabel, contactAgo,
+  import { API, TIMELINE_LABEL, todayLocal, toFen, yuan, netLabel, contactAgo, avatarBg, genderLabel,
            type Person, type TimelineItem, type Tag,
            type PersonField, type TrendPoint, type IntroPath } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
@@ -22,7 +22,7 @@
     return [
       p.grade > 0 ? '♥'.repeat(p.grade) : '',
       (p.categories ?? []).map(c => c.name).join('·'),
-      p.gender || '',
+      genderLabel(p.gender),
       p.birthday ? `生日 ${p.birthday}${p.birthday_is_lunar ? '（农历）' : ''}` : '',
     ].filter(Boolean).join(' · ')
   })
@@ -301,7 +301,7 @@
       <div class="shrink-0">
         <input type="file" accept="image/*" class="hidden" bind:this={avatarInput} onchange={uploadAvatar} />
         <button class="w-16 h-16 rounded-full overflow-hidden flex items-center justify-center text-2xl text-white font-semibold disabled:opacity-60"
-                style="background: var(--q-theme);" disabled={uploadingAvatar} onclick={() => avatarInput?.click()} title="点击更换头像">
+                style={`background: ${avatarBg(person.gender)};`} disabled={uploadingAvatar} onclick={() => avatarInput?.click()} title="点击更换头像">
           {#if person.avatar_attachment_id}
             <img src={avatarSrc(person.avatar_attachment_id)} alt="" class="w-full h-full object-cover" />
           {:else}

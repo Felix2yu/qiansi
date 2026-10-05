@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
-  import { API, type Person, type Category, type Tag } from './api'
+  import { API, GENDER_OPTIONS, type Person, type Category, type Tag } from './api'
   import PersonPicker from './PersonPicker.svelte'
   import PersonRelEditor from './PersonRelEditor.svelte'
   import { toast } from './toast.svelte'
@@ -217,8 +217,17 @@
   <div class="grid grid-cols-2 gap-3">
     <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="昵称"
            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.nickname} />
-    <input class="w-full px-3 py-2 rounded-lg text-sm outline-none" placeholder="性别"
-           style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.gender} />
+    <div class="flex items-center gap-1 rounded-lg px-2 py-1" style="background: var(--q-bg); border: 1px solid var(--q-border);">
+      <span class="text-xs shrink-0 pr-1" style="color: var(--q-muted);">性别</span>
+      {#each GENDER_OPTIONS as o}
+        <button class="flex-1 py-1 rounded-md text-sm transition"
+                title={form.gender === o.code ? `取消「${o.label}」` : o.label}
+                style={form.gender === o.code
+                  ? `background: ${o.color}; color: #fff;`
+                  : 'color: var(--q-muted);'}
+                onclick={() => form.gender = form.gender === o.code ? '' : o.code}>{o.label}</button>
+      {/each}
+    </div>
   </div>
   <div class="grid grid-cols-2 gap-3 items-center">
     <input type="date" class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" bind:value={form.birthday} />
