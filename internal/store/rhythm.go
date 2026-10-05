@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,11 @@ import (
 // 和自动备份的 Schedule 同一种东西。
 
 const rhythmKey = "contact_rhythm"
+
+// rhythmEnabledKey 是「要不要按节奏催」的总开关。它和 apprise_urls 同一种东西
+// ——一台机器上的偏好，所以直接躺在 settings 表里，设置页读 GET /settings 就能拿到，
+// 不另开端点。
+const rhythmEnabledKey = "contact_rhythm_enabled"
 
 // MaxRhythmDays 一格最多排到十年后，再大就是把提醒关掉了，不如直接填个更大的档。
 const MaxRhythmDays = 3650
@@ -90,6 +96,21 @@ func (s *Store) ContactRhythmSet(ctx context.Context, tiers []RhythmTier) error 
 // ContactRhythmReset 恢复三档默认节奏。
 func (s *Store) ContactRhythmReset(ctx context.Context) error {
 	return s.ContactRhythmSet(ctx, nil)
+}
+
+// ContactRhythmEnabled 总开关。没配过算开着——老库升上来行为不变；
+// 值读不懂也按开着处理，跟 normalizeRhythm 一个脾气：一条脏配置不该让整个提醒哑掉。
+func (s *Store) ContactRhythmEnabled(ctx context.Context) (bool, error) {
+	raw, err := s.SettingGet(ctx, rhythmEnabledKey)
+	if err != nil {
+		return false, err
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "0", "false", "off", "no":
+		return false, nil
+	default:
+		return true, nil
+	}
 }
 
 func rhythmTiers(days map[int]int) []RhythmTier {
@@ -244,6 +265,15 @@ WHERE p.archived=0`)
 // 锚点前移，下一轮到期日自然推后，不需要额外的 dismiss 表。
 // 还没到那天的人不进待办——提前催只会把待办页变成倒计时。
 func (s *Store) ContactUpcoming(ctx context.Context) ([]*Reminder, error) {
+	// 总开关关掉：待办和每日推送都不再出「该联系 X 了」。
+	// 渐远名单不受影响——那是「谁很久没联系了」的查看工具，跟催不催是两回事。
+	on, err := s.ContactRhythmEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !on {
+		return []*Reminder{}, nil
+	}
 	list, err := s.DriftList(ctx, DriftFilter{OnlyOverdue: true})
 	if err != nil {
 		return nil, err
