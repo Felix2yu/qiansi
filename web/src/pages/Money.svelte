@@ -33,14 +33,42 @@
   let page = $state(0)
   let hasMore = $state(false)
 
+  // 账目以前只能整张表往下翻：想「只看还没收回来的」得自己一行行数。
+  let filterPerson = $state('')
+  let filterKind = $state('')
+  let filterSettled = $state('')
+  let filterFrom = $state('')
+  let filterTo = $state('')
+  const anyFilter = $derived(!!(filterPerson || filterKind || filterSettled || filterFrom || filterTo))
+
+  function clearFilters() {
+    filterPerson = ''
+    filterKind = ''
+    filterSettled = ''
+    filterFrom = ''
+    filterTo = ''
+    void load()
+  }
+
+  // 同往来页：连着改两个筛选项时只认最新一趟请求的结果
+  let reqId = 0
+
   async function load(reset = true) {
     if (reset) page = 0
+    const mine = ++reqId
+    const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) })
+    if (filterPerson) qs.set('person_id', filterPerson)
+    if (filterKind) qs.set('kind', filterKind)
+    if (filterSettled) qs.set('settled', filterSettled)
+    if (filterFrom) qs.set('from', filterFrom)
+    if (filterTo) qs.set('to', filterTo)
     const batch = await API.get<Transaction[]>(
-      `/api/v1/transactions?limit=${PAGE}&offset=${page * PAGE}`
+      `/api/v1/transactions?${qs}`
     ).catch((err: any) => {
       toast.fail('加载失败', err)
       return [] as Transaction[]
     })
+    if (mine !== reqId) return
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
   }
@@ -199,6 +227,38 @@
       <Plus size={14} /> 新建
     </button>
   </header>
+  <div class="flex flex-wrap gap-2 items-center">
+    <div class="w-48">
+      <PersonPicker bind:value={filterPerson} placeholder="全部联系人" compact={true}
+                    onchange={() => load()} />
+    </div>
+    <select bind:value={filterKind} onchange={() => load()} aria-label="按类别筛选"
+            class="px-3 py-2 rounded-lg text-sm outline-none"
+            style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
+      <option value="">全部类别</option>
+      <option value="loan">借还</option><option value="gift">礼物</option>
+      <option value="expense">花销</option><option value="other">其它</option>
+    </select>
+    <select bind:value={filterSettled} onchange={() => load()} aria-label="按结清状态筛选"
+            class="px-3 py-2 rounded-lg text-sm outline-none"
+            style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
+      <option value="">结清与否</option>
+      <option value="0">未结清</option><option value="1">已结清</option>
+    </select>
+    <div class="flex items-center gap-1">
+      <input type="date" bind:value={filterFrom} onchange={() => load()} aria-label="起始日期"
+             class="px-3 py-2 rounded-lg text-sm outline-none"
+             style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+      <span class="text-xs" style="color: var(--q-muted);">至</span>
+      <input type="date" bind:value={filterTo} onchange={() => load()} aria-label="截止日期"
+             class="px-3 py-2 rounded-lg text-sm outline-none"
+             style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+    </div>
+    {#if anyFilter}
+      <button class="px-3 py-2 rounded-lg text-sm" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
+              onclick={clearFilters}>清除筛选</button>
+    {/if}
+  </div>
   <ul class="space-y-2">
     {#each list as t}
       <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
@@ -228,7 +288,7 @@
         </div>
       </li>
     {:else}
-      <li class="text-center py-8 text-sm" style="color: var(--q-muted);">暂无记录</li>
+      <li class="text-center py-8 text-sm" style="color: var(--q-muted);">{anyFilter ? '没有符合条件的记录' : '暂无记录'}</li>
     {/each}
   </ul>
   {#if hasMore}

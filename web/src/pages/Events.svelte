@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { API, TIMELINE_LABEL, yuan, todayLocal, type Event, type TimelineItem } from '../lib/api'
   import EventForm from '../lib/EventForm.svelte'
+  import { route, navigate } from '../lib/router'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte'
   import { dict, ensure, refresh } from '../lib/dict.svelte'
@@ -23,6 +24,19 @@
   // 列表筛选：支持按参与人过滤（此前 person_id 被当成标题关键字，筛选形同虚设）
   let filterPerson = $state('')
   let filterQuery = $state('')
+  let filterType = $state('')
+  let filterFrom = $state('')
+  let filterTo = $state('')
+  const anyFilter = $derived(!!(filterPerson || filterQuery.trim() || filterType || filterFrom || filterTo))
+
+  function clearFilters() {
+    filterPerson = ''
+    filterQuery = ''
+    filterType = ''
+    filterFrom = ''
+    filterTo = ''
+    void load()
+  }
 
   function openNew() {
     formPreset = { event_date: todayLocal() }
@@ -57,15 +71,24 @@
       }) || []
   }
 
+  // 连点两个筛选项会并发发出两趟请求，谁后回来谁说了算，
+  // 于是列表可能停在上一组条件的答案上。给每趟请求编号，只认最新那次。
+  let reqId = 0
+
   async function load(reset = true) {
     if (reset) page = 0
+    const mine = ++reqId
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) })
     if (filterPerson) qs.set('person_id', filterPerson)
     if (filterQuery.trim()) qs.set('q', filterQuery.trim())
+    if (filterType) qs.set('type_id', filterType)
+    if (filterFrom) qs.set('from', filterFrom)
+    if (filterTo) qs.set('to', filterTo)
     const batch = await API.get<Event[]>(`/api/v1/events?${qs}`).catch((err: any) => {
       toast.fail('加载失败', err)
       return [] as Event[]
     })
+    if (mine !== reqId) return
     hasMore = batch.length === PAGE
     list = reset ? batch : [...list, ...batch]
   }
@@ -79,6 +102,15 @@
     // 字典进缓存后，翻页与切筛选只剩 /api/v1/events 一个请求
     ensure('eventTypes')
     load(true)
+  })
+
+  // 首启引导用 /events?new=1 把「记一次往来」变成一次点击。这里用 effect 而不是 onMount：
+  // 这一页可能早就挂好了（切页不销毁组件），那时 onMount 永远不会再跑。
+  $effect(() => {
+    if (onlyTimeline) return
+    if ($route.query.new !== '1') return
+    openNew()
+    navigate('/events')
   })
 
   // 删除只进回收站：5 秒内就地撤销，之后仍能从回收站请回来
@@ -123,7 +155,7 @@
       {/each}
     </ul>
   {:else}
-    <div class="flex flex-wrap gap-2">
+    <div class="flex flex-wrap gap-2 items-center">
       <div class="w-48">
         <PersonPicker bind:value={filterPerson} placeholder="全部参与人" compact={true}
                       onchange={() => load()} />
@@ -134,9 +166,25 @@
                class="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
                style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
       </div>
-      {#if filterPerson || filterQuery}
+      <select bind:value={filterType} onchange={() => load()} aria-label="按类型筛选"
+              class="px-3 py-2 rounded-lg text-sm outline-none"
+              style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
+        <option value="">全部类型</option>
+        {#each types as t}<option value={String(t.id)}>{t.name}</option>{/each}
+      </select>
+      <!-- 日期区间：手填的两个框，起止都给才限死，只给一个就是「从某天起 / 到某天止」 -->
+      <div class="flex items-center gap-1">
+        <input type="date" bind:value={filterFrom} onchange={() => load()} aria-label="起始日期"
+               class="px-3 py-2 rounded-lg text-sm outline-none"
+               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+        <span class="text-xs" style="color: var(--q-muted);">至</span>
+        <input type="date" bind:value={filterTo} onchange={() => load()} aria-label="截止日期"
+               class="px-3 py-2 rounded-lg text-sm outline-none"
+               style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);" />
+      </div>
+      {#if anyFilter}
         <button class="px-3 py-2 rounded-lg text-sm" style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-                onclick={() => { filterPerson = ''; filterQuery = ''; load() }}>清除筛选</button>
+                onclick={clearFilters}>清除筛选</button>
       {/if}
     </div>
     <ul class="space-y-2">

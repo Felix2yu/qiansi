@@ -102,6 +102,65 @@ func badRequestErr(w http.ResponseWriter, err error) {
 	writeErr(w, http.StatusBadRequest, err.Error())
 }
 
+// queryDate 取 URL 上的日期筛选参数并归一化，未填＝不限（空串）。
+func queryDate(r *http.Request, name string) (string, error) {
+	return normDate(name, r.URL.Query().Get(name))
+}
+
+// queryPositiveInt 取可选的正整数筛选参数（字典 id 这类）。
+// 给了坏值一律 400，不能退回「不限」：前端拼错参数时会看到全量数据，
+// 以为筛选生效了，比报错更难发现。
+func queryPositiveInt(r *http.Request, name string) (int, error) {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0, fmt.Errorf("%s 必须是正整数：%s", name, v)
+	}
+	return n, nil
+}
+
+// queryBool 取可选的布尔筛选参数（1/0、true/false 都收）。
+// 返回指针：筛选条件里「没提这一项」和「要求它为假」是两件事。
+func queryBool(r *http.Request, name string) (*bool, error) {
+	v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(name)))
+	if v == "" {
+		return nil, nil
+	}
+	switch v {
+	case "1", "true":
+		t := true
+		return &t, nil
+	case "0", "false":
+		f := false
+		return &f, nil
+	}
+	return nil, fmt.Errorf("%s 只能是 1 / 0：%s", name, v)
+}
+
+// queryEnum 取可选的枚举筛选参数；未填＝不限，由 handler 决定要不要再要求必填。
+func queryEnum(r *http.Request, name string, allowed ...string) (string, error) {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return "", nil
+	}
+	if err := oneOf(name, v, allowed...); err != nil {
+		return "", err
+	}
+	return v, nil
+}
+
+// checkDateRange 校区间方向。归一化之后两边都是 YYYY-MM-DD，可以直接按字符串比。
+// 起止填反了不该返回空列表：那和「这段时间真的没有记录」在页面上长得一模一样。
+func checkDateRange(from, to string) error {
+	if from != "" && to != "" && from > to {
+		return errors.New("起始日期不能晚于截止日期")
+	}
+	return nil
+}
+
 // ===== 各实体的入参校验 =====
 //
 // 约定：校验器直接就地归一化字段（写回结构体），返回的第一个错误决定 400 的文案。

@@ -2,9 +2,10 @@
   import { onMount } from 'svelte'
   import { API, type BackupItem, type BackupStatus } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
-  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet } from '@lucide/svelte'
+  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet, UserCheck } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
+  import { setSelf } from '../lib/self.svelte'
   import { dict, ensure, refresh, refreshAll } from '../lib/dict.svelte'
   import { toast } from '../lib/toast.svelte'
   import { ask } from '../lib/ask.svelte'
@@ -21,6 +22,30 @@
   let restoreInput: HTMLInputElement | undefined = $state()
   let restoring = $state(false)
   let token = $state(localStorage.getItem('q_token') || '')
+
+  // 「我是谁」只是 settings 里一个指向 people 的指针，但关系图拼色、选人置顶、
+  // 认识路径全挂在它身上，所以本页必须能设它——以前只能进某个人的详情点一个无文字图标。
+  let selfId = $state('')
+  let selfSaved = $state('')
+  let selfSaving = $state(false)
+  const selfDirty = $derived(selfId !== selfSaved)
+
+  async function saveSelf() {
+    selfSaving = true
+    try {
+      await API.post('/api/v1/settings/bulk', { self_person_id: selfId })
+    } catch (err) {
+      toast.fail('保存本人失败', err)
+      selfSaving = false
+      return
+    }
+    selfSaving = false
+    selfSaved = selfId
+    settings = { ...settings, self_person_id: selfId }
+    // 本页改了指针，别的页面上的下拉与图谱读的是共享状态，必须一并更新
+    setSelf(selfId)
+    toast.ok(selfId ? '已把 TA 设为你自己' : '已取消本人')
+  }
 
   const WEEKDAYS = [{ v: 0, n: '日' }, { v: 1, n: '一' }, { v: 2, n: '二' }, { v: 3, n: '三' },
                     { v: 4, n: '四' }, { v: 5, n: '五' }, { v: 6, n: '六' }]
@@ -47,6 +72,8 @@
       settings = s
       appriseUrls = s['apprise_urls'] || ''
       pushHour = parseInt(s['push_time_hour'] || '9', 10)
+      selfId = s['self_person_id'] || ''
+      selfSaved = selfId
     }
     const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
       toast.fail('读取备份列表失败', err)
@@ -277,6 +304,24 @@
 </script>
 <div class="space-y-6">
   <header><h1 class="text-2xl font-semibold">设置</h1><p class="text-sm mt-1" style="color: var(--q-muted);">偏好、数据、通知渠道</p></header>
+
+  <!-- 我是谁 -->
+  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><UserCheck size={14} /> 我是谁</h2>
+    <p class="text-xs mb-3 leading-relaxed" style="color: var(--q-muted);">
+      牵丝以你为中心：设好本人之后，关系图按「离我几步」拼色，选人下拉把「我」置顶，认识路径才算得出来。
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="w-56 max-w-full"><PersonPicker bind:value={selfId} placeholder="选出哪一条记录是你自己" /></div>
+      <button class="px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
+              style="background: var(--q-theme);" disabled={!selfDirty || selfSaving} onclick={saveSelf}>
+        {selfSaving ? '保存中…' : '保存'}
+      </button>
+      {#if selfSaved}
+        <span class="text-xs" style="color: var(--q-muted);">清除左边那个人后保存，就是不设本人</span>
+      {/if}
+    </div>
+  </section>
 
   <!-- 主题 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">

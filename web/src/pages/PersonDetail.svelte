@@ -336,8 +336,11 @@
         {#if person.avatar_attachment_id}
           <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="移除头像" onclick={removeAvatar}><ImageOff size={16} /></button>
         {/if}
-        <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" style={self.id === id ? 'color: var(--q-theme);' : ''}
-                title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'} onclick={toggleSelf}><UserCheck size={16} /></button>
+        <button class="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs hover:bg-black/5 dark:hover:bg-white/10"
+                style={self.id === id ? 'color: var(--q-theme);' : 'color: var(--q-muted);'}
+                title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'} onclick={toggleSelf}>
+          <UserCheck size={16} />{self.id === id ? '取消本人' : '设为本人'}
+        </button>
         <button class="p-2 rounded-lg hover:bg-black/5 dark:hover:bg-white/10" title="删除" onclick={remove}><Trash2 size={16} /></button>
       </div>
     </div>

@@ -27,10 +27,34 @@ func (a *API) registerEvents(r chi.Router) {
 
 func (a *API) eventList(w http.ResponseWriter, r *http.Request) {
 	// person_id 按参与人过滤，q 才是标题/摘要/地点关键字，两者互不混淆。
-	list, err := a.Store.EventList(r.Context(),
-		r.URL.Query().Get("person_id"),
-		r.URL.Query().Get("q"),
-		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
+	typeID, err := queryPositiveInt(r, "type_id")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	from, err := queryDate(r, "from")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	to, err := queryDate(r, "to")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	if err := checkDateRange(from, to); err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	list, err := a.Store.EventList(r.Context(), store.EventFilter{
+		PersonID: r.URL.Query().Get("person_id"),
+		Q:        r.URL.Query().Get("q"),
+		TypeID:   typeID,
+		From:     from,
+		To:       to,
+		Limit:    parseIntQuery(r, "limit", 50),
+		Offset:   parseIntQuery(r, "offset", 0),
+	})
 	if err != nil {
 		writeStoreErr(w, err)
 		return
@@ -296,9 +320,39 @@ func (a *API) registerTransactions(r chi.Router) {
 }
 
 func (a *API) txList(w http.ResponseWriter, r *http.Request) {
-	list, err := a.Store.TransactionList(r.Context(),
-		r.URL.Query().Get("person_id"),
-		parseIntQuery(r, "limit", 50), parseIntQuery(r, "offset", 0))
+	kind, err := queryEnum(r, "kind", "loan", "gift", "expense", "other")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	settled, err := queryBool(r, "settled")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	from, err := queryDate(r, "from")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	to, err := queryDate(r, "to")
+	if err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	if err := checkDateRange(from, to); err != nil {
+		badRequestErr(w, err)
+		return
+	}
+	list, err := a.Store.TransactionList(r.Context(), store.TxFilter{
+		PersonID: r.URL.Query().Get("person_id"),
+		Kind:     kind,
+		Settled:  settled,
+		From:     from,
+		To:       to,
+		Limit:    parseIntQuery(r, "limit", 50),
+		Offset:   parseIntQuery(r, "offset", 0),
+	})
 	if err != nil {
 		writeStoreErr(w, err)
 		return

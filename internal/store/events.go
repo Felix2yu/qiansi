@@ -347,7 +347,21 @@ FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.eve
 	return list, rows.Err()
 }
 
-func (s *Store) EventList(ctx context.Context, personID string, q string, limit, offset int) ([]*Event, error) {
+// EventFilter 是往来列表的筛选条件，零值一律表示「不限」。
+// 以前这几个条件是函数签名上的位置参数，加一个就得改十几处调用；收成结构体后
+// 「去年春节那场」这种问法只需要多填两个字段。
+type EventFilter struct {
+	PersonID string
+	Q        string
+	TypeID   int    // 事件类型字典 id
+	From     string // YYYY-MM-DD，含端点
+	To       string
+	Limit    int
+	Offset   int
+}
+
+func (s *Store) EventList(ctx context.Context, f EventFilter) ([]*Event, error) {
+	limit := f.Limit
 	if limit <= 0 {
 		limit = 100
 	}
@@ -355,20 +369,37 @@ func (s *Store) EventList(ctx context.Context, personID string, q string, limit,
 FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id`
 	var args []any
 	var conds []string
-	if personID != "" {
+	if f.PersonID != "" {
 		conds = append(conds, "e.id IN (SELECT ep.event_id FROM event_participants ep WHERE ep.person_id=?)")
-		args = append(args, personID)
+		args = append(args, f.PersonID)
 	}
-	if q != "" {
+	if f.Q != "" {
 		conds = append(conds, "(e.title LIKE ? OR e.summary LIKE ? OR e.location LIKE ?)")
-		q = "%" + q + "%"
-		args = append(args, q, q, q)
+		like := "%" + f.Q + "%"
+		args = append(args, like, like, like)
+	}
+	if f.TypeID > 0 {
+		conds = append(conds, "e.type_id=?")
+		args = append(args, f.TypeID)
+	}
+	// 没写日期的那场不属于任何一个时间区间，所以只要给了区间就先把它排除，
+	// 否则「截止到 5 月」会因为空串小于任何日期而把无日期的一并捞进来。
+	if f.From != "" || f.To != "" {
+		conds = append(conds, "COALESCE(e.event_date,'')<>''")
+		if f.From != "" {
+			conds = append(conds, "substr(e.event_date,1,10)>=?")
+			args = append(args, f.From)
+		}
+		if f.To != "" {
+			conds = append(conds, "substr(e.event_date,1,10)<=?")
+			args = append(args, f.To)
+		}
 	}
 	if len(conds) > 0 {
 		qry += " WHERE " + strings.Join(conds, " AND ")
 	}
 	qry += " ORDER BY e.event_date DESC, e.created_at DESC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
+	args = append(args, limit, f.Offset)
 	rows, err := s.DB.QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, err
@@ -695,16 +726,42 @@ FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.id=
 	return scanTransaction(rows)
 }
 
-func (s *Store) TransactionList(ctx context.Context, personID string, limit, offset int) ([]*Transaction, error) {
+// TxFilter 是金钱往来的筛选条件，零值一律表示「不限」。
+// Settled 用指针：「只看结清的」和「没提这一项」在 bool 上分不开。
+type TxFilter struct {
+	PersonID string
+	Kind     string
+	Settled  *bool
+	From     string // YYYY-MM-DD，含端点
+	To       string
+	Limit    int
+	Offset   int
+}
+
+func (s *Store) TransactionList(ctx context.Context, f TxFilter) ([]*Transaction, error) {
+	limit := f.Limit
 	if limit <= 0 { limit = 200 }
 	q := `SELECT ` + txColumns + `
-FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE 1=1`
+FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id`
 	var args []any
-	if personID != "" {
-		q += " AND t.person_id=?"; args = append(args, personID)
+	var conds []string
+	if f.PersonID != "" { conds = append(conds, "t.person_id=?"); args = append(args, f.PersonID) }
+	if f.Kind != "" { conds = append(conds, "t.kind=?"); args = append(args, f.Kind) }
+	if f.Settled != nil {
+		// settled 列在库里是 0/1，传 bool 会被 driver 写成 true/false 字面量，比较不上。
+		v := 0
+		if *f.Settled { v = 1 }
+		conds = append(conds, "t.settled=?"); args = append(args, v)
 	}
+	// 同 EventList：没记发生日的那笔不属于任何时间区间，先把它排除掉。
+	if f.From != "" || f.To != "" {
+		conds = append(conds, "COALESCE(t.occurred_at,'')<>''")
+		if f.From != "" { conds = append(conds, "substr(t.occurred_at,1,10)>=?"); args = append(args, f.From) }
+		if f.To != "" { conds = append(conds, "substr(t.occurred_at,1,10)<=?"); args = append(args, f.To) }
+	}
+	if len(conds) > 0 { q += " WHERE " + strings.Join(conds, " AND ") }
 	q += " ORDER BY t.occurred_at DESC LIMIT ? OFFSET ?"
-	args = append(args, limit, offset)
+	args = append(args, limit, f.Offset)
 	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil { return nil, err }
 	defer rows.Close()
