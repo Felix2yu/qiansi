@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
@@ -192,6 +193,33 @@ func TestAPIValidate_ForeignKeysReadInChinese(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestAPIValidate_GenderIsAnEnum(t *testing.T) {
+	ts := newTestServer(t)
+	ctx := context.Background()
+
+	// 收口成码值：头像底色和列表里的「男/女」都按 M / F 判，
+	// 「男」这种写法前端和 vCard 都在发，其余自由文本只会留下配不上色的脏值。
+	for _, c := range []struct{ in, want string }{{"男", "M"}, {" f ", "F"}, {"", ""}} {
+		name := "性别" + c.in
+		rec := ts.do(http.MethodPost, "/api/v1/people/", map[string]any{"name": name, "gender": c.in})
+		body := apiWantStatus(t, http.MethodPost, "/api/v1/people/", rec, http.StatusOK)
+		var created store.Person
+		if err := json.Unmarshal([]byte(body), &created); err != nil {
+			t.Fatalf("%q 响应解析: %v", name, err)
+		}
+		got, err := ts.Store.PersonGet(ctx, created.ID)
+		if err != nil {
+			t.Fatalf("PersonGet(%s): %v", created.ID, err)
+		}
+		if got.Gender != c.want {
+			t.Fatalf("gender %q 落成 %q, want %q", c.in, got.Gender, c.want)
+		}
+	}
+
+	rec := ts.do(http.MethodPost, "/api/v1/people/", map[string]any{"name": "乱填性别", "gender": "未知"})
+	apiWantError(t, http.MethodPost, "/api/v1/people/", rec, http.StatusBadRequest, "gender 只能是")
 }
 
 func valAPIPerson(t *testing.T, ts *testServer, name string) string {

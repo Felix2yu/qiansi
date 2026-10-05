@@ -163,7 +163,7 @@ func TestAPIPeopleGetUpdateDelete(t *testing.T) {
 	detail := s.get("/api/v1/people/" + id)
 	p := detail["person"].(map[string]any)
 	for k, want := range map[string]any{
-		"name": "林静", "gender": "女", "phone": "13500000001", "wechat": "linjing",
+		"name": "林静", "gender": "F", "phone": "13500000001", "wechat": "linjing",
 		"location": "杭州", "notes": "大学室友",
 	} {
 		if p[k] != want {
