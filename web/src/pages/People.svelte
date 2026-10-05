@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { API, yuanShort, netLabel, contactAgo, type Person } from '../lib/api'
+  import { API, avatarBg, genderLabel, GENDER_OPTIONS, yuanShort, netLabel, contactAgo, type Person } from '../lib/api'
   import PersonForm from '../lib/PersonForm.svelte'
   import { navigate } from '../lib/router'
   import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte'
@@ -71,6 +71,40 @@
         : `${selectedIds.length} 位里有 ${res.added} 位新加入「${name}」，其余原本就在圈子里`)
     } catch (err: any) {
       toast.fail('加入圈子失败', err)
+    }
+  }
+  // 批量只改一列：走 bulk-update 的白名单，不能走 PUT——那是整行覆盖，
+  // 一个 body 只带性别的请求会把备注、圈子、生日全写成零值。
+  type BulkField = { key: string; label: string; options: { v: string; t: string }[] | null }
+  const BULK_FIELDS: BulkField[] = [
+    { key: 'gender', label: '性别', options: [...GENDER_OPTIONS.map(o => ({ v: o.code, t: o.label })), { v: '', t: '未填' }] },
+    { key: 'grade', label: '亲密度', options: [...[1, 2, 3, 4, 5].map(g => ({ v: String(g), t: '♥'.repeat(g) })), { v: '0', t: '未设置' }] },
+    { key: 'location', label: '位置', options: null },
+  ]
+  let bulkField = $state('gender')
+  let bulkValue = $state('M')
+  let bulkOnlyEmpty = $state(true)
+  let busyBulk = $state(false)
+  let bulkDef = $derived(BULK_FIELDS.find(f => f.key === bulkField)!)
+  function resetBulkValue() {
+    bulkValue = bulkDef.options?.[0]?.v ?? ''
+  }
+  async function applyBulkField() {
+    if (selectedIds.length === 0) return
+    busyBulk = true
+    try {
+      const value = bulkField === 'grade' ? Number(bulkValue) : bulkValue
+      const res = await API.post<{ updated: number }>('/api/v1/people/bulk-update', {
+        ids: selectedIds, set: { [bulkField]: value }, only_empty: bulkOnlyEmpty,
+      })
+      await load()
+      toast.ok(res.updated === 0 && bulkOnlyEmpty
+        ? `选中的 ${selectedIds.length} 位都填过${bulkDef.label}了，没有改动`
+        : `已更新 ${res.updated} 位的${bulkDef.label}`)
+    } catch (err: any) {
+      toast.fail('批量更新失败', err)
+    } finally {
+      busyBulk = false
     }
   }
   // 危险操作只留一个确认框：要手打确认词太磨人，误触的代价由回收站来兜。
@@ -278,6 +312,32 @@
       </label>
       <span class="text-sm" style="color: var(--q-muted);">已选 {selectedIds.length} 位</span>
       <div class="flex-1"></div>
+      <span class="text-sm" style="color: var(--q-muted);">批量更新</span>
+      <select bind:value={bulkField} onchange={resetBulkValue} class="px-3 py-1.5 rounded-lg text-sm outline-none"
+              style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+              disabled={selectedIds.length === 0}>
+        {#each BULK_FIELDS as f}<option value={f.key}>{f.label}</option>{/each}
+      </select>
+      {#if bulkDef.options}
+        <select bind:value={bulkValue} class="px-3 py-1.5 rounded-lg text-sm outline-none"
+                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+                disabled={selectedIds.length === 0}>
+          {#each bulkDef.options as o}<option value={o.v}>{o.t}</option>{/each}
+        </select>
+      {:else}
+        <input bind:value={bulkValue} placeholder="新的{bulkDef.label}" class="w-32 px-3 py-1.5 rounded-lg text-sm outline-none"
+               style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+               disabled={selectedIds.length === 0} />
+      {/if}
+      <label class="flex items-center gap-1.5 text-sm cursor-pointer select-none whitespace-nowrap" style="color: var(--q-text);"
+             title="勾上就只补没填过的人，已填的原值不动">
+        <input type="checkbox" bind:checked={bulkOnlyEmpty} />
+        只填空着的
+      </label>
+      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-theme); color: #fff;"
+              disabled={selectedIds.length === 0 || busyBulk} onclick={applyBulkField}>
+        {busyBulk ? '应用中…' : '应用'}
+      </button>
       <select bind:value={bulkCat} class="px-3 py-1.5 rounded-lg text-sm outline-none"
               style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
               disabled={selectedIds.length === 0}>
@@ -306,11 +366,12 @@
           {/if}
           <a href={`/people/${p.id}`} class="flex items-start gap-3 flex-1 min-w-0"
              onclick={(e) => { e.preventDefault(); if (selectMode) { toggleSelect(p.id) } else { navigate(`/people/${p.id}`) } }}>
-            <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold shrink-0" style="background: var(--q-theme);">{p.name.slice(0,1)}</div>
+            <div class="w-11 h-11 rounded-full flex items-center justify-center text-white font-semibold shrink-0" style={`background: ${avatarBg(p.gender)};`}>{p.name.slice(0,1)}</div>
             <div class="flex-1 min-w-0">
               <div class="font-medium truncate">{p.name}</div>
-              {#if p.grade > 0 || (p.categories?.length ?? 0) > 0}
+              {#if p.grade > 0 || (p.categories?.length ?? 0) > 0 || genderLabel(p.gender)}
                 <div class="flex flex-wrap items-center gap-1 mt-0.5 text-xs" style="color: var(--q-muted);">
+                  {#if genderLabel(p.gender)}<span class="shrink-0">{genderLabel(p.gender)}</span>{/if}
                   {#if p.grade > 0}<span class="shrink-0">{'♥'.repeat(p.grade)}</span>{/if}
                   {#each p.categories ?? [] as c}
                     <span class="px-1.5 py-0.5 rounded-full whitespace-nowrap"
