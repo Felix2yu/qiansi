@@ -846,6 +846,63 @@ SELECT p.id,? FROM live_people p WHERE p.id IN (`+ph+`) ON CONFLICT DO NOTHING`,
 	return added, nil
 }
 
+// PeoplePatchColumn 一列的定向更新。Column 与 EmptyCond 都只能来自服务端白名单
+// （见 api 侧 personPatchFields），它们要拼进 SQL 而不是当参数绑定；值一律走占位符。
+type PeoplePatchColumn struct {
+	Column string
+	Value  any
+	// EmptyCond 是「这一列还没填」的 SQL 判据，only_empty 时拼进 WHERE。
+	// 每列的「没填」不一样：文本列看空串，亲密度看 0 档。
+	EmptyCond string
+}
+
+// PeoplePatch 只写 cols 里的列，其余列原样保留——PUT 是整行覆盖，批量补一个字段
+// 不可能先 GET 再整行 PUT 回来。故意不碰 updated_at：批量刷字段不该把整批人
+// 顶到「按更新时间倒序」的人物列表最前面。
+//
+// only_empty 时要求所有待更新列都没填过才改（多列取 AND），返回值是实际改动人数。
+func (s *Store) PeoplePatch(ctx context.Context, ids []string, cols []PeoplePatchColumn, onlyEmpty bool) (int, error) {
+	ids = dedupeStrings(ids)
+	if len(ids) == 0 || len(cols) == 0 {
+		return 0, nil
+	}
+	sets := make([]string, 0, len(cols))
+	args := make([]any, 0, len(cols)+len(ids))
+	cond := make([]string, 0, len(cols)+2)
+	for _, c := range cols {
+		// 列名当不了占位符，白名单外面万一递进一个带引号或空格的串，这里就是最后一道闸
+		if !isSQLIdent(c.Column) {
+			return 0, fmt.Errorf("非法列名 %q", c.Column)
+		}
+		sets = append(sets, c.Column+"=?")
+		args = append(args, c.Value)
+		if onlyEmpty {
+			cond = append(cond, "("+c.EmptyCond+")")
+		}
+	}
+	cond = append(cond, "deleted_at IS NULL", "id IN ("+strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")+")")
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	r, err := s.DB.ExecContext(ctx, "UPDATE people SET "+strings.Join(sets, ",")+" WHERE "+strings.Join(cond, " AND "), args...)
+	if err != nil {
+		return 0, err
+	}
+	n, err := r.RowsAffected()
+	return int(n), err
+}
+
+// isSQLIdent 只放行小写字母和下划线组成的列名。
+func isSQLIdent(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; !(c >= 'a' && c <= 'z' || c == '_') { return false }
+	}
+	return true
+}
+
 // dedupeStrings 保序去重，并丢掉空串。
 func dedupeStrings(in []string) []string {
 	out := []string{}
