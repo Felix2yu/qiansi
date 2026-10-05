@@ -4,7 +4,7 @@
   import { API, gradeLabel, type BackupItem, type BackupStatus, type RhythmTier } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
   import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet, UserCheck, HeartPulse } from '@lucide/svelte'
-  import { theme, setThemeMode, setThemeColor, initTheme, THEME_LABEL, type ThemeMode } from '../lib/theme.svelte'
+  import { theme, setThemeMode, setThemeColor, initTheme, isPreset, THEME_LABEL, THEME_PRESETS, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { setSelf } from '../lib/self.svelte'
   import { dict, ensure, refresh, refreshAll } from '../lib/dict.svelte'
@@ -386,12 +386,22 @@
       <span class="text-xs" style="color: var(--q-muted);">
         {theme.mode === 'system' ? '自动匹配系统外观，系统切换时实时跟随' : '已手动指定，不随系统变化'}
       </span>
-      <div class="flex items-center gap-2 ml-auto">
-        <span class="text-xs" style="color: var(--q-muted);">主题色</span>
-        <input type="color" value={theme.color} oninput={(e) => setThemeColor(e.currentTarget.value)}
-               aria-label="主题色" class="w-9 h-9 rounded-lg border cursor-pointer" style="border-color: var(--q-border);" />
-        <span class="text-xs font-mono" style="color: var(--q-muted);">{theme.color}</span>
-      </div>
+    </div>
+    <!-- 主题色：推荐色和取色器同一行，拆成两行看着像两组设置；窄屏宁可横向滚也不换行 -->
+    <div class="flex items-center gap-2 mt-3 flex-nowrap overflow-x-auto pb-1">
+      <span class="text-xs shrink-0" style="color: var(--q-muted);">主题色</span>
+      {#each THEME_PRESETS as p}
+        {@const active = theme.color.trim().toLowerCase() === p.color}
+        <button onclick={() => setThemeColor(p.color)} title={p.name} aria-label={p.name} aria-pressed={active}
+                class="w-6 h-6 shrink-0 rounded-full transition-transform hover:scale-110"
+                style={`background: ${p.color}; ${active ? `box-shadow: 0 0 0 2px var(--q-surface), 0 0 0 4px ${p.color};` : 'border: 1px solid var(--q-border);'}`}></button>
+      {/each}
+      <input type="color" value={theme.color} oninput={(e) => setThemeColor(e.currentTarget.value)}
+             aria-label="自定义主题色" class="w-9 h-9 shrink-0 rounded-lg border cursor-pointer" style="border-color: var(--q-border);" />
+      <span class="text-xs font-mono shrink-0" style="color: var(--q-muted);">{theme.color}</span>
+      {#if !isPreset(theme.color)}
+        <span class="text-xs shrink-0" style="color: var(--q-muted);">当前是自定义色</span>
+      {/if}
     </div>
   </section>
 

@@ -16,6 +16,25 @@ export const THEME_LABEL: Record<ThemeMode, string> = {
   dark: '深色',
 }
 
+// 推荐主题色：主题色在界面里主要当按钮/选中态的底色用，上面压白字，
+// 所以一律挑深色（对白字对比度 ≥ 3.9），浅粉浅黄这类点下去按钮就看不清了。
+export const THEME_PRESETS = [
+  { name: '靛蓝（默认）', color: '#6366f1' },
+  { name: '紫罗兰', color: '#7c3aed' },
+  { name: '海蓝', color: '#0284c7' },
+  { name: '青碧', color: '#0d9488' },
+  { name: '松绿', color: '#059669' },
+  { name: '赤红', color: '#dc2626' },
+  { name: '玫红', color: '#db2777' },
+  { name: '石墨', color: '#475569' },
+] as const
+
+/** 当前主题色是否就是某个推荐色（取色器可能存成 #RRGGBB 大写，先归一） */
+export function isPreset(color: string): boolean {
+  const c = color.trim().toLowerCase()
+  return THEME_PRESETS.some(p => p.color === c)
+}
+
 // localStorage 键。沿用既有的 q_dark（历史值 '1'/'0'）以兼容老用户：
 // 迁移时若没有 q_theme_mode，但有 q_dark，则按其值折算成 light/dark。
 const KEY_MODE = 'q_theme_mode'
