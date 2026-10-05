@@ -313,3 +313,79 @@ func TestDriftListWithDirtyGrade(t *testing.T) {
 		t.Errorf("42 级应退回未分级的 90 天，收到 节奏=%d 逾期=%v", list[0].Days, list[0].Overdue)
 	}
 }
+
+// 总开关：关掉之后不再派生待办，但渐远名单照旧列人——那是查看工具，不是催。
+func TestContactRhythmEnabledSwitch(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := &Person{Name: "该联系的人", Grade: 5}
+	if err := s.PersonCreate(ctx, p); err != nil {
+		t.Fatalf("PersonCreate: %v", err)
+	}
+	tx := &Transaction{PersonID: p.ID, Kind: "gift", Direction: "out", AmountFen: 100, Title: "随礼", OccurredAt: DaysAgoLocal(30)}
+	if err := s.TransactionCreate(ctx, tx); err != nil {
+		t.Fatalf("TransactionCreate: %v", err)
+	}
+
+	// 没配过这个键 = 开着，老库升上来不该悄悄不催
+	on, err := s.ContactRhythmEnabled(ctx)
+	if err != nil {
+		t.Fatalf("ContactRhythmEnabled: %v", err)
+	}
+	if !on {
+		t.Fatalf("没配过开关时应默认开着")
+	}
+
+	upcoming := func() []*Reminder {
+		t.Helper()
+		list, err := s.ContactUpcoming(ctx)
+		if err != nil {
+			t.Fatalf("ContactUpcoming: %v", err)
+		}
+		return list
+	}
+	if got := len(upcoming()); got != 1 {
+		t.Fatalf("开着时应派生 1 条待办，收到 %d 条", got)
+	}
+
+	for _, v := range []string{"0", "false", "OFF", " no "} {
+		if err := s.SettingSet(ctx, rhythmEnabledKey, v); err != nil {
+			t.Fatalf("SettingSet(%q): %v", v, err)
+		}
+		on, err := s.ContactRhythmEnabled(ctx)
+		if err != nil {
+			t.Fatalf("ContactRhythmEnabled: %v", err)
+		}
+		if on {
+			t.Errorf("值为 %q 时应为关闭", v)
+		}
+		if got := upcoming(); len(got) != 0 {
+			t.Errorf("值为 %q 时仍被催：%+v", v, got)
+		}
+	}
+
+	list, err := s.DriftList(ctx, DriftFilter{OnlyOverdue: true})
+	if err != nil {
+		t.Fatalf("DriftList: %v", err)
+	}
+	if len(list) != 1 || list[0].PersonID != p.ID {
+		t.Errorf("关掉催不影响名单，收到 %+v", list)
+	}
+
+	// 读不懂的值不关掉功能：一个错别字不该把提醒整哑
+	for _, v := range []string{"", "1", "true", "随便写点啥"} {
+		if err := s.SettingSet(ctx, rhythmEnabledKey, v); err != nil {
+			t.Fatalf("SettingSet(%q): %v", v, err)
+		}
+		on, err := s.ContactRhythmEnabled(ctx)
+		if err != nil {
+			t.Fatalf("ContactRhythmEnabled: %v", err)
+		}
+		if !on {
+			t.Errorf("值为 %q 时应算开着", v)
+		}
+		if got := len(upcoming()); got != 1 {
+			t.Errorf("值为 %q 时的待办数 = %d，应为 1", v, got)
+		}
+	}
+}

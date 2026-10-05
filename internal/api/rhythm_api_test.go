@@ -240,3 +240,54 @@ func hasReminder(s *testServer, path, id string) bool {
 	}
 	return false
 }
+
+// 总开关就是 settings 里的一个键：设置页用现成的 /settings/bulk 写它，
+// 关掉之后待办页与今日页都不再出「该联系 X 了」，渐远名单照旧列人。
+func TestAPIContactRhythmSwitch(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+	pid := apiCreatePersonMap(t, s, map[string]any{"name": "被催的人", "grade": 5})["id"].(string)
+	if err := s.Store.TransactionCreate(ctx, &store.Transaction{
+		PersonID: pid, Kind: "gift", Direction: "out", AmountFen: 100, Title: "随礼", OccurredAt: apiDate(-30),
+	}); err != nil {
+		t.Fatalf("TransactionCreate: %v", err)
+	}
+	id := "contact:" + pid
+	for _, path := range []string{"/api/v1/reminders", "/api/v1/reminders/upcoming?days=7"} {
+		if !hasReminder(s, path, id) {
+			t.Fatalf("%s 里该有派生的联系待办", path)
+		}
+	}
+
+	setSwitch := func(v string) {
+		t.Helper()
+		apiWantStatus(t, http.MethodPost, "/api/v1/settings/bulk",
+			s.do(http.MethodPost, "/api/v1/settings/bulk", map[string]string{"contact_rhythm_enabled": v}), http.StatusOK)
+	}
+	setSwitch("0")
+
+	raw := apiArrayStr(t, s, http.MethodGet, "/api/v1/settings")
+	var all map[string]string
+	if err := json.Unmarshal([]byte(raw), &all); err != nil {
+		t.Fatalf("decode settings: %v", err)
+	}
+	if all["contact_rhythm_enabled"] != "0" {
+		t.Errorf("GET /settings 里的开关 = %q，应为 \"0\"", all["contact_rhythm_enabled"])
+	}
+	for _, path := range []string{"/api/v1/reminders", "/api/v1/reminders/upcoming?days=7"} {
+		if hasReminder(s, path, id) {
+			t.Errorf("关掉后 %s 仍在催：%v", path, id)
+		}
+	}
+	if !hasName(driftRows(t, s, ""), "被催的人") {
+		t.Errorf("关掉催不该把名单也清空")
+	}
+
+	// 再打开：同一个人又回到待办
+	setSwitch("1")
+	for _, path := range []string{"/api/v1/reminders", "/api/v1/reminders/upcoming?days=7"} {
+		if !hasReminder(s, path, id) {
+			t.Errorf("重新打开后 %s 没有待办", path)
+		}
+	}
+}
