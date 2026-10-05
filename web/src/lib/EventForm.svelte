@@ -182,7 +182,7 @@
       summary: form.summary, participant_ids: form.participant_ids,
     }
     if (form.type_id) body.type_id = form.type_id
-    const expenseFen = Math.round(parseFloat(form.expense_yuan || '0') * 100)
+    const expenseFen = toFen(form.expense_yuan)
     if (expenseFen > 0) {
       body.expense_fen = expenseFen
       if (form.expense_person_id) body.expense_person_id = form.expense_person_id
