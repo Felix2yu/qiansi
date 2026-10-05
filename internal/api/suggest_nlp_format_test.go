@@ -210,7 +210,7 @@ func TestSuggestAllRules(t *testing.T) {
 	ctx := context.Background()
 	st := ts.Store
 
-	// 1. 久未联系：updated_at 挪到 20 天前
+	// 阿旧：updated_at 挪到很久以前，留给后面的规则挂纪念日与往来
 	stale := &store.Person{Name: "阿旧", Grade: 5}
 	if err := st.PersonCreate(ctx, stale); err != nil {
 		t.Fatalf("PersonCreate: %v", err)
@@ -325,15 +325,12 @@ func TestSuggestAllRules(t *testing.T) {
 
 	list := ts.suggest()
 
-	// 规则 1
-	s, ok := hasSuggestion(list, "久未联系", "打个招呼")
-	if !ok {
-		t.Error("missing 久未联系 suggestion")
-	} else if s.PersonID != stale.ID || s.PersonName != "阿旧" {
-		t.Errorf("stale suggestion = %+v", s)
+	// 规则 1「久未联系」已由联系节奏引擎接管（N5），建议里不该再有这一类
+	if _, ok := hasSuggestion(list, "久未联系", "打个招呼"); ok {
+		t.Error("久未联系 建议应已下线，改由 /api/v1/contacts/drift 与派生待办承接")
 	}
-	if countType(list, "久未联系") != 1 {
-		t.Errorf("久未联系 count = %d, want 1 (fresh/archived leaked)", countType(list, "久未联系"))
+	if countType(list, "久未联系") != 0 {
+		t.Errorf("久未联系 count = %d, want 0", countType(list, "久未联系"))
 	}
 
 	// 规则 2
@@ -353,7 +350,7 @@ func TestSuggestAllRules(t *testing.T) {
 	}
 
 	// 规则 3
-	s, ok = hasSuggestion(list, "有借款未还", "待还 ¥120.00")
+	s, ok := hasSuggestion(list, "有借款未还", "待还 ¥120.00")
 	if !ok {
 		t.Errorf("missing 借款 suggestion: %+v", list)
 	} else if s.PersonName != "老赖" {

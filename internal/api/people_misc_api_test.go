@@ -1360,7 +1360,7 @@ func TestAPIDashboardSuggestions(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	// 1. 久未联系：updated_at 放到 30 天前
+	// 一个很久没动过的联系人：旧的「久未联系」建议已下线（N5 交给联系节奏），留着确认它不再出现
 	stale := apiCreatePersonMap(t, s, map[string]any{"name": "久未联系者"})["id"].(string)
 	if _, err := s.Store.DB.ExecContext(ctx, "UPDATE people SET updated_at=? WHERE id=?", apiDate(-30)+"T10:00:00+08:00", stale); err != nil {
 		t.Fatalf("age person: %v", err)
@@ -1398,10 +1398,13 @@ func TestAPIDashboardSuggestions(t *testing.T) {
 
 	list := apiArray(s, "/api/v1/dashboard/suggestions")
 	types := apiResultsByType(list)
-	for _, want := range []string{"久未联系", "纪念日临近", "有借款未还", "承诺到期未兑现"} {
+	for _, want := range []string{"纪念日临近", "有借款未还", "承诺到期未兑现"} {
 		if types[want] == 0 {
 			t.Fatalf("建议缺少 %s: %v", want, list)
 		}
+	}
+	if types["久未联系"] != 0 {
+		t.Errorf("久未联系 建议应已下线: %v", list)
 	}
 	var unpaidSeen bool
 	for _, it := range list {
