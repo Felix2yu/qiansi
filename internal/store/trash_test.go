@@ -59,7 +59,7 @@ func trashVisibleCount(t *testing.T, s *Store, ctx context.Context, seed *trashS
 	if err != nil {
 		t.Fatalf("PersonList: %v", err)
 	}
-	events, err := s.EventList(ctx, "", "", 0, 0)
+	events, err := s.EventList(ctx, EventFilter{})
 	if err != nil {
 		t.Fatalf("EventList: %v", err)
 	}
@@ -67,7 +67,7 @@ func trashVisibleCount(t *testing.T, s *Store, ctx context.Context, seed *trashS
 	if err != nil {
 		t.Fatalf("MemoList: %v", err)
 	}
-	txs, err := s.TransactionList(ctx, "", 0, 0)
+	txs, err := s.TransactionList(ctx, TxFilter{})
 	if err != nil {
 		t.Fatalf("TransactionList: %v", err)
 	}

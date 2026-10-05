@@ -214,7 +214,7 @@ func TestEventList_ParticipantsBatched(t *testing.T) {
 	e3 := &Event{Title: "没人参加", EventDate: "2026-10-03"}
 	egCreate(t, s, e3, nil)
 
-	list, err := s.EventList(ctx, "", "", 50, 0)
+	list, err := s.EventList(ctx, EventFilter{Limit: 50})
 	if err != nil {
 		t.Fatalf("EventList: %v", err)
 	}
@@ -247,7 +247,7 @@ func TestEventList_PersonFilterStillHydrates(t *testing.T) {
 	egCreate(t, s, &Event{Title: "有甲", EventDate: "2026-10-01"}, []string{a.ID, b.ID})
 	egCreate(t, s, &Event{Title: "没甲", EventDate: "2026-10-02"}, []string{b.ID})
 
-	list, err := s.EventList(ctx, a.ID, "", 50, 0)
+	list, err := s.EventList(ctx, EventFilter{PersonID: a.ID, Limit: 50})
 	if err != nil {
 		t.Fatalf("EventList: %v", err)
 	}

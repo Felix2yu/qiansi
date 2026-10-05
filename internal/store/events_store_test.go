@@ -271,7 +271,7 @@ func TestEventStore_EventListFilters(t *testing.T) {
 		t.Fatalf("raw insert: %v", err)
 	}
 
-	list, err := s.EventList(ctx, "", "", 0, 0) // limit<=0 → 默认 100
+	list, err := s.EventList(ctx, EventFilter{}) // limit<=0 → 默认 100
 	if err != nil {
 		t.Fatalf("EventList: %v", err)
 	}
@@ -301,30 +301,30 @@ func TestEventStore_EventListFilters(t *testing.T) {
 	}
 
 	// person_id 过滤
-	byPerson, err := s.EventList(ctx, a.ID, "", 10, 0)
+	byPerson, err := s.EventList(ctx, EventFilter{PersonID: a.ID, Limit: 10})
 	if err != nil || len(byPerson) != 1 || byPerson[0].ID != e1.ID {
 		t.Fatalf("person_id 过滤错误: %v / %+v", err, byPerson)
 	}
 	// keyword 过滤（标题/摘要/地点）
-	byQ, err := s.EventList(ctx, "", "饭店", 10, 0)
+	byQ, err := s.EventList(ctx, EventFilter{Q: "饭店", Limit: 10})
 	if err != nil || len(byQ) != 1 || byQ[0].ID != e2.ID {
 		t.Fatalf("keyword 过滤错误: %v / %+v", err, byQ)
 	}
-	bySummary, err := s.EventList(ctx, "", "喝茶", 10, 0)
+	bySummary, err := s.EventList(ctx, EventFilter{Q: "喝茶", Limit: 10})
 	if err != nil || len(bySummary) != 1 || bySummary[0].ID != e1.ID {
 		t.Fatalf("摘要关键词过滤错误: %v / %+v", err, bySummary)
 	}
 	// 组合过滤 + limit/offset
-	both, err := s.EventList(ctx, b.ID, "聚餐", 5, 0)
+	both, err := s.EventList(ctx, EventFilter{PersonID: b.ID, Q: "聚餐", Limit: 5})
 	if err != nil || len(both) != 1 || both[0].ID != e2.ID {
 		t.Fatalf("组合过滤错误: %v / %+v", err, both)
 	}
-	paged, err := s.EventList(ctx, "", "", 1, 1)
+	paged, err := s.EventList(ctx, EventFilter{Limit: 1, Offset: 1})
 	if err != nil || len(paged) != 1 || paged[0].ID != e2.ID {
 		t.Fatalf("分页错误: %v / %+v", err, paged)
 	}
 	// 空结果路径
-	none, err := s.EventList(ctx, "", "不存在的关键词", 10, 0)
+	none, err := s.EventList(ctx, EventFilter{Q: "不存在的关键词", Limit: 10})
 	if err != nil || len(none) != 0 {
 		t.Fatalf("空结果期望 0, got %v / %d", err, len(none))
 	}
@@ -611,18 +611,18 @@ func TestEventStore_Transactions(t *testing.T) {
 	}
 
 	// 列表：全量 / 按人 / 分页 / 空
-	all, err := s.TransactionList(ctx, "", 0, 0)
+	all, err := s.TransactionList(ctx, TxFilter{})
 	if err != nil || len(all) != 3 {
 		t.Fatalf("TransactionList 全量 = %d (%v)", len(all), err)
 	}
 	if all[0].OccurredAt < all[1].OccurredAt {
 		t.Fatalf("应按 occurred_at DESC")
 	}
-	byP, err := s.TransactionList(ctx, p.ID, 2, 1)
+	byP, err := s.TransactionList(ctx, TxFilter{PersonID: p.ID, Limit: 2, Offset: 1})
 	if err != nil || len(byP) != 2 {
 		t.Fatalf("按人分页 = %d (%v)", len(byP), err)
 	}
-	none, err := s.TransactionList(ctx, "ghost", 10, 0)
+	none, err := s.TransactionList(ctx, TxFilter{PersonID: "ghost", Limit: 10})
 	if err != nil || len(none) != 0 {
 		t.Fatalf("未知人应空: %v", err)
 	}
@@ -1531,7 +1531,7 @@ func TestEventStore_ClosedDBErrors(t *testing.T) {
 	wantErr("EventDelete", s.EventDelete(ctx, "x"))
 	_, err := s.EventGet(ctx, "x")
 	wantErr("EventGet", err)
-	_, err = s.EventList(ctx, "", "q", 10, 0)
+	_, err = s.EventList(ctx, EventFilter{Q: "q", Limit: 10})
 	wantErr("EventList", err)
 	_, err = s.EventExpenses(ctx, "x")
 	wantErr("EventExpenses", err)
@@ -1558,7 +1558,7 @@ func TestEventStore_ClosedDBErrors(t *testing.T) {
 	wantErr("TransactionDelete", s.TransactionDelete(ctx, "t1"))
 	_, err = s.TransactionGet(ctx, "t1")
 	wantErr("TransactionGet", err)
-	_, err = s.TransactionList(ctx, "", 10, 0)
+	_, err = s.TransactionList(ctx, TxFilter{Limit: 10})
 	wantErr("TransactionList", err)
 
 	wantErr("RepaymentCreate", s.RepaymentCreate(ctx, &Repayment{ID: "rp", TransactionID: "t1", AmountFen: 1, OccurredAt: "2026-01-01"}))
