@@ -1233,6 +1233,41 @@ func TestPeopleListFiltersAndSort(t *testing.T) {
 	}
 }
 
+func TestPeopleListByGenderFilter(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+	must := func(p *Person) { pMustCreate(t, s, p) }
+	must(&Person{ID: "m", Name: "男甲", Gender: "M"})
+	must(&Person{ID: "f", Name: "女乙", Gender: "F"})
+	must(&Person{ID: "n", Name: "未填丙"})
+	must(&Person{ID: "a", Name: "归档丁", Gender: "F", Archived: true})
+
+	byGender := func(gender string, onlyArchived bool) []string {
+		t.Helper()
+		list, err := s.PersonListBy(ctx, PeopleFilter{Gender: gender}, false, onlyArchived, 0, 0)
+		if err != nil {
+			t.Fatalf("PersonListBy(gender=%q, onlyArchived=%v): %v", gender, onlyArchived, err)
+		}
+		return pNames(list)
+	}
+	if got := byGender("M", false); strings.Join(got, ",") != "男甲" {
+		t.Fatalf("男筛出 %v", got)
+	}
+	// 归档的人不受性别维度牵连：默认视图里依然不出现
+	if got := byGender("F", false); strings.Join(got, ",") != "女乙" {
+		t.Fatalf("女筛出 %v", got)
+	}
+	if got := byGender("none", false); strings.Join(got, ",") != "未填丙" {
+		t.Fatalf("未填筛出 %v", got)
+	}
+	if got := byGender("", false); len(got) != 3 {
+		t.Fatalf("不限应返回全部非归档的人: %v", got)
+	}
+	if got := byGender("F", true); strings.Join(got, ",") != "归档丁" {
+		t.Fatalf("已归档视图按性别筛出 %v", got)
+	}
+}
+
 func TestPeopleListNullColumnsFromRawRow(t *testing.T) {
 	ctx := pctx(t)
 	s := newTestStore(t)
