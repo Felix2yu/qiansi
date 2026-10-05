@@ -156,7 +156,7 @@ export const RELATION_TYPES = ['家人', '亲戚', '朋友', '同学', '同事',
 
 /** 性别的码值与配色：库里只存 M / F（空 = 未填），编辑控件和头像底色共用这一份定义 */
 export const GENDER_OPTIONS = [
-  { code: 'M', label: '男', color: '#3b82f6' },
+  { code: 'M', label: '男', color: '#0284c7' },
   { code: 'F', label: '女', color: '#ec4899' },
 ] as const
 

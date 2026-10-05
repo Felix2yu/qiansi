@@ -17,6 +17,8 @@
   const tags = $derived(dict.tags)
   let selectedCat = $state<number>(0)
   let selectedTag = $state<number>(0)
+  // 性别筛选：M / F / none（未填），空串是不限
+  let selectedGender = $state('')
   // 归档的人默认不在列表里，靠这个筛选翻出来找回
   let onlyArchived = $state(false)
   function toggleArchived() {
@@ -159,8 +161,9 @@
   async function load(reset = true) {
     if (reset) page = 0
     const archived = onlyArchived ? '&archived=only' : ''
+    const gender = selectedGender ? `&gender=${selectedGender}` : ''
     const batch = await API.get<Person[]>(
-      `/api/v1/people?q=${encodeURIComponent(q)}${archived}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
+      `/api/v1/people?q=${encodeURIComponent(q)}${archived}${gender}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
     ).catch((err) => {
       // 读失败也不能显示「暂无联系人」，那看起来像是数据没了
       toast.fail('加载失败', err)
@@ -301,6 +304,12 @@
             style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
       <option value={0}>全部标签</option>
       {#each tags as t}<option value={t.id}>{t.name}</option>{/each}
+    </select>
+    <select bind:value={selectedGender} onchange={() => load()} class="px-3 py-2 rounded-lg text-sm outline-none"
+            style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);">
+      <option value="">全部性别</option>
+      {#each GENDER_OPTIONS as o}<option value={o.code}>{o.label}</option>{/each}
+      <option value="none">未填</option>
     </select>
   </div>
 
