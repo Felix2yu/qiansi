@@ -265,7 +265,7 @@ func validateReminder(r *store.Reminder) error {
 	return oneOf("status", r.Status, "pending", "done")
 }
 
-// validatePerson 目前只校生日。生日是唯一一个会被下游当日期解析的字段：
+// validatePerson 校生日与性别。生日是唯一一个会被下游当日期解析的字段：
 // SyncBirthdayAnniversary 拿它建纪念日，纪念日再拿它算下一次发生与待办，
 // "1990-1-1" 这种少写零的值会在字符串比较里躲过提醒窗口。
 func validatePerson(p *store.Person) error {
@@ -274,5 +274,23 @@ func validatePerson(p *store.Person) error {
 		return err
 	}
 	p.Birthday = d
+	g, err := normGender(p.Gender)
+	if err != nil {
+		return err
+	}
+	p.Gender = g
 	return nil
+}
+
+// normGender 把性别收成 M / F 两个码值：头像底色、列表里的「男/女」都按码值判，
+// 列上存自由文本就会漏掉「男」「m」这些同义写法。空串是「未填」，照原样放行。
+func normGender(v string) (string, error) {
+	switch g := strings.ToUpper(strings.TrimSpace(v)); g {
+	case "男":
+		return "M", nil
+	case "女":
+		return "F", nil
+	default:
+		return g, oneOf("gender", g, "M", "F")
+	}
 }
