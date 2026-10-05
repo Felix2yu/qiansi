@@ -636,15 +636,27 @@ FROM live_people p WHERE p.id=?`, id)
 }
 
 func (s *Store) PersonList(ctx context.Context, q string, categoryID, grade int, archived bool, tagID int, limit, offset int) ([]*Person, error) {
-	return s.queryPeople(ctx, q, categoryID, grade, archived, false, tagID, limit, offset)
+	return s.queryPeople(ctx, PeopleFilter{Q: q, CategoryID: categoryID, Grade: grade, TagID: tagID}, archived, false, limit, offset)
 }
 
-// PersonArchivedOnly 只翻已归档的人物，供列表页的「已归档」筛选使用。
-func (s *Store) PersonArchivedOnly(ctx context.Context, q string, categoryID, grade, tagID, limit, offset int) ([]*Person, error) {
-	return s.queryPeople(ctx, q, categoryID, grade, false, true, tagID, limit, offset)
+// PeopleFilter 人物列表的筛选条件，零值表示这一维度不限。
+// 用结构体而不是继续加位置参数：调用点太多，加一维就要全改一遍。
+type PeopleFilter struct {
+	Q          string
+	CategoryID int
+	Grade      int
+	TagID      int
+	Gender     string // M / F，"none" 表示只看没填的，空表示不限
 }
 
-func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int, includeArchived, onlyArchived bool, tagID, limit, offset int) ([]*Person, error) {
+// PersonListBy 按 PeopleFilter 查询，供列表页使用。归档态用两个布尔表达：
+// includeArchived 把归档的人混进结果，onlyArchived 则翻转成「只看归档的人」——
+// 对应列表页的「联系人 / 已归档」两个视图。
+func (s *Store) PersonListBy(ctx context.Context, f PeopleFilter, includeArchived, onlyArchived bool, limit, offset int) ([]*Person, error) {
+	return s.queryPeople(ctx, f, includeArchived, onlyArchived, limit, offset)
+}
+
+func (s *Store) queryPeople(ctx context.Context, f PeopleFilter, includeArchived, onlyArchived bool, limit, offset int) ([]*Person, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -657,22 +669,29 @@ func (s *Store) queryPeople(ctx context.Context, q string, categoryID, grade int
 	case !includeArchived:
 		cond = append(cond, "p.archived=0")
 	}
-	if q != "" {
+	if f.Q != "" {
 		cond = append(cond, "(p.name LIKE ? OR p.nickname LIKE ? OR p.notes LIKE ?)")
-		like := "%" + q + "%"
+		like := "%" + f.Q + "%"
 		args = append(args, like, like, like)
 	}
-	if categoryID > 0 {
+	if f.CategoryID > 0 {
 		cond = append(cond, "p.id IN (SELECT person_id FROM person_categories WHERE category_id=?)")
-		args = append(args, categoryID)
+		args = append(args, f.CategoryID)
 	}
-	if grade > 0 {
+	if f.Grade > 0 {
 		cond = append(cond, "p.grade=?")
-		args = append(args, grade)
+		args = append(args, f.Grade)
 	}
-	if tagID > 0 {
+	if f.TagID > 0 {
 		cond = append(cond, "p.id IN (SELECT target_id FROM taggings WHERE tag_id=? AND target_type='person')")
-		args = append(args, tagID)
+		args = append(args, f.TagID)
+	}
+	switch f.Gender {
+	case "M", "F":
+		cond = append(cond, "p.gender=?")
+		args = append(args, f.Gender)
+	case "none":
+		cond = append(cond, "(p.gender IS NULL OR p.gender='')")
 	}
 	where := strings.Join(cond, " AND ")
 	// 圈子不在这个查询里取：多对多之后 JOIN 会一人出多行，

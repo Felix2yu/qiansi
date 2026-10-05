@@ -103,34 +103,41 @@ func (a *API) personMerge(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) peopleList(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	filter := store.PeopleFilter{
+		Q:          q.Get("q"),
+		CategoryID: parseIntQuery(r, "category_id", 0),
+		Grade:      parseIntQuery(r, "grade", 0),
+		TagID:      parseIntQuery(r, "tag_id", 0),
+		Gender:     genderQuery(q.Get("gender")),
+	}
+	limit := parseIntQuery(r, "limit", 50)
+	offset := parseIntQuery(r, "offset", 0)
 	var list []*store.Person
 	var err error
 	if q.Get("archived") == "only" {
 		// 列表页的「已归档」筛选：只看被隐藏掉的人，好把他们找回来
-		list, err = a.Store.PersonArchivedOnly(r.Context(),
-			q.Get("q"),
-			parseIntQuery(r, "category_id", 0),
-			parseIntQuery(r, "grade", 0),
-			parseIntQuery(r, "tag_id", 0),
-			parseIntQuery(r, "limit", 50),
-			parseIntQuery(r, "offset", 0),
-		)
+		list, err = a.Store.PersonListBy(r.Context(), filter, false, true, limit, offset)
 	} else {
-		list, err = a.Store.PersonList(r.Context(),
-			q.Get("q"),
-			parseIntQuery(r, "category_id", 0),
-			parseIntQuery(r, "grade", 0),
-			q.Get("archived") == "1",
-			parseIntQuery(r, "tag_id", 0),
-			parseIntQuery(r, "limit", 50),
-			parseIntQuery(r, "offset", 0),
-		)
+		list, err = a.Store.PersonListBy(r.Context(), filter, q.Get("archived") == "1", false, limit, offset)
 	}
 	if err != nil {
 		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, list)
+}
+
+// genderQuery 收口性别筛选参数：只认男/女/未填三种，其余（包括手写的乱码）当不限处理，
+// 免得一个非法值把列表筛成空的、看起来像数据没了。
+func genderQuery(v string) string {
+	switch g := strings.ToUpper(strings.TrimSpace(v)); g {
+	case "M", "F":
+		return g
+	case "NONE":
+		return "none"
+	default:
+		return ""
+	}
 }
 
 func (a *API) peopleCount(w http.ResponseWriter, r *http.Request) {
