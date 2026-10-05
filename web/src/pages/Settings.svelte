@@ -3,7 +3,7 @@
   import { navigate } from '../lib/router'
   import { API, gradeLabel, type BackupItem, type BackupStatus, type RhythmTier } from '../lib/api'
   import TermList from '../lib/TermList.svelte'
-  import { Download, Upload, Palette, Bell, Monitor, Sun, Moon, Clock, Check, AlertTriangle, FileSpreadsheet, UserCheck, HeartPulse } from '@lucide/svelte'
+  import { Download, Upload, Bell, Monitor, Sun, Moon, Check, AlertTriangle, SlidersHorizontal, Users, Database, KeyRound } from '@lucide/svelte'
   import { theme, setThemeMode, setThemeColor, initTheme, isPreset, THEME_LABEL, THEME_PRESETS, type ThemeMode } from '../lib/theme.svelte'
   import PersonPicker from '../lib/PersonPicker.svelte'
   import { setSelf } from '../lib/self.svelte'
@@ -69,6 +69,27 @@
   let rhythmSaving = $state(false)
   const RHYTHM_MAX = 3650
 
+  // 总开关就是 settings 里的一个键（后端 ContactUpcoming 认它），所以不另开端点。
+  // 只有显式写过关闭值才算关：没配过的老库默认是开着。
+  let rhythmOn = $state(true)
+  let rhythmToggling = $state(false)
+
+  async function toggleRhythm(on: boolean) {
+    rhythmToggling = true
+    try {
+      await API.post('/api/v1/settings/bulk', { contact_rhythm_enabled: on ? '1' : '0' })
+    } catch (err) {
+      // 写失败就把勾退回原样：屏幕上的开关必须和后端一致，不能看着关了其实还在催
+      rhythmOn = !on
+      rhythmToggling = false
+      toast.fail(on ? '开启联系节奏失败' : '关闭联系节奏失败', err)
+      return
+    }
+    rhythmToggling = false
+    settings = { ...settings, contact_rhythm_enabled: on ? '1' : '0' }
+    toast.ok(on ? '已开启联系节奏提醒' : '已关闭：不再派生待办，也不进每日推送')
+  }
+
   async function loadRhythm() {
     const r = await API.get<RhythmTier[]>('/api/v1/contact-rhythm').catch((err) => {
       toast.fail('读取联系节奏失败', err)
@@ -119,6 +140,7 @@
       pushHour = parseInt(s['push_time_hour'] || '9', 10)
       selfId = s['self_person_id'] || ''
       selfSaved = selfId
+      rhythmOn = !['0', 'false', 'off', 'no'].includes((s['contact_rhythm_enabled'] || '').trim().toLowerCase())
     }
     const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
       toast.fail('读取备份列表失败', err)
@@ -348,11 +370,11 @@
   }
 </script>
 <div class="space-y-6">
-  <header><h1 class="text-2xl font-semibold">设置</h1><p class="text-sm mt-1" style="color: var(--q-muted);">偏好、数据、通知渠道</p></header>
+  <header><h1 class="text-2xl font-semibold">设置</h1><p class="text-sm mt-1" style="color: var(--q-muted);">偏好、名单、联系提醒、数据与访问</p></header>
 
-  <!-- 我是谁 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><UserCheck size={14} /> 我是谁</h2>
+    <h2 class="text-sm font-semibold mb-4 flex items-center gap-2"><SlidersHorizontal size={14} /> 偏好</h2>
+    <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">我是谁</h3>
     <p class="text-xs mb-3 leading-relaxed" style="color: var(--q-muted);">
       牵丝以你为中心：设好本人之后，关系图按「离我几步」拼色，选人下拉把「我」置顶，认识路径才算得出来。
     </p>
@@ -366,79 +388,85 @@
         <span class="text-xs" style="color: var(--q-muted);">清除左边那个人后保存，就是不设本人</span>
       {/if}
     </div>
-  </section>
-
-  <!-- 主题 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><Palette size={14} /> 主题</h2>
-    <div class="flex flex-wrap items-center gap-4">
-      <!-- 外观三档：跟随系统 / 浅色 / 深色 -->
-      <div class="flex items-center gap-0.5 rounded-lg p-0.5" style="background: var(--q-bg); border: 1px solid var(--q-border);">
-        {#each THEME_TABS as t}
-          <button onclick={() => setThemeMode(t.mode)} aria-pressed={theme.mode === t.mode}
-                  class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors"
-                  style="color: {theme.mode === t.mode ? '#fff' : 'var(--q-muted)'}; background: {theme.mode === t.mode ? 'var(--q-theme)' : 'transparent'};">
-            <t.icon size={13} />
-            {THEME_LABEL[t.mode]}
-          </button>
-        {/each}
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">主题</h3>
+      <div class="flex flex-wrap items-center gap-4">
+        <!-- 外观三档：跟随系统 / 浅色 / 深色 -->
+        <div class="flex items-center gap-0.5 rounded-lg p-0.5" style="background: var(--q-bg); border: 1px solid var(--q-border);">
+          {#each THEME_TABS as t}
+            <button onclick={() => setThemeMode(t.mode)} aria-pressed={theme.mode === t.mode}
+                    class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs transition-colors"
+                    style="color: {theme.mode === t.mode ? '#fff' : 'var(--q-muted)'}; background: {theme.mode === t.mode ? 'var(--q-theme)' : 'transparent'};">
+              <t.icon size={13} />
+              {THEME_LABEL[t.mode]}
+            </button>
+          {/each}
+        </div>
+        <span class="text-xs" style="color: var(--q-muted);">
+          {theme.mode === 'system' ? '自动匹配系统外观，系统切换时实时跟随' : '已手动指定，不随系统变化'}
+        </span>
       </div>
-      <span class="text-xs" style="color: var(--q-muted);">
-        {theme.mode === 'system' ? '自动匹配系统外观，系统切换时实时跟随' : '已手动指定，不随系统变化'}
-      </span>
-    </div>
-    <!-- 主题色：推荐色和取色器同一行，拆成两行看着像两组设置；窄屏宁可横向滚也不换行 -->
-    <div class="flex items-center gap-2 mt-3 flex-nowrap overflow-x-auto pb-1">
-      <span class="text-xs shrink-0" style="color: var(--q-muted);">主题色</span>
-      {#each THEME_PRESETS as p}
-        {@const active = theme.color.trim().toLowerCase() === p.color}
-        <button onclick={() => setThemeColor(p.color)} title={p.name} aria-label={p.name} aria-pressed={active}
-                class="w-6 h-6 shrink-0 rounded-full transition-transform hover:scale-110"
-                style={`background: ${p.color}; ${active ? `box-shadow: 0 0 0 2px var(--q-surface), 0 0 0 4px ${p.color};` : 'border: 1px solid var(--q-border);'}`}></button>
-      {/each}
-      <input type="color" value={theme.color} oninput={(e) => setThemeColor(e.currentTarget.value)}
-             aria-label="自定义主题色" class="w-9 h-9 shrink-0 rounded-lg border cursor-pointer" style="border-color: var(--q-border);" />
-      <span class="text-xs font-mono shrink-0" style="color: var(--q-muted);">{theme.color}</span>
-      {#if !isPreset(theme.color)}
-        <span class="text-xs shrink-0" style="color: var(--q-muted);">当前是自定义色</span>
-      {/if}
+      <!-- 主题色：推荐色和取色器同一行，拆成两行看着像两组设置；窄屏宁可横向滚也不换行 -->
+      <div class="flex items-center gap-2 mt-3 flex-nowrap overflow-x-auto pb-1">
+        <span class="text-xs shrink-0" style="color: var(--q-muted);">主题色</span>
+        {#each THEME_PRESETS as p}
+          {@const active = theme.color.trim().toLowerCase() === p.color}
+          <button onclick={() => setThemeColor(p.color)} title={p.name} aria-label={p.name} aria-pressed={active}
+                  class="w-6 h-6 shrink-0 rounded-full transition-transform hover:scale-110"
+                  style={`background: ${p.color}; ${active ? `box-shadow: 0 0 0 2px var(--q-surface), 0 0 0 4px ${p.color};` : 'border: 1px solid var(--q-border);'}`}></button>
+        {/each}
+        <input type="color" value={theme.color} oninput={(e) => setThemeColor(e.currentTarget.value)}
+               aria-label="自定义主题色" class="w-9 h-9 shrink-0 rounded-lg border cursor-pointer" style="border-color: var(--q-border);" />
+        <span class="text-xs font-mono shrink-0" style="color: var(--q-muted);">{theme.color}</span>
+        {#if !isPreset(theme.color)}
+          <span class="text-xs shrink-0" style="color: var(--q-muted);">当前是自定义色</span>
+        {/if}
+      </div>
     </div>
   </section>
 
-  <!-- 圈子 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3">圈子（分组）</h2>
+    <h2 class="text-sm font-semibold mb-4 flex items-center gap-2"><Users size={14} /> 名单与口径</h2>
+    <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">圈子（分组）</h3>
     <TermList items={categories} endpoint="/api/v1/categories" noun="圈子" placeholder="圈子名"
               defaults={{ icon: 'circle', sort_order: 0 }} onchange={() => refresh('categories')} />
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">标签</h3>
+      <TermList items={tags} endpoint="/api/v1/tags" noun="标签" placeholder="标签名" pill onchange={() => refresh('tags')} />
+    </div>
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">往来事件类型</h3>
+      <TermList items={eventTypes} endpoint="/api/v1/event-types" noun="类型" placeholder="类型名"
+                defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={() => refresh('eventTypes')} />
+    </div>
   </section>
 
-  <!-- 标签 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3">标签</h2>
-    <TermList items={tags} endpoint="/api/v1/tags" noun="标签" placeholder="标签名" pill onchange={() => refresh('tags')} />
-  </section>
-
-  <!-- 事件类型 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3">往来事件类型</h2>
-    <TermList items={eventTypes} endpoint="/api/v1/event-types" noun="类型" placeholder="类型名"
-              defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }} onchange={() => refresh('eventTypes')} />
-  </section>
-
-  <!-- 联系节奏 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><HeartPulse size={14} /> 联系节奏</h2>
+    <h2 class="text-sm font-semibold mb-4 flex items-center gap-2"><Bell size={14} /> 联系与提醒</h2>
+    <div class="flex items-center justify-between gap-3 mb-2.5">
+      <h3 class="text-xs font-medium" style="color: var(--q-muted);">联系节奏</h3>
+      <label class="flex items-center gap-2 text-xs cursor-pointer shrink-0">
+        <input type="checkbox" bind:checked={rhythmOn} disabled={rhythmToggling}
+               onchange={() => toggleRhythm(rhythmOn)}
+               aria-label="按联系节奏派生待办与推送"
+               class="w-4 h-4 accent-indigo-500" />
+        {rhythmOn ? '按节奏提醒' : '已关闭提醒'}
+      </label>
+    </div>
     <p class="text-xs mb-4 leading-relaxed" style="color: var(--q-muted);">
       按亲密度设定「多久该联系一次」。距最近一次往来、对话或「联系过了」打卡超过这个天数，就自动派生一条待办并随每日推送发出；
       勾掉待办就等于打过招呼，下一次到期日自动推后。
     </p>
     {#if rhythm.length > 0}
-      <div class="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-2 max-w-lg">
+      {@const off = !rhythmOn}
+      <!-- 五颗心那档实测要 173px：手机一列、中屏两列，三列要到 lg 才放得下，
+           否则「天」会压到下一档的亲密度上 -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2 max-w-60 sm:max-w-2xl transition-opacity" style="opacity: {off ? 0.45 : 1};">
         {#each rhythm as t (t.grade)}
           <label class="flex items-center justify-between gap-2 text-sm">
             <span class="shrink-0" style="color: var(--q-muted);">{gradeLabel(t.grade)}</span>
             <span class="flex items-center gap-1.5">
-              <input type="number" min={1} max={RHYTHM_MAX} bind:value={t.days}
+              <input type="number" min={1} max={RHYTHM_MAX} bind:value={t.days} disabled={off}
                      aria-label={`${gradeLabel(t.grade)}的联系天数`}
                      class="w-20 px-2 py-1 rounded-lg text-sm outline-none text-right"
                      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
@@ -449,48 +477,39 @@
       </div>
       <div class="flex items-center gap-2 mt-4">
         <button class="px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
-                style="background: var(--q-theme);" disabled={rhythmSaving} onclick={saveRhythm}>
+                style="background: var(--q-theme);" disabled={rhythmSaving || off} onclick={saveRhythm}>
           {rhythmSaving ? '保存中…' : '保存'}
         </button>
         <button class="px-3 py-1.5 rounded-lg text-sm disabled:opacity-50"
-                style="background: var(--q-bg); border: 1px solid var(--q-border);" disabled={rhythmSaving} onclick={resetRhythm}>恢复默认</button>
+                style="background: var(--q-bg); border: 1px solid var(--q-border);" disabled={rhythmSaving || off} onclick={resetRhythm}>恢复默认</button>
         <button class="text-xs ml-auto" style="color: var(--q-theme);" onclick={() => navigate('/drift')}>看渐远名单</button>
       </div>
+      {#if off}
+        <p class="text-xs mt-3 leading-relaxed" style="color: var(--q-muted);">
+          关闭只是不再派生待办、不再进每日推送：天数原样留着，重新开启就按这份节奏继续催。渐远名单和「联系过了」打卡不受影响。
+        </p>
+      {/if}
     {/if}
-  </section>
-
-  <!-- 通知 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><Bell size={14} /> 多渠道通知（apprise URL）</h2>
-    <textarea bind:value={appriseUrls} class="w-full h-28 px-3 py-2 rounded-lg text-sm outline-none font-mono" style="background: var(--q-bg); border: 1px solid var(--q-border);"
-      placeholder='每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat'></textarea>
-    <div class="flex items-center gap-3 mt-3">
-      <span class="text-sm" style="color: var(--q-muted);">每日推送时间</span>
-      <input type="number" min={0} max={23} bind:value={pushHour} aria-label="每日推送时间（0-23 时）" class="w-20 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={saveNotify}>保存</button>
-      <button class="px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={testNotify}>测试推送</button>
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">多渠道通知（apprise URL）</h3>
+      <textarea bind:value={appriseUrls} class="w-full h-28 px-3 py-2 rounded-lg text-sm outline-none font-mono" style="background: var(--q-bg); border: 1px solid var(--q-border);"
+        placeholder='每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat'></textarea>
+      <!-- 窄屏放不下整行时宁可让按钮整块换行，也不能压进按钮里把「测试推送」拆成两行 -->
+      <div class="flex flex-wrap items-center gap-2 mt-3">
+        <span class="text-sm shrink-0 whitespace-nowrap" style="color: var(--q-muted);">每日推送时间</span>
+        <input type="number" min={0} max={23} bind:value={pushHour} aria-label="每日推送时间（0-23 时）" class="w-16 shrink-0 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
+        <button class="px-3 py-1.5 rounded-lg text-sm text-white shrink-0 whitespace-nowrap" style="background: var(--q-theme);" onclick={saveNotify}>保存</button>
+        <button class="px-3 py-1.5 rounded-lg text-sm shrink-0 whitespace-nowrap" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={testNotify}>测试推送</button>
+      </div>
+      <p class="text-xs mt-2" style="color: var(--q-muted);">
+        支持 bark、feishu、telegram、discord、smtp 等 100+ 渠道；一行一个 URL，逗号或换行分隔。
+      </p>
     </div>
-    <p class="text-xs mt-2" style="color: var(--q-muted);">
-      支持 bark、feishu、telegram、discord、smtp 等 100+ 渠道；一行一个 URL，逗号或换行分隔。
-    </p>
   </section>
 
-  <!-- 访问令牌 -->
   <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3">访问令牌（可选）</h2>
-    <div class="flex gap-2">
-      <input bind:value={token} type="password" placeholder="服务端 QIANSI_TOKEN，未设置则留空"
-             class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={saveToken}>保存</button>
-    </div>
-    <p class="text-xs mt-2" style="color: var(--q-muted);">
-      服务端设置 QIANSI_TOKEN 后，所有接口都需要此令牌；跨站访问默认已被 CORS 拒绝。
-    </p>
-  </section>
-
-  <!-- 数据管理 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3">数据备份</h2>
+    <h2 class="text-sm font-semibold mb-4 flex items-center gap-2"><Database size={14} /> 数据</h2>
+    <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">数据备份</h3>
     <div class="flex flex-wrap gap-2">
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={exportData}><Download size={14} /> 导出数据库</button>
       <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={snapshot}>生成归档快照</button>
@@ -514,138 +533,148 @@
         {/each}
       </ul>
     {/if}
-  </section>
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">定时自动备份</h3>
+      {#if auto}
+        <div class="space-y-3">
+          <!-- 开关 + 概览 -->
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" bind:checked={auto.schedule.enabled} class="w-4 h-4 accent-indigo-500" />
+              {auto.schedule.enabled ? '已开启' : '已关闭'}
+            </label>
+            <span class="text-xs" style="color: var(--q-muted);">{auto.label}</span>
+            <button class="ml-auto px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
+                    style="background: var(--q-theme);" disabled={autoRunning} onclick={runAutoNow}>
+              {autoRunning ? '执行中…' : '立即执行一次'}
+            </button>
+          </div>
 
-  <!-- 明细导出与全量迁移 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><FileSpreadsheet size={14} /> 明细导出与全量迁移</h2>
-    <div class="flex flex-wrap items-center gap-2">
-      <select bind:value={csvWhat} class="px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-        <option value="events">往来明细</option>
-        <option value="transactions">金钱明细</option>
-        <option value="memos">对话明细</option>
-      </select>
-      <input type="number" min="1900" max="2200" bind:value={csvYear} placeholder="年份（全部）"
-             class="w-28 px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
-      <div class="w-40">
-        <PersonPicker bind:value={csvPerson} placeholder="全部人物" compact={true} />
-      </div>
-      {#if csvWhat === 'transactions'}
-        <select bind:value={csvEvent} class="max-w-[12rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-          <option value="">全部往来</option>
-          {#each eventOptions as ev}<option value={ev.id}>{ev.title}</option>{/each}
-        </select>
-      {/if}
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={exportCsv}>
-        <Download size={14} /> 导出 CSV
-      </button>
-    </div>
-    <p class="text-xs mt-2" style="color: var(--q-muted);">
-      CSV 带 BOM，Excel 双击打开不乱码；金额按「元」导出。选一场往来即可只导它的礼单。
-    </p>
-    <div class="flex flex-wrap gap-2 mt-3">
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={exportJson}>
-        <Download size={14} /> 全量导出 JSON
-      </button>
-      <input type="file" accept=".json,application/json" class="hidden" bind:this={jsonInput} onchange={pickJson} />
-      <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
-              style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;" onclick={() => jsonInput?.click()}>
-        <Upload size={14} /> 从 JSON 导入（覆盖全库）
-      </button>
-    </div>
-    {#if ioMsg}
-      <p class="text-xs mt-2 flex items-center gap-1" style="color: var(--q-muted);"><Check size={12} /> {ioMsg}</p>
-    {/if}
-  </section>
-
-  <!-- 定时自动备份 -->
-  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-    <h2 class="text-sm font-medium mb-3 flex items-center gap-2"><Clock size={14} /> 定时自动备份</h2>
-    {#if auto}
-      <div class="space-y-3">
-        <!-- 开关 + 概览 -->
-        <div class="flex flex-wrap items-center gap-3">
-          <label class="flex items-center gap-2 text-sm cursor-pointer">
-            <input type="checkbox" bind:checked={auto.schedule.enabled} class="w-4 h-4 accent-indigo-500" />
-            {auto.schedule.enabled ? '已开启' : '已关闭'}
-          </label>
-          <span class="text-xs" style="color: var(--q-muted);">{auto.label}</span>
-          <button class="ml-auto px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
-                  style="background: var(--q-theme);" disabled={autoRunning} onclick={runAutoNow}>
-            {autoRunning ? '执行中…' : '立即执行一次'}
-          </button>
-        </div>
-
-        <!-- 周期与时间点 -->
-        <div class="flex flex-wrap items-center gap-3">
-          <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
-            周期
-            <select bind:value={auto.schedule.frequency} aria-label="备份周期"
-                    class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-              <option value="daily">每日</option>
-              <option value="weekly">每周</option>
-              <option value="custom">自定义间隔</option>
-            </select>
-          </label>
-
-          {#if auto.schedule.frequency === 'weekly'}
+          <!-- 周期与时间点 -->
+          <div class="flex flex-wrap items-center gap-3">
             <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
-              星期
-              <select bind:value={auto.schedule.weekday} aria-label="星期"
+              周期
+              <select bind:value={auto.schedule.frequency} aria-label="备份周期"
                       class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
-                {#each WEEKDAYS as w}
-                  <option value={w.v}>周{w.n}</option>
-                {/each}
+                <option value="daily">每日</option>
+                <option value="weekly">每周</option>
+                <option value="custom">自定义间隔</option>
               </select>
             </label>
-          {/if}
 
-          {#if auto.schedule.frequency === 'custom'}
+            {#if auto.schedule.frequency === 'weekly'}
+              <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
+                星期
+                <select bind:value={auto.schedule.weekday} aria-label="星期"
+                        class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+                  {#each WEEKDAYS as w}
+                    <option value={w.v}>周{w.n}</option>
+                  {/each}
+                </select>
+              </label>
+            {/if}
+
+            {#if auto.schedule.frequency === 'custom'}
+              <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
+                间隔（分钟）
+                <input type="number" min={1} max={43200} bind:value={auto.schedule.every_min} aria-label="自定义间隔（分钟）"
+                       class="w-24 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              </label>
+            {:else}
+              <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
+                时间
+                <input type="time" bind:value={auto.schedule.at} aria-label="执行时间"
+                       class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              </label>
+            {/if}
+
             <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
-              间隔（分钟）
-              <input type="number" min={1} max={43200} bind:value={auto.schedule.every_min} aria-label="自定义间隔（分钟）"
-                     class="w-24 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              保留
+              <input type="number" min={1} max={200} bind:value={auto.schedule.keep} aria-label="保留份数"
+                     class="w-20 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+              份
             </label>
-          {:else}
-            <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
-              时间
-              <input type="time" bind:value={auto.schedule.at} aria-label="执行时间"
-                     class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
-            </label>
-          {/if}
 
-          <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
-            保留
-            <input type="number" min={1} max={200} bind:value={auto.schedule.keep} aria-label="保留份数"
-                   class="w-20 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
-            份
-          </label>
+            <button class="px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
+                    style="background: var(--q-theme);" disabled={autoSaving} onclick={saveAuto}>
+              {autoSaving ? '保存中…' : '保存'}
+            </button>
+          </div>
 
-          <button class="px-3 py-1.5 rounded-lg text-sm text-white disabled:opacity-50"
-                  style="background: var(--q-theme);" disabled={autoSaving} onclick={saveAuto}>
-            {autoSaving ? '保存中…' : '保存'}
-          </button>
+          <!-- 执行状态 -->
+          <div class="text-xs space-y-1" style="color: var(--q-muted);">
+            {#if auto.enabled && auto.next_run}
+              <p>下次执行：<span class="font-mono">{fmtTime(auto.next_run)}</span>（{auto.next_run_in}）· {auto.next_hint}</p>
+            {:else}
+              <p>下次执行：已关闭</p>
+            {/if}
+            <p>上次执行：{auto.last_run ? fmtTime(auto.last_run) : '尚未执行'}</p>
+            {#if auto.last_error}
+              <p class="flex items-start gap-1" style="color: #ef4444;">
+                <AlertTriangle size={12} class="mt-0.5 shrink-0" />
+                <span>上次备份失败：{auto.last_error}</span>
+              </p>
+            {/if}
+            <p>归档目录：<span class="font-mono">{auto.backups_dir}</span></p>
+          </div>
         </div>
-
-        <!-- 执行状态 -->
-        <div class="text-xs space-y-1" style="color: var(--q-muted);">
-          {#if auto.enabled && auto.next_run}
-            <p>下次执行：<span class="font-mono">{fmtTime(auto.next_run)}</span>（{auto.next_run_in}）· {auto.next_hint}</p>
-          {:else}
-            <p>下次执行：已关闭</p>
-          {/if}
-          <p>上次执行：{auto.last_run ? fmtTime(auto.last_run) : '尚未执行'}</p>
-          {#if auto.last_error}
-            <p class="flex items-start gap-1" style="color: #ef4444;">
-              <AlertTriangle size={12} class="mt-0.5 shrink-0" />
-              <span>上次备份失败：{auto.last_error}</span>
-            </p>
-          {/if}
-          <p>归档目录：<span class="font-mono">{auto.backups_dir}</span></p>
+      {:else}
+        <p class="text-xs" style="color: var(--q-muted);">读取自动备份配置失败，请检查服务是否运行。</p>
+      {/if}
+    </div>
+    <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
+      <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">明细导出与全量迁移</h3>
+      <div class="flex flex-wrap items-center gap-2">
+        <select bind:value={csvWhat} class="px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+          <option value="events">往来明细</option>
+          <option value="transactions">金钱明细</option>
+          <option value="memos">对话明细</option>
+        </select>
+        <input type="number" min="1900" max="2200" bind:value={csvYear} placeholder="年份（全部）"
+               class="w-28 px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
+        <div class="w-40">
+          <PersonPicker bind:value={csvPerson} placeholder="全部人物" compact={true} />
         </div>
+        {#if csvWhat === 'transactions'}
+          <select bind:value={csvEvent} class="max-w-[12rem] px-3 py-1.5 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
+            <option value="">全部往来</option>
+            {#each eventOptions as ev}<option value={ev.id}>{ev.title}</option>{/each}
+          </select>
+        {/if}
+        <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={exportCsv}>
+          <Download size={14} /> 导出 CSV
+        </button>
       </div>
-    {:else}
-      <p class="text-xs" style="color: var(--q-muted);">读取自动备份配置失败，请检查服务是否运行。</p>
-    {/if}
+      <p class="text-xs mt-2" style="color: var(--q-muted);">
+        CSV 带 BOM，Excel 双击打开不乱码；金额按「元」导出。选一场往来即可只导它的礼单。
+      </p>
+      <div class="flex flex-wrap gap-2 mt-3">
+        <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={exportJson}>
+          <Download size={14} /> 全量导出 JSON
+        </button>
+        <input type="file" accept=".json,application/json" class="hidden" bind:this={jsonInput} onchange={pickJson} />
+        <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm"
+                style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;" onclick={() => jsonInput?.click()}>
+          <Upload size={14} /> 从 JSON 导入（覆盖全库）
+        </button>
+      </div>
+      {#if ioMsg}
+        <p class="text-xs mt-2 flex items-center gap-1" style="color: var(--q-muted);"><Check size={12} /> {ioMsg}</p>
+      {/if}
+    </div>
   </section>
+
+  <section class="rounded-xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+    <h2 class="text-sm font-semibold mb-4 flex items-center gap-2"><KeyRound size={14} /> 访问与安全</h2>
+    <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">访问令牌（可选）</h3>
+    <div class="flex gap-2">
+      <input bind:value={token} type="password" placeholder="服务端 QIANSI_TOKEN，未设置则留空"
+             class="flex-1 px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
+      <button class="px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={saveToken}>保存</button>
+    </div>
+    <p class="text-xs mt-2" style="color: var(--q-muted);">
+      服务端设置 QIANSI_TOKEN 后，所有接口都需要此令牌；跨站访问默认已被 CORS 拒绝。
+    </p>
+  </section>
+
 </div>
