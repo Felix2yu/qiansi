@@ -99,3 +99,19 @@ func TodayLocal() string {
 func DaysAgoLocal(n int) string {
 	return daysFromTodayLocal(-n)
 }
+
+// localDay 取一个时间串在本机时区里对应的那一天（YYYY-MM-DD）。
+//
+// created_at 之类是审计字段，按上面的约定存 UTC 带时区；把它当业务日期用时
+// 直接 substr 前 10 个字符会在东八区每天 00:00–08:00 把「今天建档」读成昨天，
+// 于是刚建的人第一天就被算成已经过了一档。没有时区后缀的老写法（纯本地时间）
+// 解析会失败，按字面日期取，不会又因转换错一天。
+func localDay(s string) string {
+	if len(s) < 10 {
+		return ""
+	}
+	if t, err := time.Parse(timeFormat, s); err == nil {
+		return t.Local().Format(dateFormat)
+	}
+	return s[:10]
+}
