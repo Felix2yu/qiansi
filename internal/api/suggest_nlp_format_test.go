@@ -233,10 +233,10 @@ func TestSuggestAllRules(t *testing.T) {
 		t.Fatalf("archive: %v", err)
 	}
 
-	// 2a. 太阳纪念日：今天（锚点年份任意）
+	// 2a. 太阳纪念日：今天（锚点年份任意，按年循环）
 	today := time.Now()
 	solarAnniv := &store.Anniversary{
-		PersonID: stale.ID, Title: "相识纪念",
+		PersonID: stale.ID, Title: "相识纪念", RepeatYearly: true,
 		Date: fmt.Sprintf("2000-%02d-%02d", int(today.Month()), today.Day()),
 	}
 	if err := st.AnniversaryCreate(ctx, solarAnniv); err != nil {
@@ -251,7 +251,7 @@ func TestSuggestAllRules(t *testing.T) {
 		back := lunar.LunarToSolar(lm, ld, now)
 		if back.Year == d.Year && back.Month == d.Month && back.Day == d.Day {
 			lunarAnniv = &store.Anniversary{
-				PersonID: stale.ID, Title: "农历忌日", IsLunar: true,
+				PersonID: stale.ID, Title: "农历忌日", IsLunar: true, RepeatYearly: true,
 				Date: fmt.Sprintf("2000-%02d-%02d", lm, ld),
 			}
 			break
@@ -264,7 +264,7 @@ func TestSuggestAllRules(t *testing.T) {
 	}
 	// 远期的不应出现（3 个月后）
 	farDate := time.Now().AddDate(0, 3, 0)
-	far := &store.Anniversary{PersonID: stale.ID, Title: "远期纪念",
+	far := &store.Anniversary{PersonID: stale.ID, Title: "远期纪念", RepeatYearly: true,
 		Date: fmt.Sprintf("2000-%02d-%02d", int(farDate.Month()), farDate.Day())}
 	if err := st.AnniversaryCreate(ctx, far); err != nil {
 		t.Fatalf("AnniversaryCreate far: %v", err)
