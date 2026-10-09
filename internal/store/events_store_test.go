@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -705,16 +706,17 @@ func TestEventStore_AnniversaryUpcomingLunarAndDismiss(t *testing.T) {
 	s := newTestStore(t)
 	today := qiansiLunar.NowLocal()
 
-	// 阳历：日期恰为明天，remind_days 里 1/3/7 中只有 0 和 1 落在今天之后
+	// 阳历：事件在明天，档位 7/3/1/0 里 1 档已经触发 → 只有一行，倒数按今天算是「还有 1 天」
 	p := evMustPerson(t, s, "小林")
 	tomorrow := today.AddDays(1)
 	solar := &Anniversary{PersonID: p.ID, Title: "相识", Date: tomorrow.String(), RepeatYearly: true, RemindDays: "7,3,1,0"}
 	if err := s.AnniversaryCreate(ctx, solar); err != nil {
 		t.Fatalf("create solar: %v", err)
 	}
-	// 农历：挑一个未来 30 天内可精确回换算的农历日，保证确定性
+	// 农历：在未来 7 天内找一个可精确回换算的农历日，保证确定性且档位已触发
 	lunarDate := qiansiLunar.YMD{}
-	for d := 1; d <= 30; d++ {
+	lunarDays := 0
+	for d := 1; d <= 7; d++ {
 		cand := today.AddDays(d)
 		lm, ld := qiansiLunar.SolarToLunar(cand)
 		if lm <= 0 || ld <= 0 {
@@ -722,13 +724,14 @@ func TestEventStore_AnniversaryUpcomingLunarAndDismiss(t *testing.T) {
 		}
 		if qiansiLunar.LunarToSolar(lm, ld, today) == cand {
 			lunarDate = qiansiLunar.YMD{Year: cand.Year, Month: lm, Day: ld}
+			lunarDays = d
 			break
 		}
 	}
 	if lunarDate.Year == 0 {
-		t.Skipf("找不到 30 天内可回换算的农历日")
+		t.Skipf("找不到 7 天内可回换算的农历日")
 	}
-	lunar := &Anniversary{Title: "农历生日", Date: lunarDate.String(), IsLunar: true, RemindDays: "0"}
+	lunar := &Anniversary{Title: "农历生日", Date: lunarDate.String(), IsLunar: true, RepeatYearly: true, RemindDays: "7,3,1,0"}
 	if err := s.AnniversaryCreate(ctx, lunar); err != nil {
 		t.Fatalf("create lunar: %v", err)
 	}
@@ -737,60 +740,61 @@ func TestEventStore_AnniversaryUpcomingLunarAndDismiss(t *testing.T) {
 	if err := s.AnniversaryCreate(ctx, dirty); err != nil {
 		t.Fatalf("create dirty: %v", err)
 	}
+	// 一次性纪念日（repeat_yearly=0）过了那天就结束，不该再滚到明年
+	oneOff := &Anniversary{Title: "已经过去的发布会", Date: today.AddDays(-1).String(), RepeatYearly: false, RemindDays: "0"}
+	if err := s.AnniversaryCreate(ctx, oneOff); err != nil {
+		t.Fatalf("create oneOff: %v", err)
+	}
 
 	list, err := s.AnniversaryUpcoming(ctx, 30)
 	if err != nil {
 		t.Fatalf("AnniversaryUpcoming: %v", err)
 	}
-	// solar: offset 0（明天）+ offset 1（今天）→ 2 条；lunar 1 条；dirty 0 条
-	if len(list) != 3 {
-		t.Fatalf("数量 = %d, 期望 3: %+v", len(list), list)
+	// solar 1 行 + lunar 1 行；dirty / oneOff 各 0 行
+	if len(list) != 2 {
+		t.Fatalf("数量 = %d, 期望 2: %+v", len(list), evReminderTitles(list))
 	}
-	var solarToday, solarTomorrow, lunarItem *Reminder
+	var solarRow, lunarRow *Reminder
 	for _, r := range list {
-		switch {
-		case r.RefID == solar.ID && r.DueAt[:10] == tomorrow.String():
-			solarTomorrow = r
-		case r.RefID == solar.ID && r.DueAt[:10] == today.String():
-			solarToday = r
-		case r.RefID == lunar.ID:
-			lunarItem = r
+		switch r.RefID {
+		case solar.ID:
+			solarRow = r
+		case lunar.ID:
+			lunarRow = r
 		}
 	}
-	if solarToday == nil || solarTomorrow == nil {
-		t.Fatalf("未按提前量生成提醒: %+v", list)
+	if solarRow == nil || lunarRow == nil {
+		t.Fatalf("未按档位生成提醒: %+v", evReminderTitles(list))
 	}
-	if solarTomorrow.Title == "" || solarTomorrow.RefType != "anniversary" || solarTomorrow.PersonName != "小林" {
-		t.Fatalf("衍生提醒字段不符: %+v", solarTomorrow)
+	if solarRow.RefType != "anniversary" || solarRow.PersonName != "小林" {
+		t.Fatalf("衍生提醒字段不符: %+v", solarRow)
 	}
-	if !strings.Contains(solarToday.Title, "还有 1 天") {
-		t.Fatalf("提前提醒标题不符: %s", solarToday.Title)
+	// 倒数按今天算，不是按档位；due_at 是事件日本身
+	if !strings.Contains(solarRow.Title, "还有 1 天") || solarRow.DueAt != tomorrow.String()+"T09:00:00" {
+		t.Fatalf("衍生提醒不符: %+v", solarRow)
 	}
-	if !strings.Contains(solarTomorrow.Title, "今天") {
-		t.Fatalf("当日提醒标题不符: %s", solarTomorrow.Title)
+	if solarRow.ID != "anniv:"+solar.ID+":"+tomorrow.String()+":1" {
+		t.Fatalf("衍生提醒 ID 结构不符: %s", solarRow.ID)
 	}
 	expectedLunar := qiansiLunar.LunarToSolar(lunarDate.Month, lunarDate.Day, today)
-	if lunarItem == nil || !strings.Contains(lunarItem.Title, "农历") || !strings.Contains(lunarItem.Title, expectedLunar.String()) {
-		t.Fatalf("农历换算不符: %+v 期望 %s", lunarItem, expectedLunar)
-	}
-	if solarTomorrow.ID != "anniv:"+solar.ID+":"+tomorrow.String()+":0" {
-		t.Fatalf("衍生提醒 ID 结构不符: %s", solarTomorrow.ID)
+	if !strings.Contains(lunarRow.Title, "农历") || !strings.Contains(lunarRow.Title, expectedLunar.String()) ||
+		!strings.Contains(lunarRow.Title, "还有 "+strconv.Itoa(lunarDays)+" 天") {
+		t.Fatalf("农历换算不符: %+v 期望 %s", lunarRow, expectedLunar)
 	}
 
-	// horizon=0 → 不设上限（cutoff 仅在 horizonDays>0 时生效），只应剔除过去的日期
-	refToday := qiansiLunar.NowLocal()
+	// horizon=0 → 不设上限，只应剔除提醒日还没到的
 	narrow, err := s.AnniversaryUpcoming(ctx, 0)
 	if err != nil {
 		t.Fatalf("horizon 0: %v", err)
 	}
 	for _, r := range narrow {
-		if r.DueAt[:10] < refToday.String() {
+		if r.DueAt[:10] < today.String() {
 			t.Fatalf("horizon=0 不应包含已过期的提醒: %+v", r)
 		}
 	}
 
-	// dismiss 当日这一次（occurrence = "<next>:<offset>"）
-	occ := tomorrow.String() + ":0"
+	// dismiss 当前这一档（occurrence = "<next>:<offset>"）
+	occ := tomorrow.String() + ":1"
 	if err := s.AnniversaryDismiss(ctx, solar.ID, occ); err != nil {
 		t.Fatalf("AnniversaryDismiss: %v", err)
 	}
@@ -807,13 +811,108 @@ func TestEventStore_AnniversaryUpcomingLunarAndDismiss(t *testing.T) {
 			t.Fatalf("dismiss 后仍出现该提醒")
 		}
 	}
-	if len(after) != 2 {
-		t.Fatalf("dismiss 后数量 = %d, 期望 2", len(after))
+	if len(after) != 1 {
+		t.Fatalf("dismiss 后数量 = %d, 期望 1: %+v", len(after), evReminderTitles(after))
 	}
 	// 重复 dismiss 同一 occurrence → INSERT OR IGNORE 不报错
 	if err := s.AnniversaryDismiss(ctx, solar.ID, occ); err != nil {
 		t.Fatalf("重复 dismiss: %v", err)
 	}
+}
+
+// 同一个生日（档位 7,3,1,0）在提醒日之前不该出现，出现之后只剩一行且倒数是真的。
+// 今天 10-09、生日 10-18 时推送里两条「还有 7 天 / 还有 3 天」都写错了天数，就是这里守的。
+func TestEventStore_AnniversaryUpcomingTierSchedule(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	today := qiansiLunar.NowLocal()
+
+	cases := []struct {
+		daysLeft  int
+		wantShown bool
+		wantWhen  string // 标题里应有的倒数
+		wantTier  int    // 应命中的档位
+	}{
+		{daysLeft: 9},                    // 最早的提前量（7 天）还没到
+		{daysLeft: 8},
+		{daysLeft: 7, wantShown: true, wantWhen: "还有 7 天", wantTier: 7},
+		{daysLeft: 5, wantShown: true, wantWhen: "还有 5 天", wantTier: 7}, // 7 档触发后一直留着，倒数走表
+		{daysLeft: 3, wantShown: true, wantWhen: "还有 3 天", wantTier: 3},
+		{daysLeft: 2, wantShown: true, wantWhen: "还有 2 天", wantTier: 3},
+		{daysLeft: 0, wantShown: true, wantWhen: "今天", wantTier: 0},
+	}
+	byDays := map[int]*Anniversary{}
+	for _, c := range cases {
+		a := &Anniversary{Title: "生日" + strconv.Itoa(c.daysLeft), Date: today.AddDays(c.daysLeft).String(),
+			RepeatYearly: true, RemindDays: "7,3,1,0"}
+		if err := s.AnniversaryCreate(ctx, a); err != nil {
+			t.Fatalf("create %d: %v", c.daysLeft, err)
+		}
+		byDays[c.daysLeft] = a
+	}
+
+	list, err := s.AnniversaryUpcoming(ctx, 30)
+	if err != nil {
+		t.Fatalf("AnniversaryUpcoming: %v", err)
+	}
+	for _, c := range cases {
+		var hits []*Reminder
+		for _, r := range list {
+			if r.RefID == byDays[c.daysLeft].ID {
+				hits = append(hits, r)
+			}
+		}
+		if !c.wantShown {
+			if len(hits) != 0 {
+				t.Errorf("还有 %d 天时不该出现: %+v", c.daysLeft, evReminderTitles(hits))
+			}
+			continue
+		}
+		if len(hits) != 1 {
+			t.Fatalf("还有 %d 天时应只有 1 行: %+v", c.daysLeft, evReminderTitles(hits))
+		}
+		r := hits[0]
+		if !strings.Contains(r.Title, c.wantWhen) {
+			t.Errorf("还有 %d 天时倒数应为 %q: %s", c.daysLeft, c.wantWhen, r.Title)
+		}
+		wantSuffix := ":" + strconv.Itoa(c.wantTier)
+		if !strings.HasSuffix(r.ID, wantSuffix) {
+			t.Errorf("还有 %d 天时应命中档位 %s: %s", c.daysLeft, wantSuffix, r.ID)
+		}
+	}
+
+	// horizon 卡的是「事件离今天多远」，与提醒日无关：
+	// 还有 9 天、但 10 天档早已触发的事件，7 天窗口里没有、30 天窗口里有。
+	later := &Anniversary{Title: "远期生日", Date: today.AddDays(9).String(), RepeatYearly: true, RemindDays: "10,0"}
+	if err := s.AnniversaryCreate(ctx, later); err != nil {
+		t.Fatalf("create later: %v", err)
+	}
+	for _, horizon := range []int{7, 30} {
+		seen := false
+		rows, err := s.AnniversaryUpcoming(ctx, horizon)
+		if err != nil {
+			t.Fatalf("horizon %d: %v", horizon, err)
+		}
+		for _, r := range rows {
+			if r.RefID == later.ID {
+				seen = true
+				if horizon == 30 && !strings.Contains(r.Title, "还有 9 天") {
+					t.Errorf("horizon 30 的倒数应为 9 天: %s", r.Title)
+				}
+			}
+		}
+		if want := horizon == 30; seen != want {
+			t.Errorf("horizon=%d 是否包含 9 天后的事件 = %v, 期望 %v", horizon, seen, want)
+		}
+	}
+}
+
+func evReminderTitles(list []*Reminder) []string {
+	out := []string{}
+	for _, r := range list {
+		out = append(out, r.ID+" "+r.Title+" "+r.DueAt)
+	}
+	return out
 }
 
 // ===== 承诺派生待办（M4） =====
@@ -1034,7 +1133,8 @@ func TestEventStore_ReminderUpcomingMergesAnniversaries(t *testing.T) {
 	if err := s.ReminderCreate(ctx, rem); err != nil {
 		t.Fatalf("ReminderCreate: %v", err)
 	}
-	ann := &Anniversary{Title: "生日", Date: today.AddDays(2).String(), RemindDays: "0"}
+	// 还有 2 天，档位 3 已触发 → 派生一行；due_at 是事件日，排在自定义提醒（08:00）之后
+	ann := &Anniversary{Title: "生日", Date: today.AddDays(2).String(), RepeatYearly: true, RemindDays: "3,0"}
 	if err := s.AnniversaryCreate(ctx, ann); err != nil {
 		t.Fatalf("AnniversaryCreate: %v", err)
 	}

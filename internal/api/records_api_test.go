@@ -716,9 +716,9 @@ func TestAPIRecords_AnniversaryReminderDismissFlow(t *testing.T) {
 	ts := newTestServer(t)
 	p := evAPIPerson(t, ts, "小林")
 
-	// 明天到期的纪念日（remind_days=0），horizon=7 应出现在 upcoming
+	// 明天到期的纪念日（remind_days=1,0 → 1 天档今天触发），horizon=7 应出现在 upcoming
 	rec := ts.do(http.MethodPost, "/api/v1/anniversaries/", map[string]any{
-		"title": "相识纪念日", "date": evAPIDate(1), "person_id": p, "remind_days": "0",
+		"title": "相识纪念日", "date": evAPIDate(1), "person_id": p, "remind_days": "1,0",
 	})
 	if rec.Code != 200 {
 		t.Fatalf("创建纪念日失败: %d %s", rec.Code, rec.Body.String())

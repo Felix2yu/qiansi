@@ -27,7 +27,9 @@ func (a *API) suggest() []Suggestion {
 	//
 	// 必须走 NextOccurrence 计算「下一次发生」：直接比较 date(a.date) 只在
 	// 建档当年命中一次，之后每年重复的纪念日再也不会出现在建议里。
-	if upcoming, err := a.Store.AnniversaryUpcoming(ctx, 7); err == nil {
+	// 用 AnniversarySoon 而不是 AnniversaryUpcoming —— 建议要前瞻，
+	// 待办那套「提醒档位到期才出现」的口径会把只设了当天提醒的日子整个漏掉。
+	if upcoming, err := a.Store.AnniversarySoon(ctx, 7); err == nil {
 		for _, r := range upcoming {
 			name := r.PersonName
 			out = append(out, Suggestion{

@@ -179,7 +179,7 @@ func (s *Store) DriftList(ctx context.Context, f DriftFilter) ([]*DriftPerson, e
 		days[t.Grade] = t.Days
 	}
 	rows, err := s.DB.QueryContext(ctx, driftContactCTE+`
-SELECT p.id,p.name,p.grade,COALESCE(contact.d,''),substr(p.created_at,1,10)
+SELECT p.id,p.name,p.grade,COALESCE(contact.d,''),p.created_at
 FROM live_people p LEFT JOIN contact ON contact.person_id=p.id
 WHERE p.archived=0`)
 	if err != nil {
@@ -193,9 +193,12 @@ WHERE p.archived=0`)
 	var found []row
 	for rows.Next() {
 		var r row
-		if err := rows.Scan(&r.id, &r.name, &r.grade, &r.last, &r.created); err != nil {
+		// created_at 是 UTC 审计字段，取本机那天而不是 substr 前 10 个字符
+		var created string
+		if err := rows.Scan(&r.id, &r.name, &r.grade, &r.last, &created); err != nil {
 			return nil, err
 		}
+		r.created = localDay(created)
 		found = append(found, r)
 	}
 	if err := rows.Err(); err != nil {

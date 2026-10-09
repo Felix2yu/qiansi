@@ -967,9 +967,11 @@ FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 }
 
 // ReminderUpcoming returns explicit reminders plus entries derived from
-// anniversaries (next solar occurrence within `horizonDays`), from open
-// promises whose due date has arrived or passed, and from the contact rhythm
-// (people whose 「多久该联系」 window has run out — see ContactUpcoming).
+// anniversaries (see AnniversaryUpcoming: a derived row appears once its
+// reminder day has arrived, then stays until the event passes or it is
+// dismissed), from open promises whose due date has arrived or passed,
+// and from the contact rhythm (people whose 「多久该联系」 window has run out
+// — see ContactUpcoming).
 //
 // 时间基准统一为本地时区（见 store.nowLocal 注释）；horizonDays<=0 表示不限。
 func (s *Store) ReminderUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
@@ -1017,82 +1019,139 @@ WHERE r.status='pending'`
 	return list, nil
 }
 
-// AnniversaryUpcoming returns Reminder-shaped entries for anniversaries whose
-// next occurrence (lunar→solar if is_lunar=true) falls within `horizonDays`.
+// anniversaryRow 是纪念日派生提醒所需的最小字段集。
+// 一次查询全取回再在内存里算：连接池上限是 1（db.SetMaxOpenConns(1)），
+// 查询期间再发起其它查询会互相等待造成死锁。
+type anniversaryRow struct {
+	id, personID, title, date, remindDays, personName string
+	isLunar, repeatYearly                             bool
+}
+
+func (s *Store) anniversaryRows(ctx context.Context) ([]anniversaryRow, error) {
+	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,p.name
+FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	raw := []anniversaryRow{}
+	for rows.Next() {
+		var anID, personID, title, date, remindDays, personName sql.NullString
+		var isLunar, repeatYearly bool
+		if err := rows.Scan(&anID, &personID, &title, &date, &isLunar, &repeatYearly, &remindDays, &personName); err != nil {
+			return nil, err
+		}
+		raw = append(raw, anniversaryRow{anID.String, personID.String, title.String, date.String, remindDays.String, personName.String, isLunar, repeatYearly})
+	}
+	if err := rows.Err(); err != nil { return nil, err }
+	rows.Close()
+	return raw, nil
+}
+
+// anniversaryOccurrence 返回纪念日下一次发生的日期与距今天数，以及这次发生还作不作数。
+//
+// 不逐年循环的纪念日过了当天就结束：原先无条件走 NextOccurrence，
+// 会把一次性的 2026-03-01 在明年同一天再提醒一遍。
+func anniversaryOccurrence(a anniversaryRow, today qiansiLunar.YMD) (qiansiLunar.YMD, int, bool) {
+	if a.date == "" || a.title == "" { return qiansiLunar.YMD{}, 0, false }
+	anchor := qiansiLunar.ParseDate(a.date)
+	if anchor.Year == 0 || anchor.Month < 1 || anchor.Day < 1 { return qiansiLunar.YMD{}, 0, false }
+	next := anchor
+	if a.repeatYearly {
+		next = qiansiLunar.NextOccurrence(anchor, a.isLunar, today)
+	}
+	if next.Before(today) { return qiansiLunar.YMD{}, 0, false }
+	return next, qiansiLunar.DaysBetween(today, next), true
+}
+
+// anniversaryLabel 生成「标题（下一次发生日期[ 农历]，还有 N 天|今天）」。
+// 倒数一律按今天算：按提前档位算出来的「还有 7 天」只有在提醒日当天才成立，
+// 10-09 推一条「还有 7 天」（其实还有 9 天）是自我矛盾的。
+func anniversaryLabel(a anniversaryRow, next qiansiLunar.YMD, daysLeft int) string {
+	typeTag := ""
+	if a.isLunar { typeTag = " 农历" }
+	when := "今天"
+	if daysLeft > 0 { when = "还有 " + strconv.Itoa(daysLeft) + " 天" }
+	return a.title + "（" + next.String() + typeTag + "，" + when + "）"
+}
+
+// arrivedTier 取最近触发的那一档：提前量升序里第一个 >= daysLeft 的，
+// 即提醒日已经到了、且离今天最近的一档。
+// 返回 false 表示所有提前量都还没到 —— 这一行今天不该出现在待办里。
+func arrivedTier(remindDays string, daysLeft int) (int, bool) {
+	offsets := qiansiLunar.RemindDates(remindDays)
+	if len(offsets) == 0 { offsets = []int{0} }
+	for _, o := range offsets {
+		if o >= daysLeft { return o, true }
+	}
+	return 0, false
+}
+
+// AnniversaryUpcoming 为「提醒日已经到了」的纪念日各生成一条待办：
+// 提前档位（remind_days）只决定这一行**从哪一天开始出现**，
+// 出现之后一直留在待办里，直到本次纪念日过了或被勾掉。
+//
+// 同一 occurrence 只显示最新触发的那一档（提前量最小的），所以一个生日
+// 在摘要和今日页里始终只有一行；勾掉当前这档，下一档到自己的提醒日再出现。
 //
 // 已经「完成」过的本次提醒（anniversary_dismiss）会被跳过，
 // 否则用户在今日页勾掉纪念日后，刷新又会原样出现。
+//
+// horizonDays 约束的是**事件本身离今天多远**（摘要「近 7 天待办」的口径），
+// 与提醒日无关；horizonDays<=0 表示不限。
 func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
 	today := qiansiLunar.NowLocal()
-	cutoff := today.AddDays(horizonDays)
-	// 注意：连接池上限是 1（db.SetMaxOpenConns(1)），查询期间不能再发起其它查询，
-	// 否则会互相等待造成死锁。这里先把结果全部读进内存并关闭 rows，再做后续计算。
-	type annivRow struct {
-		id, personID, title, date, remindDays, personName string
-		isLunar                                           bool
-	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.remind_days,p.name
-FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
+	raw, err := s.anniversaryRows(ctx)
 	if err != nil { return nil, err }
-	raw := []annivRow{}
-	for rows.Next() {
-		var anID, personID, title, date, remindDays, personName sql.NullString
-		var isLunar bool
-		if err := rows.Scan(&anID, &personID, &title, &date, &isLunar, &remindDays, &personName); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		raw = append(raw, annivRow{anID.String, personID.String, title.String, date.String, remindDays.String, personName.String, isLunar})
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
-
 	dismissed := s.dismissedOccurrences(ctx)
 	list := []*Reminder{}
 	for _, a := range raw {
-		if a.date == "" || a.title == "" { continue }
-		anID, personID, title, date, remindDays, personName :=
-			sql.NullString{String: a.id, Valid: a.id != ""},
-			sql.NullString{String: a.personID, Valid: a.personID != ""},
-			sql.NullString{String: a.title, Valid: true},
-			sql.NullString{String: a.date, Valid: true},
-			sql.NullString{String: a.remindDays, Valid: a.remindDays != ""},
-			sql.NullString{String: a.personName, Valid: a.personName != ""}
-		isLunar := a.isLunar
-		anchor := qiansiLunar.ParseDate(date.String)
-		next := qiansiLunar.NextOccurrence(anchor, isLunar, today)
-		offsets := qiansiLunar.RemindDates(remindDays.String)
-		if len(offsets) == 0 { offsets = []int{0} }
-		for _, offset := range offsets {
-			rd := next.AddDays(-offset)
-			if rd.Before(today) { continue }
-			if horizonDays > 0 && cutoff.Before(rd) { continue }
-			// 本次发生 + 提前量构成唯一的一次提醒
-			occurrence := next.String() + ":" + strconv.Itoa(offset)
-			if dismissed[anID.String+"|"+occurrence] { continue }
-			personIDStr := ""
-			if personID.Valid { personIDStr = personID.String }
-			pn := ""
-			if personName.Valid { pn = personName.String }
-			typeTag := ""
-			if isLunar { typeTag = " 农历" }
-			whenTag := ""
-			if offset > 0 { whenTag = "，还有 " + strconv.Itoa(offset) + " 天" } else { whenTag = "，今天" }
-			r := &Reminder{
-				ID:         "anniv:" + anID.String + ":" + occurrence,
-				PersonID:   personIDStr,
-				RefType:    "anniversary",
-				RefID:      anID.String,
-				Title:      title.String + "（" + next.String() + typeTag + whenTag + "）",
-				DueAt:      rd.String() + "T09:00:00",
-				Status:     "pending",
-				PersonName: pn,
-			}
-			list = append(list, r)
-		}
+		next, daysLeft, ok := anniversaryOccurrence(a, today)
+		if !ok { continue }
+		if horizonDays > 0 && daysLeft > horizonDays { continue }
+		offset, fired := arrivedTier(a.remindDays, daysLeft)
+		if !fired { continue }
+		// 本次发生 + 提前量构成唯一的一次提醒
+		occurrence := next.String() + ":" + strconv.Itoa(offset)
+		if dismissed[a.id+"|"+occurrence] { continue }
+		list = append(list, &Reminder{
+			ID:         "anniv:" + a.id + ":" + occurrence,
+			PersonID:   a.personID,
+			RefType:    "anniversary",
+			RefID:      a.id,
+			Title:      anniversaryLabel(a, next, daysLeft),
+			DueAt:      next.String() + "T09:00:00",
+			Status:     "pending",
+			PersonName: a.personName,
+		})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
+	return list, nil
+}
+
+// AnniversarySoon 列出 days 天内（含今天）要发生的纪念日，供首页「纪念日临近」建议使用。
+//
+// 它和 AnniversaryUpcoming 是两种口径，不能合用：建议是前瞻视角
+// （这周有谁的日子，该准备了），与用户设的提前档位无关；
+// 待办才是「档位到期才推、推了就该办」。
+// 用后者的话，只设了「当天提醒」的纪念日在建议里会彻底消失。
+func (s *Store) AnniversarySoon(ctx context.Context, days int) ([]*Reminder, error) {
+	today := qiansiLunar.NowLocal()
+	raw, err := s.anniversaryRows(ctx)
+	if err != nil { return nil, err }
+	list := []*Reminder{}
+	for _, a := range raw {
+		next, daysLeft, ok := anniversaryOccurrence(a, today)
+		if !ok { continue }
+		if days > 0 && daysLeft > days { continue }
+		list = append(list, &Reminder{
+			ID:         "anniv:" + a.id + ":" + next.String(),
+			PersonID:   a.personID,
+			RefType:    "anniversary",
+			RefID:      a.id,
+			Title:      anniversaryLabel(a, next, daysLeft),
+			DueAt:      next.String() + "T09:00:00",
+			Status:     "pending",
+			PersonName: a.personName,
+		})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i].DueAt < list[j].DueAt })
 	return list, nil

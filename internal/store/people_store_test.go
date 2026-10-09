@@ -156,6 +156,31 @@ func TestStoreTodayLocalAndDaysAgoLocal(t *testing.T) {
 	if got := nowUTC(); !strings.HasSuffix(got, "Z") {
 		t.Errorf("nowUTC 应为 UTC 带时区写法，得到 %q", got)
 	}
+
+	// localDay：审计字段（UTC）当业务日期用时必须先转本机时区。
+	// 东八区 00:00–08:00 建档的人，substr 取到的是昨天的 UTC 日期。
+	dayCases := []struct {
+		name, in, want string
+	}{
+		{"纯本地写法", "2026-10-09T01:05:00", "2026-10-09"},
+		{"只要日期", "2026-10-09", "2026-10-09"},
+		{"空串", "", ""},
+		{"残缺", "2026-1", ""},
+	}
+	for _, tc := range dayCases {
+		if got := localDay(tc.in); got != tc.want {
+			t.Errorf("localDay(%q) [%s] = %q, 期望 %q", tc.in, tc.name, got, tc.want)
+		}
+	}
+	// 用本机时区反推 UTC 串，断言与 CI 所在时区无关：
+	// 东八区下这个串的日期前缀是昨天（substr 会读错一天），localDay 必须给回今天。
+	ref := time.Date(2026, 10, 9, 0, 5, 0, 0, time.Local)
+	if got, want := localDay(ref.UTC().Format(timeFormat)), "2026-10-09"; got != want {
+		t.Errorf("localDay(%q) = %q, 期望 %q", ref.UTC().Format(timeFormat), got, want)
+	}
+	if got := localDay(nowUTC()); got != TodayLocal() {
+		t.Errorf("localDay(nowUTC()) = %q，应等于今天 %q（此刻建档不该是昨天）", got, TodayLocal())
+	}
 }
 
 // ===== Settings =====
