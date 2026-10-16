@@ -536,11 +536,12 @@
     <div class="mt-5 pt-5 border-t" style="border-color: var(--q-border);">
       <h3 class="text-xs font-medium mb-2.5" style="color: var(--q-muted);">定时自动备份</h3>
       {#if auto}
+        {@const status = auto}
         <div class="space-y-3">
           <!-- 开关 + 概览 -->
           <div class="flex flex-wrap items-center gap-3">
             <label class="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" bind:checked={auto.schedule.enabled} class="w-4 h-4 accent-indigo-500" />
+              <input type="checkbox" bind:checked={status.schedule.enabled} class="w-4 h-4 accent-indigo-500" />
               {auto.schedule.enabled ? '已开启' : '已关闭'}
             </label>
             <span class="text-xs" style="color: var(--q-muted);">{auto.label}</span>
@@ -554,7 +555,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
               周期
-              <select bind:value={auto.schedule.frequency} aria-label="备份周期"
+              <select bind:value={status.schedule.frequency} aria-label="备份周期"
                       class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
                 <option value="daily">每日</option>
                 <option value="weekly">每周</option>
@@ -565,7 +566,7 @@
             {#if auto.schedule.frequency === 'weekly'}
               <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
                 星期
-                <select bind:value={auto.schedule.weekday} aria-label="星期"
+                <select bind:value={status.schedule.weekday} aria-label="星期"
                         class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);">
                   {#each WEEKDAYS as w}
                     <option value={w.v}>周{w.n}</option>
@@ -577,20 +578,20 @@
             {#if auto.schedule.frequency === 'custom'}
               <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
                 间隔（分钟）
-                <input type="number" min={1} max={43200} bind:value={auto.schedule.every_min} aria-label="自定义间隔（分钟）"
+                <input type="number" min={1} max={43200} bind:value={status.schedule.every_min} aria-label="自定义间隔（分钟）"
                        class="w-24 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
               </label>
             {:else}
               <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
                 时间
-                <input type="time" bind:value={auto.schedule.at} aria-label="执行时间"
+                <input type="time" bind:value={status.schedule.at} aria-label="执行时间"
                        class="px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
               </label>
             {/if}
 
             <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
               保留
-              <input type="number" min={1} max={200} bind:value={auto.schedule.keep} aria-label="保留份数"
+              <input type="number" min={1} max={200} bind:value={status.schedule.keep} aria-label="保留份数"
                      class="w-20 px-2 py-1.5 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);" />
               份
             </label>
