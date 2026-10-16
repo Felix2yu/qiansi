@@ -51,8 +51,9 @@ updates:
     # 与 preset 同步：typescript 的 major 不提 PR。web 的 typescript@~6 是 JS 编译器 API 宿主，
     # svelte-check 与 vite 插件链 require 它（本工程是 Svelte SPA，没有 svelte-kit sync，
     # 也没装 typescript-eslint），直接换成 7 会让 svelte-check 命中自身版本守卫、
-    # 报出「需要同时装 TS7 与 TS6」的错误。TS7 已按「~6 宿主 + @typescript/native 别名 +
-    # svelte-check --tsgo」这套装着，见 docs/dependabot.md 第六节
+    # 报出「需要同时装 TS7 与 TS6」的错误。本仓库只走 svelte-check 的默认路径，不装
+    # @typescript/native 别名、不用 --tsgo（那条路在兄弟仓库实测会静默空转），
+    # 理由与实测见 docs/dependabot.md 第六节
     ignore:
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
