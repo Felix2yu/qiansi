@@ -1,187 +1,252 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api'
-  import { loadSelf } from '../lib/self.svelte'
-  import PersonPicker from '../lib/PersonPicker.svelte'
-  import { Plus, X, Check } from '@lucide/svelte'
-  import { toast } from '../lib/toast.svelte'
-  import { ask } from '../lib/ask.svelte'
-  import { RECOVER_NOTE, trashOne } from '../lib/trash'
-  import { completeReminder } from '../lib/reminderActions'
+  import { onMount } from 'svelte';
+  import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api';
+  import { loadSelf } from '../lib/self.svelte';
+  import PersonPicker from '../lib/PersonPicker.svelte';
+  import { Plus, X, Check } from '@lucide/svelte';
+  import { toast } from '../lib/toast.svelte';
+  import { ask } from '../lib/ask.svelte';
+  import { RECOVER_NOTE, trashOne } from '../lib/trash';
+  import { completeReminder } from '../lib/reminderActions';
 
-  let list = $state<Reminder[]>([])
-  let showDone = $state(false)
-  let showForm = $state(false)
-  let editId = $state('')
-  let form = $state(emptyForm())
+  let list = $state<Reminder[]>([]);
+  let showDone = $state(false);
+  let showForm = $state(false);
+  let editId = $state('');
+  let form = $state(emptyForm());
   // 编辑时把待办自带的名字交给选人控件显示，省一次回查
-  let pickedName = $state('')
+  let pickedName = $state('');
 
   function emptyForm() {
-    return { title: '', due_at: todayLocal(), person_id: '', status: 'pending' }
+    return { title: '', due_at: todayLocal(), person_id: '', status: 'pending' };
   }
 
   // 后端按本地时间比较 due_at，这里不能再拼 UTC 的 Z，否则会整体偏移一天
   async function load() {
-    list = await API.get<Reminder[]>(`/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`)
-      .catch((err: any) => {
-        toast.fail('加载失败', err)
-        return [] as Reminder[]
-      }) || []
+    list =
+      (await API.get<Reminder[]>(
+        `/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`
+      ).catch((err: any) => {
+        toast.fail('加载失败', err);
+        return [] as Reminder[];
+      })) || [];
   }
   onMount(() => {
-    loadSelf()
-    load()
-  })
+    loadSelf();
+    load();
+  });
 
   function openCreate() {
-    editId = ''
-    form = emptyForm()
-    pickedName = ''
-    showForm = true
+    editId = '';
+    form = emptyForm();
+    pickedName = '';
+    showForm = true;
   }
 
   // 派生待办（纪念日、承诺、联系节奏）不在 reminders 表里，id 是合成串：
   // 改与删都要回到各自的来源页，否则 PUT/DELETE 打在不存在的行上假装成功。
   function derivedNotice(r: Reminder, action: '改' | '删'): string {
-    if (r.id.startsWith('anniv:')) return `纪念日自动生成的提醒请到「纪念日」里${action}`
-    if (r.id.startsWith('promise:')) return `到期承诺自动生成的待办请到「对话」里${action}`
-    if (r.id.startsWith('contact:')) return action === '改'
-      ? '这条按联系节奏自动生成，要改节奏请去「设置 · 联系节奏」'
-      : '这条按联系节奏自动生成，勾掉（记一次「联系过了」）它就不再催'
-    return ''
+    if (r.id.startsWith('anniv:')) return `纪念日自动生成的提醒请到「纪念日」里${action}`;
+    if (r.id.startsWith('promise:')) return `到期承诺自动生成的待办请到「对话」里${action}`;
+    if (r.id.startsWith('contact:'))
+      return action === '改'
+        ? '这条按联系节奏自动生成，要改节奏请去「设置 · 联系节奏」'
+        : '这条按联系节奏自动生成，勾掉（记一次「联系过了」）它就不再催';
+    return '';
   }
 
   function openEdit(r: Reminder) {
-    const notice = derivedNotice(r, '改')
-    if (notice) { toast.info(notice); return }
-    editId = r.id
-    pickedName = r.person_name || ''
-    form = {
-      title: r.title, due_at: (r.due_at || '').slice(0, 10),
-      person_id: r.person_id || '', status: r.status || 'pending',
+    const notice = derivedNotice(r, '改');
+    if (notice) {
+      toast.info(notice);
+      return;
     }
-    showForm = true
+    editId = r.id;
+    pickedName = r.person_name || '';
+    form = {
+      title: r.title,
+      due_at: (r.due_at || '').slice(0, 10),
+      person_id: r.person_id || '',
+      status: r.status || 'pending'
+    };
+    showForm = true;
   }
 
   async function submit() {
-    if (!form.title.trim() || !form.due_at) { toast.error('内容和日期必填'); return }
-    const body: any = { ...form, due_at: form.due_at + 'T09:00:00' }
-    if (!body.person_id) delete body.person_id
-    const isEdit = !!editId
-    try {
-      if (isEdit) await API.put(`/api/v1/reminders/${editId}`, body)
-      else await API.post('/api/v1/reminders', body)
-    } catch (err: any) {
-      toast.fail('保存失败', err)
-      return
+    if (!form.title.trim() || !form.due_at) {
+      toast.error('内容和日期必填');
+      return;
     }
-    showForm = false
-    editId = ''
-    toast.ok(isEdit ? '已更新' : '已添加待办')
-    await load()
+    const body: any = { ...form, due_at: form.due_at + 'T09:00:00' };
+    if (!body.person_id) delete body.person_id;
+    const isEdit = !!editId;
+    try {
+      if (isEdit) await API.put(`/api/v1/reminders/${editId}`, body);
+      else await API.post('/api/v1/reminders', body);
+    } catch (err) {
+      toast.fail('保存失败', err);
+      return;
+    }
+    showForm = false;
+    editId = '';
+    toast.ok(isEdit ? '已更新' : '已添加待办');
+    await load();
   }
 
   // 按时间分区：逾期 / 今天 / 未来，避免逾期项与近期项混排后失去优先级
-  const today = $derived(todayLocal())
+  const today = $derived(todayLocal());
   const groups = $derived.by(() => {
-    if (showDone) return [{ key: 'done', label: '已完成', items: list }]
-    const overdue: Reminder[] = [], dueToday: Reminder[] = [], upcoming: Reminder[] = []
+    if (showDone) return [{ key: 'done', label: '已完成', items: list }];
+    const overdue: Reminder[] = [],
+      dueToday: Reminder[] = [],
+      upcoming: Reminder[] = [];
     for (const r of list) {
-      const d = (r.due_at || '').slice(0, 10)
-      if (d && d < today) overdue.push(r)
-      else if (d === today) dueToday.push(r)
-      else upcoming.push(r)
+      const d = (r.due_at || '').slice(0, 10);
+      if (d && d < today) overdue.push(r);
+      else if (d === today) dueToday.push(r);
+      else upcoming.push(r);
     }
     return [
       { key: 'overdue', label: '已逾期', items: overdue },
       { key: 'today', label: '今天', items: dueToday },
-      { key: 'upcoming', label: '之后', items: upcoming },
-    ].filter(g => g.items.length > 0)
-  })
+      { key: 'upcoming', label: '之后', items: upcoming }
+    ].filter((g) => g.items.length > 0);
+  });
 
   function overdueDays(r: Reminder) {
-    const d = (r.due_at || '').slice(0, 10)
-    if (!d) return 0
-    const diff = Math.floor((new Date(today).getTime() - new Date(d).getTime()) / 86400000)
-    return diff > 0 ? diff : 0
+    const d = (r.due_at || '').slice(0, 10);
+    if (!d) return 0;
+    const diff = Math.floor((new Date(today).getTime() - new Date(d).getTime()) / 86400000);
+    return diff > 0 ? diff : 0;
   }
 
   // PUT 是全量更新，必须带上原对象的其他字段，否则会被置空
   function restore(r: Reminder) {
-    return API.put(`/api/v1/reminders/${r.id}`, { ...r, status: 'pending', completed_at: '' })
+    return API.put(`/api/v1/reminders/${r.id}`, { ...r, status: 'pending', completed_at: '' });
   }
 
   // 派生待办的「完成」写的是来源记录（承诺兑现 / 关闭本次提醒 / 联系打卡），
   // 这里没有对应的反向接口，所以不给撤销按钮，只指路
   function isDerived(r: Reminder) {
-    return r.id.startsWith('anniv:') || r.id.startsWith('promise:') || r.id.startsWith('contact:')
+    return r.id.startsWith('anniv:') || r.id.startsWith('promise:') || r.id.startsWith('contact:');
   }
 
   async function done(r: Reminder) {
-    await completeReminder(r, load)
+    await completeReminder(r, load);
   }
 
   async function undo(r: Reminder) {
     try {
-      await restore(r)
-      toast.ok('已改为未完成')
-      await load()
-    } catch (err: any) {
-      toast.fail('操作失败', err)
+      await restore(r);
+      toast.ok('已改为未完成');
+      await load();
+    } catch (err) {
+      toast.fail('操作失败', err);
     }
   }
 
   async function remove(r: Reminder) {
-    const notice = derivedNotice(r, '删')
-    if (notice) { toast.info(notice); return }
-    if (!(await ask({ title: '删除这条待办？', detail: RECOVER_NOTE, danger: true, confirmLabel: '删除' }))) return
-    await trashOne('reminder', r.id, load, '已删除')
+    const notice = derivedNotice(r, '删');
+    if (notice) {
+      toast.info(notice);
+      return;
+    }
+    if (
+      !(await ask({
+        title: '删除这条待办？',
+        detail: RECOVER_NOTE,
+        danger: true,
+        confirmLabel: '删除'
+      }))
+    )
+      return;
+    await trashOne('reminder', r.id, load, '已删除');
   }
 </script>
+
 <div class="space-y-4">
   <header class="flex items-center justify-between">
-    <div><h1 class="text-2xl font-semibold">待办</h1><p class="text-sm mt-1" style="color: var(--q-muted);">自定义 & 自动生成</p></div>
-    <button class="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={openCreate}>
+    <div>
+      <h1 class="text-2xl font-semibold">待办</h1>
+      <p class="mt-1 text-sm" style="color: var(--q-muted);">自定义 & 自动生成</p>
+    </div>
+    <button
+      class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
+      style="background: var(--q-theme);"
+      onclick={openCreate}
+    >
       <Plus size={14} /> 新建
     </button>
   </header>
   <div class="flex items-center gap-3">
-    <label class="text-sm flex items-center gap-2" style="color: var(--q-muted);">
+    <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
       <input type="checkbox" bind:checked={showDone} onchange={() => load()} /> 查看已完成
     </label>
   </div>
   {#if groups.length === 0}
-    <div class="text-center py-8 text-sm" style="color: var(--q-muted);">{showDone ? '还没有已完成的待办' : '没有待办 🎉'}</div>
+    <div class="py-8 text-center text-sm" style="color: var(--q-muted);">
+      {showDone ? '还没有已完成的待办' : '没有待办 🎉'}
+    </div>
   {:else}
-    {#each groups as g}
+    {#each groups as g, i (i)}
       <section class="space-y-2">
-        <h2 class="text-xs font-medium flex items-center gap-2" style="color: {g.key === 'overdue' ? '#ef4444' : 'var(--q-muted)'};">
+        <h2
+          class="flex items-center gap-2 text-xs font-medium"
+          style="color: {g.key === 'overdue' ? '#ef4444' : 'var(--q-muted)'};"
+        >
           {g.label}
-          <span class="px-1.5 rounded-full" style="background: var(--q-surface); border: 1px solid var(--q-border);">{g.items.length}</span>
+          <span
+            class="rounded-full px-1.5"
+            style="background: var(--q-surface); border: 1px solid var(--q-border);"
+            >{g.items.length}</span
+          >
         </h2>
         <ul class="space-y-2">
-          {#each g.items as r}
-            <li class="rounded-lg p-3 flex items-center gap-3" style="background: var(--q-surface); border: 1px solid var(--q-border);">
+          {#each g.items as r (r.id)}
+            <li
+              class="flex items-center gap-3 rounded-lg p-3"
+              style="background: var(--q-surface); border: 1px solid var(--q-border);"
+            >
               {#if r.status === 'pending'}
-                <button class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" onclick={() => done(r)} style="border-color: var(--q-border);" title="标记完成">
+                <button
+                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
+                  onclick={() => done(r)}
+                  style="border-color: var(--q-border);"
+                  title="标记完成"
+                >
                   <Check size={14} style="color: var(--q-muted);" />
                 </button>
               {:else if isDerived(r)}
                 <!-- 派生待办完成了就是来源记录定了论，这里点不回，按钮留着只会报错 -->
-                <span class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" style="border-color: var(--q-border); color: var(--q-muted);"><Check size={14} /></span>
+                <span
+                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
+                  style="border-color: var(--q-border); color: var(--q-muted);"
+                  ><Check size={14} /></span
+                >
               {:else}
-                <button class="w-6 h-6 rounded-md border flex items-center justify-center shrink-0" onclick={() => undo(r)} style="border-color: var(--q-border);" title="撤销完成">↩</button>
+                <button
+                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
+                  onclick={() => undo(r)}
+                  style="border-color: var(--q-border);"
+                  title="撤销完成">↩</button
+                >
               {/if}
-              <div class="flex-1 min-w-0">
+              <div class="min-w-0 flex-1">
                 <div class="text-sm">{r.title}</div>
-                <div class="text-xs mt-0.5" style="color: var(--q-muted);">
-                  {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name && ' · ' + r.person_name} · {new Date(r.due_at).toLocaleDateString()}
+                <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
+                  {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name && ' · ' + r.person_name} ·
+                  {new Date(r.due_at).toLocaleDateString()}
                   {#if g.key === 'overdue'}· 已逾期 {overdueDays(r)} 天{/if}
                 </div>
               </div>
-              <button class="text-xs px-2 py-1 rounded" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => openEdit(r)}>编辑</button>
-              <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(r)}>删</button>
+              <button
+                class="rounded px-2 py-1 text-xs"
+                style="background: var(--q-bg); border: 1px solid var(--q-border);"
+                onclick={() => openEdit(r)}>编辑</button
+              >
+              <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(r)}
+                >删</button
+              >
             </li>
           {/each}
         </ul>
@@ -192,17 +257,62 @@
 
 {#if showForm}
   <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button type="button" aria-label="关闭弹窗" class="absolute inset-0 cursor-default" style="background: rgba(0,0,0,0.3); border: 0;" onclick={() => { showForm = false; editId = '' }}></button>
-    <div class="relative w-full max-w-lg rounded-2xl p-5" style="background: var(--q-surface); border: 1px solid var(--q-border);">
-      <div class="flex items-center justify-between mb-4"><h2 class="font-semibold">{editId ? '编辑待办' : '新建待办'}</h2><button onclick={() => { showForm = false; editId = '' }}><X size={18} /></button></div>
-      <div class="space-y-3">
-        <input bind:value={form.title} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" placeholder="待办内容" />
-        <input type="date" bind:value={form.due_at} class="w-full px-3 py-2 rounded-lg text-sm outline-none" style="background: var(--q-bg); border: 1px solid var(--q-border);" />
-        <PersonPicker bind:value={form.person_id} selectedName={pickedName} placeholder="关联联系人（可选）" />
+    <button
+      type="button"
+      aria-label="关闭弹窗"
+      class="absolute inset-0 cursor-default"
+      style="background: rgba(0,0,0,0.3); border: 0;"
+      onclick={() => {
+        showForm = false;
+        editId = '';
+      }}
+    ></button>
+    <div
+      class="relative w-full max-w-lg rounded-2xl p-5"
+      style="background: var(--q-surface); border: 1px solid var(--q-border);"
+    >
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="font-semibold">{editId ? '编辑待办' : '新建待办'}</h2>
+        <button
+          onclick={() => {
+            showForm = false;
+            editId = '';
+          }}><X size={18} /></button
+        >
       </div>
-      <div class="flex justify-end gap-2 mt-5">
-        <button class="px-4 py-2 rounded-lg text-sm" style="background: var(--q-bg); border: 1px solid var(--q-border);" onclick={() => { showForm = false; editId = '' }}>取消</button>
-        <button class="px-4 py-2 rounded-lg text-sm text-white" style="background: var(--q-theme);" onclick={submit}>保存</button>
+      <div class="space-y-3">
+        <input
+          bind:value={form.title}
+          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style="background: var(--q-bg); border: 1px solid var(--q-border);"
+          placeholder="待办内容"
+        />
+        <input
+          type="date"
+          bind:value={form.due_at}
+          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
+          style="background: var(--q-bg); border: 1px solid var(--q-border);"
+        />
+        <PersonPicker
+          bind:value={form.person_id}
+          selectedName={pickedName}
+          placeholder="关联联系人（可选）"
+        />
+      </div>
+      <div class="mt-5 flex justify-end gap-2">
+        <button
+          class="rounded-lg px-4 py-2 text-sm"
+          style="background: var(--q-bg); border: 1px solid var(--q-border);"
+          onclick={() => {
+            showForm = false;
+            editId = '';
+          }}>取消</button
+        >
+        <button
+          class="rounded-lg px-4 py-2 text-sm text-white"
+          style="background: var(--q-theme);"
+          onclick={submit}>保存</button
+        >
       </div>
     </div>
   </div>

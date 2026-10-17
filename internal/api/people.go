@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -225,20 +224,6 @@ func (a *API) peopleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, p)
-}
-
-// purgePerson 真删除一个人：头像文件与关联记录一并清掉，靠外键级联收尾。
-// 只有回收站的「彻底删除」走这里；普通的删除是软删除，什么都不能碰。
-func (a *API) purgePerson(ctx context.Context, id string) error {
-	atts, err := a.Store.PersonDetachAttachments(ctx, id)
-	if err != nil {
-		return err
-	}
-	if err := a.Store.PersonPurge(ctx, id); err != nil {
-		return err
-	}
-	a.removeAttachmentFiles(ctx, atts)
-	return nil
 }
 
 // peopleDelete 把联系人收进回收站：只置 deleted_at。

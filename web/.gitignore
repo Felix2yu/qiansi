@@ -1,0 +1,4 @@
+# 前端工程内的局部忽略；仓库根 .gitignore 已覆盖全局项
+node_modules/
+dist/
+.svelte-check/

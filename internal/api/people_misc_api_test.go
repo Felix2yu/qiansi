@@ -45,8 +45,8 @@ func apiNames(t *testing.T, list []any) map[string]bool {
 	return out
 }
 
-// relById 从关系列表里按 id 取一条，取不到直接失败。
-func relById(t *testing.T, list []any, id string) map[string]any {
+// relByID 从关系列表里按 id 取一条，取不到直接失败。
+func relByID(t *testing.T, list []any, id string) map[string]any {
 	t.Helper()
 	for _, it := range list {
 		if m, ok := it.(map[string]any); ok && m["id"] == id {
@@ -694,7 +694,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	}), http.StatusConflict, "已经有同名的关系")
 
 	// 更新：改类型与备注，id 与两端不变
-	created := relById(t, current, rid)["created_at"].(string)
+	created := relByID(t, current, rid)["created_at"].(string)
 	apiWantStatus(t, http.MethodPut, "rel update", s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "老同事", "remark": "同组",
 	}), http.StatusOK)
@@ -702,7 +702,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	if len(upd) != 2 {
 		t.Fatalf("更新后条数 = %d: %v", len(upd), upd)
 	}
-	u0 := relById(t, upd, rid)
+	u0 := relByID(t, upd, rid)
 	if u0["type"] != "老同事" || u0["remark"] != "同组" {
 		t.Fatalf("更新未生效: %v", u0)
 	}
@@ -713,7 +713,7 @@ func TestAPIPeopleRelationships(t *testing.T) {
 	s.do(http.MethodPut, "/api/v1/relationships/"+rid, map[string]any{
 		"from_person_id": a, "to_person_id": b, "type": "老同事",
 	})
-	if got := relById(t, apiArray(s, "/api/v1/relationships/of/"+a), rid); got["remark"] != nil {
+	if got := relByID(t, apiArray(s, "/api/v1/relationships/of/"+a), rid); got["remark"] != nil {
 		t.Fatalf("空备注应为 nil: %v", got)
 	}
 	// 更新同样走校验

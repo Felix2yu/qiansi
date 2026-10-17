@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
-import tailwindcss from '@tailwindcss/vite'
-import { VitePWA } from 'vite-plugin-pwa'
+import { defineConfig } from 'vite';
+import { svelte } from '@sveltejs/vite-plugin-svelte';
+import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 // PWA 契约见仓库上层 PWA规范.md：图标七件套 + head 静态声明 + manifest 完整字段 + SW 行为契约。
 export default defineConfig({
@@ -29,8 +29,18 @@ export default defineConfig({
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
           { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any' },
-          { src: '/icon-maskable-192.png', sizes: '192x192', type: 'image/png', purpose: 'maskable' },
-          { src: '/icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+          {
+            src: '/icon-maskable-192.png',
+            sizes: '192x192',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
+          {
+            src: '/icon-maskable-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'maskable'
+          },
           { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }
         ]
       },
@@ -69,4 +79,4 @@ export default defineConfig({
   ],
   build: { outDir: 'dist', emptyOutDir: true },
   server: { proxy: { '/api': 'http://localhost:8080', '/uploads': 'http://localhost:8080' } }
-})
+});
