@@ -1,0 +1,5 @@
+dist/
+node_modules/
+.svelte-check/
+public/
+pnpm-lock.yaml

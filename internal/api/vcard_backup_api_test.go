@@ -840,15 +840,21 @@ func TestBackupList(t *testing.T) {
 	}
 
 	// 手工造 25 个 .db + 干扰项（非 db、目录）
-	os.MkdirAll(s.Cfg.Backups, 0o755)
+	if err := os.MkdirAll(s.Cfg.Backups, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for i := 1; i <= 25; i++ {
 		name := fmt.Sprintf("qiansi-20240101-0000%02d.db", i)
 		if err := os.WriteFile(filepath.Join(s.Cfg.Backups, name), bytes.Repeat([]byte("x"), i), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	os.WriteFile(filepath.Join(s.Cfg.Backups, "notes.txt"), []byte("skip"), 0o644)
-	os.MkdirAll(filepath.Join(s.Cfg.Backups, "dir.db"), 0o755)
+	if err := os.WriteFile(filepath.Join(s.Cfg.Backups, "notes.txt"), []byte("skip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(s.Cfg.Backups, "dir.db"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	list := vcardBackupDecodeList(t, s.do(http.MethodGet, "/api/v1/backup/list", nil))
 	if len(list) != 20 {
@@ -953,7 +959,9 @@ func TestBackupRestoreHappyPath(t *testing.T) {
 	}
 	// 归档路径（Backups）不可用时，snapshot / list 的行为
 	os.RemoveAll(second.Cfg.Backups)
-	os.WriteFile(second.Cfg.Backups, []byte("i am a file"), 0o644)
+	if err := os.WriteFile(second.Cfg.Backups, []byte("i am a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if r := second.do(http.MethodPost, "/api/v1/backup/snapshot", nil); r.Code != 500 {
 		t.Errorf("backups 为文件时 snapshot 应 500, got %d", r.Code)
 	}
@@ -1036,7 +1044,9 @@ func TestBackupAutoPrune(t *testing.T) {
 
 	t.Run("keep=2 删除最旧", func(t *testing.T) {
 		s := newTestServer(t)
-		os.MkdirAll(s.Cfg.Backups, 0o755)
+		if err := os.MkdirAll(s.Cfg.Backups, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		for i := 1; i <= 5; i++ {
 			if err := os.WriteFile(filepath.Join(s.Cfg.Backups, fmt.Sprintf("qiansi-20230101-00000%d.db", i)), []byte("old"), 0o644); err != nil {
 				t.Fatal(err)
@@ -1077,7 +1087,9 @@ func TestBackupAutoPrune(t *testing.T) {
 
 	t.Run("keep<=0 默认 7", func(t *testing.T) {
 		s := newTestServer(t)
-		os.MkdirAll(s.Cfg.Backups, 0o755)
+		if err := os.MkdirAll(s.Cfg.Backups, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		for i := 1; i <= 8; i++ {
 			if err := os.WriteFile(filepath.Join(s.Cfg.Backups, fmt.Sprintf("qiansi-20230301-00000%d.db", i)), []byte("old"), 0o644); err != nil {
 				t.Fatal(err)
@@ -1098,7 +1110,9 @@ func TestBackupAutoPrune(t *testing.T) {
 
 	t.Run("不超过 keep 不清理", func(t *testing.T) {
 		s := newTestServer(t)
-		os.MkdirAll(s.Cfg.Backups, 0o755)
+		if err := os.MkdirAll(s.Cfg.Backups, 0o755); err != nil {
+			t.Fatal(err)
+		}
 		for i := 1; i <= 6; i++ {
 			if err := os.WriteFile(filepath.Join(s.Cfg.Backups, fmt.Sprintf("qiansi-20230401-00000%d.db", i)), []byte("old"), 0o644); err != nil {
 				t.Fatal(err)

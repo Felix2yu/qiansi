@@ -103,14 +103,14 @@ func DaysBetween(a, b YMD) int {
 }
 
 // Before compares two YMDs lexicographically (year→month→day).
-func (a YMD) Before(b YMD) bool {
-	if a.Year != b.Year {
-		return a.Year < b.Year
+func (y YMD) Before(b YMD) bool {
+	if y.Year != b.Year {
+		return y.Year < b.Year
 	}
-	if a.Month != b.Month {
-		return a.Month < b.Month
+	if y.Month != b.Month {
+		return y.Month < b.Month
 	}
-	return a.Day < b.Day
+	return y.Day < b.Day
 }
 
 // NextOccurrence returns the next Gregorian date for an anniversary,

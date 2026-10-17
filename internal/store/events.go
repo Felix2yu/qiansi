@@ -12,7 +12,6 @@ import (
 	"github.com/qiansi/app/internal/lunar"
 
 	"github.com/google/uuid"
-	qiansiLunar "github.com/qiansi/app/internal/lunar"
 )
 
 // ===== Events =====
@@ -1239,28 +1238,28 @@ FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 //
 // 不逐年循环的纪念日过了当天就结束：原先无条件走 NextOccurrence，
 // 会把一次性的 2026-03-01 在明年同一天再提醒一遍。
-func anniversaryOccurrence(a anniversaryRow, today qiansiLunar.YMD) (qiansiLunar.YMD, int, bool) {
+func anniversaryOccurrence(a anniversaryRow, today lunar.YMD) (lunar.YMD, int, bool) {
 	if a.date == "" || a.title == "" {
-		return qiansiLunar.YMD{}, 0, false
+		return lunar.YMD{}, 0, false
 	}
-	anchor := qiansiLunar.ParseDate(a.date)
+	anchor := lunar.ParseDate(a.date)
 	if anchor.Year == 0 || anchor.Month < 1 || anchor.Day < 1 {
-		return qiansiLunar.YMD{}, 0, false
+		return lunar.YMD{}, 0, false
 	}
 	next := anchor
 	if a.repeatYearly {
-		next = qiansiLunar.NextOccurrence(anchor, a.isLunar, today)
+		next = lunar.NextOccurrence(anchor, a.isLunar, today)
 	}
 	if next.Before(today) {
-		return qiansiLunar.YMD{}, 0, false
+		return lunar.YMD{}, 0, false
 	}
-	return next, qiansiLunar.DaysBetween(today, next), true
+	return next, lunar.DaysBetween(today, next), true
 }
 
 // anniversaryLabel 生成「标题（下一次发生日期[ 农历]，还有 N 天|今天）」。
 // 倒数一律按今天算：按提前档位算出来的「还有 7 天」只有在提醒日当天才成立，
 // 10-09 推一条「还有 7 天」（其实还有 9 天）是自我矛盾的。
-func anniversaryLabel(a anniversaryRow, next qiansiLunar.YMD, daysLeft int) string {
+func anniversaryLabel(a anniversaryRow, next lunar.YMD, daysLeft int) string {
 	typeTag := ""
 	if a.isLunar {
 		typeTag = " 农历"
@@ -1276,7 +1275,7 @@ func anniversaryLabel(a anniversaryRow, next qiansiLunar.YMD, daysLeft int) stri
 // 即提醒日已经到了、且离今天最近的一档。
 // 返回 false 表示所有提前量都还没到 —— 这一行今天不该出现在待办里。
 func arrivedTier(remindDays string, daysLeft int) (int, bool) {
-	offsets := qiansiLunar.RemindDates(remindDays)
+	offsets := lunar.RemindDates(remindDays)
 	if len(offsets) == 0 {
 		offsets = []int{0}
 	}
@@ -1301,7 +1300,7 @@ func arrivedTier(remindDays string, daysLeft int) (int, bool) {
 // horizonDays 约束的是**事件本身离今天多远**（摘要「近 7 天待办」的口径），
 // 与提醒日无关；horizonDays<=0 表示不限。
 func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
-	today := qiansiLunar.NowLocal()
+	today := lunar.NowLocal()
 	raw, err := s.anniversaryRows(ctx)
 	if err != nil {
 		return nil, err
@@ -1347,7 +1346,7 @@ func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Re
 // 待办才是「档位到期才推、推了就该办」。
 // 用后者的话，只设了「当天提醒」的纪念日在建议里会彻底消失。
 func (s *Store) AnniversarySoon(ctx context.Context, days int) ([]*Reminder, error) {
-	today := qiansiLunar.NowLocal()
+	today := lunar.NowLocal()
 	raw, err := s.anniversaryRows(ctx)
 	if err != nil {
 		return nil, err

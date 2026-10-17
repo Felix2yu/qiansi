@@ -218,13 +218,13 @@ func TestNotifySendDigest(t *testing.T) {
 	if err := s.SettingSet(ctx, "apprise_urls", ""); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	sendDigest(ctx, s)
+	_ = sendDigest(ctx, s)
 
 	// 2) 配置了 URL 但近 7 天没有待办 → 提前返回
 	if err := s.SettingSet(ctx, "apprise_urls", "bogus-scheme://example.invalid"); err != nil {
 		t.Fatalf("SettingSet: %v", err)
 	}
-	sendDigest(ctx, s)
+	_ = sendDigest(ctx, s)
 
 	// 3) 有即将到来的提醒 → 构造正文并调用 Push；
 	//    URL scheme 非法，Push 在 Add 阶段跳过后返回错误，只会被记录日志，不发网络。
@@ -244,7 +244,7 @@ func TestNotifySendDigest(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("ReminderCreate: %v", err)
 	}
-	sendDigest(ctx, s) // 不应 panic；失败仅记录日志
+	_ = sendDigest(ctx, s) // 不应 panic；失败仅记录日志
 }
 
 func TestNotifyPushSendFailure(t *testing.T) {
