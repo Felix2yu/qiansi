@@ -11,7 +11,7 @@ import (
 
 // ExportFilter 是明细导出的三个维度。零值表示不加这一层过滤。
 type ExportFilter struct {
-	Year     int    // 按自然年，取日期前 4 位
+	Year     int // 按自然年，取日期前 4 位
 	PersonID string
 	EventID  string // 一场宴席的礼单单独导出去对账
 }

@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/qiansi/app/internal/db"
 	bsched "github.com/qiansi/app/internal/backup/scheduler"
+	"github.com/qiansi/app/internal/db"
 )
 
 // M1 + M4：记一笔随礼不该变成欠款；到期承诺该出现在待办里，勾掉即兑现。

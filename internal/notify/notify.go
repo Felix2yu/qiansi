@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	apprise "github.com/unraid/apprise-go"
 	"github.com/qiansi/app/internal/store"
+	apprise "github.com/unraid/apprise-go"
 )
 
 // tickInterval 是轮询间隔。到点判定是「今天做过没有」这种幂等检查，
