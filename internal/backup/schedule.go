@@ -39,10 +39,10 @@ func DefaultSchedule() Schedule {
 type Schedule struct {
 	Enabled   bool   `json:"enabled"`
 	Frequency string `json:"frequency"`
-	At        string `json:"at"`       // "HH:MM"，daily/weekly 生效
-	Weekday   int    `json:"weekday"`  // 0=周日 … 6=周六，weekly 生效
-	EveryMin  int    `json:"every_min"`// custom 生效
-	Keep      int    `json:"keep"`     // 归档保留份数
+	At        string `json:"at"`        // "HH:MM"，daily/weekly 生效
+	Weekday   int    `json:"weekday"`   // 0=周日 … 6=周六，weekly 生效
+	EveryMin  int    `json:"every_min"` // custom 生效
+	Keep      int    `json:"keep"`      // 归档保留份数
 }
 
 // Normalize 修正非法输入：未知周期回落到每日，时间格式非法回落到 04:00，

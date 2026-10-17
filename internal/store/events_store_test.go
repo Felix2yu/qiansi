@@ -833,7 +833,7 @@ func TestEventStore_AnniversaryUpcomingTierSchedule(t *testing.T) {
 		wantWhen  string // 标题里应有的倒数
 		wantTier  int    // 应命中的档位
 	}{
-		{daysLeft: 9},                    // 最早的提前量（7 天）还没到
+		{daysLeft: 9}, // 最早的提前量（7 天）还没到
 		{daysLeft: 8},
 		{daysLeft: 7, wantShown: true, wantWhen: "还有 7 天", wantTier: 7},
 		{daysLeft: 5, wantShown: true, wantWhen: "还有 5 天", wantTier: 7}, // 7 档触发后一直留着，倒数走表

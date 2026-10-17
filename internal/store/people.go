@@ -48,30 +48,30 @@ func (s *Store) SettingAll(ctx context.Context) (map[string]string, error) {
 // ===== People =====
 
 type Person struct {
-	ID    string `json:"id"`
-	Name  string `json:"name"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
 	// FamilyName/GivenName 保留 vCard 的姓/名结构，显示顺序由 ComposeName 决定
-	FamilyName         string  `json:"family_name,omitempty"`
-	GivenName          string  `json:"given_name,omitempty"`
-	Nickname           string  `json:"nickname,omitempty"`
-	Gender             string  `json:"gender,omitempty"`
-	Birthday           string  `json:"birthday,omitempty"`
-	BirthdayIsLunar    bool    `json:"birthday_is_lunar"`
-	AvatarAttachmentID string  `json:"avatar_attachment_id,omitempty"`
-	Phone              string  `json:"phone,omitempty"`
-	Wechat             string  `json:"wechat,omitempty"`
-	Location           string  `json:"location,omitempty"`
-	Notes              string  `json:"notes,omitempty"`
-	Grade              int     `json:"grade"`
-	Archived           bool    `json:"archived"`
-	XAbUID             string  `json:"x_abuid,omitempty"`
-	CreatedAt          string  `json:"created_at"`
-	UpdatedAt          string  `json:"updated_at"`
+	FamilyName         string `json:"family_name,omitempty"`
+	GivenName          string `json:"given_name,omitempty"`
+	Nickname           string `json:"nickname,omitempty"`
+	Gender             string `json:"gender,omitempty"`
+	Birthday           string `json:"birthday,omitempty"`
+	BirthdayIsLunar    bool   `json:"birthday_is_lunar"`
+	AvatarAttachmentID string `json:"avatar_attachment_id,omitempty"`
+	Phone              string `json:"phone,omitempty"`
+	Wechat             string `json:"wechat,omitempty"`
+	Location           string `json:"location,omitempty"`
+	Notes              string `json:"notes,omitempty"`
+	Grade              int    `json:"grade"`
+	Archived           bool   `json:"archived"`
+	XAbUID             string `json:"x_abuid,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	UpdatedAt          string `json:"updated_at"`
 	// CategoryIDs 只用于写入（PUT 是整行覆盖，缺省即清空圈子）；
 	// Categories 只用于读取，带颜色供列表胶囊与图谱拼色。
-	CategoryIDs []int              `json:"category_ids,omitempty"`
-	Categories  []*PersonCategory  `json:"categories,omitempty"`
-	Intimacy    *int               `json:"intimacy,omitempty"`
+	CategoryIDs []int             `json:"category_ids,omitempty"`
+	Categories  []*PersonCategory `json:"categories,omitempty"`
+	Intimacy    *int              `json:"intimacy,omitempty"`
 	// BirthdayAnniversaryID 指向由生日自动生成的纪念日，为空表示尚未生成。
 	BirthdayAnniversaryID string `json:"birthday_anniversary_id,omitempty"`
 	// IntroducedByPersonID 认识来源：通过谁认识此人；空串表示与我直接认识。
@@ -154,7 +154,7 @@ func (s *Store) PersonUpdate(ctx context.Context, p *Person) error {
 	return s.replacePersonCategories(ctx, p.ID, p.CategoryIDs)
 }
 
-// nullableString 把空串落成 SQL NULL，避免引荐人列存进无意义的 ''。
+// nullableString 把空串落成 SQL NULL，避免引荐人列存进无意义的 ”。
 func nullableString(v string) any {
 	if strings.TrimSpace(v) == "" {
 		return nil
@@ -465,9 +465,15 @@ FROM live_people p WHERE (` + strings.Join(conds, " OR ") + ")"
 		if err := rows.Scan(&p.ID, &p.Name, &nick, &ph, &wc, &p.Grade, &p.Archived); err != nil {
 			return nil, err
 		}
-		if nick.Valid { p.Nickname = nick.String }
-		if ph.Valid { p.Phone = ph.String }
-		if wc.Valid { p.Wechat = wc.String }
+		if nick.Valid {
+			p.Nickname = nick.String
+		}
+		if ph.Valid {
+			p.Phone = ph.String
+		}
+		if wc.Valid {
+			p.Wechat = wc.String
+		}
 		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -623,9 +629,15 @@ FROM live_people p WHERE p.id=?`, id)
 	}
 	p.Grade = grade
 	p.AvatarAttachmentID = avatar.String
-	if birthdayAnniv.Valid { p.BirthdayAnniversaryID = birthdayAnniv.String }
-	if intro.Valid { p.IntroducedByPersonID = intro.String }
-	if introName.Valid { p.IntroducedByName = introName.String }
+	if birthdayAnniv.Valid {
+		p.BirthdayAnniversaryID = birthdayAnniv.String
+	}
+	if intro.Valid {
+		p.IntroducedByPersonID = intro.String
+	}
+	if introName.Valid {
+		p.IntroducedByName = introName.String
+	}
 	if err := s.attachCategories(ctx, []*Person{p}); err != nil {
 		return nil, err
 	}
@@ -717,7 +729,9 @@ WHERE %s ORDER BY p.grade DESC, p.updated_at DESC LIMIT ? OFFSET ?`, where)
 		}
 		p.Grade = grade
 		p.AvatarAttachmentID = avatar.String
-		if intro.Valid { p.IntroducedByPersonID = intro.String }
+		if intro.Valid {
+			p.IntroducedByPersonID = intro.String
+		}
 		list = append(list, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -917,7 +931,9 @@ func isSQLIdent(s string) bool {
 		return false
 	}
 	for i := 0; i < len(s); i++ {
-		if c := s[i]; !(c >= 'a' && c <= 'z' || c == '_') { return false }
+		if c := s[i]; !(c >= 'a' && c <= 'z' || c == '_') {
+			return false
+		}
 	}
 	return true
 }

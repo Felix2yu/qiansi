@@ -32,10 +32,10 @@ func TestSplitLines(t *testing.T) {
 
 func TestParseProperty(t *testing.T) {
 	cases := []struct {
-		line   string
-		name   string
-		typ    string
-		value  string
+		line  string
+		name  string
+		typ   string
+		value string
 	}{
 		{"TEL;TYPE=CELL:13800138000", "TEL", "CELL", "13800138000"},
 		{"TEL;TYPE=HOME,VOICE:123", "TEL", "HOME", "123"},
@@ -277,7 +277,7 @@ func TestVCardToPerson_AppleContact(t *testing.T) {
 // 导出 → 重新解析：核心字段往返一致
 func TestRoundTrip_ExportImport(t *testing.T) {
 	src := &store.Person{
-		ID: "11111111-2222-3333-4444-555555555555",
+		ID:   "11111111-2222-3333-4444-555555555555",
 		Name: "张三丰", FamilyName: "张", GivenName: "三丰",
 		Nickname: "张真人", Phone: "13800138000", Wechat: "zsf",
 		Location: "武当山路1号 十堰市", Birthday: "1247-05-15", Gender: "M",

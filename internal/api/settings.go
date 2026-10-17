@@ -11,11 +11,11 @@ import (
 // ===== settings =====
 
 func (a *API) registerSettings(r chi.Router) {
-    r.Route("/api/v1/settings", func(r chi.Router) {
-        r.Get("/", a.settingsAll)
-        r.Put("/{key}", a.settingsSet)
-        r.Post("/bulk", a.settingsBulk)
-    })
+	r.Route("/api/v1/settings", func(r chi.Router) {
+		r.Get("/", a.settingsAll)
+		r.Put("/{key}", a.settingsSet)
+		r.Post("/bulk", a.settingsBulk)
+	})
 }
 
 func (a *API) registerCategories(r chi.Router) {
@@ -263,24 +263,41 @@ func (a *API) tagOf(w http.ResponseWriter, r *http.Request) {
 func isNoRows(err error) bool { return err == sql.ErrNoRows }
 
 func (a *API) settingsAll(w http.ResponseWriter, r *http.Request) {
-    m, err := a.Store.SettingAll(r.Context())
-    if err != nil { writeStoreErr(w, err); return }
-    writeJSON(w, 200, m)
+	m, err := a.Store.SettingAll(r.Context())
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, 200, m)
 }
 
 func (a *API) settingsSet(w http.ResponseWriter, r *http.Request) {
-    key := chi.URLParam(r, "key")
-    var body struct { Value string `json:"value"` }
-    if err := decode(r, &body); err != nil { writeErr(w, 400, err.Error()); return }
-    if err := a.Store.SettingSet(r.Context(), key, body.Value); err != nil { writeStoreErr(w, err); return }
-    writeJSON(w, 200, map[string]any{"key": key, "value": body.Value})
+	key := chi.URLParam(r, "key")
+	var body struct {
+		Value string `json:"value"`
+	}
+	if err := decode(r, &body); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	if err := a.Store.SettingSet(r.Context(), key, body.Value); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"key": key, "value": body.Value})
 }
 
 func (a *API) settingsBulk(w http.ResponseWriter, r *http.Request) {
-    var m map[string]string
-    if err := decode(r, &m); err != nil { writeErr(w, 400, err.Error()); return }
-    for k, v := range m {
-        if err := a.Store.SettingSet(r.Context(), k, v); err != nil { writeStoreErr(w, err); return }
-    }
-    writeJSON(w, 200, map[string]string{"ok": "1"})
+	var m map[string]string
+	if err := decode(r, &m); err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	for k, v := range m {
+		if err := a.Store.SettingSet(r.Context(), k, v); err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+	}
+	writeJSON(w, 200, map[string]string{"ok": "1"})
 }

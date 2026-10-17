@@ -14,10 +14,10 @@ import (
 )
 
 type fixture struct {
-	r    *Runner
-	st   *store.Store
-	dir  string
-	ctx  context.Context
+	r   *Runner
+	st  *store.Store
+	dir string
+	ctx context.Context
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -241,7 +241,7 @@ func TestStatusReflectsFailureMessage(t *testing.T) {
 	if err := f.st.SettingSet(f.ctx, keyLastFail, "磁盘满"); err != nil {
 		t.Fatal(err)
 	}
-	f.save(t, Schedule{Enabled: true, Frequency: "daily", At: "04:00", Keep: 7 })
+	f.save(t, Schedule{Enabled: true, Frequency: "daily", At: "04:00", Keep: 7})
 	st := f.r.Status(f.ctx, time.Now())
 	if st.LastError != "磁盘满" {
 		t.Errorf("状态应带出上次失败原因，得到 %q", st.LastError)

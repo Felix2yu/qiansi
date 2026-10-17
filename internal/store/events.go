@@ -464,18 +464,18 @@ WHERE ep.event_id IN (`+ph+`) ORDER BY ep.event_id,ep.rowid`, args...)
 // ===== Memos =====
 
 type Memo struct {
-	ID        string `json:"id"`
-	PersonID  string `json:"person_id,omitempty"`
+	ID       string `json:"id"`
+	PersonID string `json:"person_id,omitempty"`
 	// PersonName 只用于读取：对话列表要显示「谁说的」，
 	// 但前端已经不再为了这几个名字拉全量名单。
 	PersonName string `json:"person_name,omitempty"`
-	Speaker   string `json:"speaker"`
-	Content   string `json:"content"`
-	SaidAt    string `json:"said_at"`
-	IsPromise bool   `json:"is_promise"`
-	DueDate   string `json:"due_date,omitempty"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"created_at"`
+	Speaker    string `json:"speaker"`
+	Content    string `json:"content"`
+	SaidAt     string `json:"said_at"`
+	IsPromise  bool   `json:"is_promise"`
+	DueDate    string `json:"due_date,omitempty"`
+	Status     string `json:"status"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func (s *Store) MemoCreate(ctx context.Context, m *Memo) error {
@@ -490,9 +490,17 @@ func (s *Store) MemoCreate(ctx context.Context, m *Memo) error {
 	}
 	m.CreatedAt = nowUTC()
 	var personID any
-	if m.PersonID != "" { personID = m.PersonID } else { personID = nil }
+	if m.PersonID != "" {
+		personID = m.PersonID
+	} else {
+		personID = nil
+	}
 	var dueDate any
-	if m.DueDate != "" { dueDate = m.DueDate } else { dueDate = nil }
+	if m.DueDate != "" {
+		dueDate = m.DueDate
+	} else {
+		dueDate = nil
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO memos(id,person_id,speaker,content,said_at,is_promise,due_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
 		m.ID, personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.CreatedAt)
 	return err
@@ -500,9 +508,17 @@ func (s *Store) MemoCreate(ctx context.Context, m *Memo) error {
 
 func (s *Store) MemoUpdate(ctx context.Context, m *Memo) error {
 	var personID any
-	if m.PersonID != "" { personID = m.PersonID } else { personID = nil }
+	if m.PersonID != "" {
+		personID = m.PersonID
+	} else {
+		personID = nil
+	}
 	var dueDate any
-	if m.DueDate != "" { dueDate = m.DueDate } else { dueDate = nil }
+	if m.DueDate != "" {
+		dueDate = m.DueDate
+	} else {
+		dueDate = nil
+	}
 	return execOne(ctx, s.DB, "UPDATE memos SET person_id=?,speaker=?,content=?,said_at=?,is_promise=?,due_date=?,status=? WHERE id=? AND deleted_at IS NULL", personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.ID)
 }
 
@@ -516,11 +532,14 @@ func (s *Store) MemoPurge(ctx context.Context, id string) error {
 }
 
 func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool, limit, offset int) ([]*Memo, error) {
-	if limit <= 0 { limit = 50 }
+	if limit <= 0 {
+		limit = 50
+	}
 	q := `SELECT m.id,m.person_id,p.name,m.speaker,m.content,m.said_at,m.is_promise,m.due_date,m.status,m.created_at FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id WHERE 1=1`
 	var args []any
 	if personID != "" {
-		q += " AND m.person_id=?"; args = append(args, personID)
+		q += " AND m.person_id=?"
+		args = append(args, personID)
 	}
 	if promisesOnly {
 		q += " AND m.is_promise=1"
@@ -528,7 +547,9 @@ func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool
 	q += " ORDER BY m.said_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
 	rows, err := s.DB.QueryContext(ctx, q, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Memo{}
 	for rows.Next() {
@@ -537,9 +558,15 @@ func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool
 		if err := rows.Scan(&m.ID, &personIDStr, &name, &m.Speaker, &m.Content, &m.SaidAt, &m.IsPromise, &due, &m.Status, &m.CreatedAt); err != nil {
 			return nil, err
 		}
-		if personIDStr.Valid { m.PersonID = personIDStr.String }
-		if name.Valid { m.PersonName = name.String }
-		if due.Valid { m.DueDate = due.String }
+		if personIDStr.Valid {
+			m.PersonID = personIDStr.String
+		}
+		if name.Valid {
+			m.PersonName = name.String
+		}
+		if due.Valid {
+			m.DueDate = due.String
+		}
 		list = append(list, m)
 	}
 	return list, rows.Err()
@@ -568,10 +595,16 @@ func isUniqueRel(err error) bool {
 }
 
 func (s *Store) RelationshipCreate(ctx context.Context, r *Relationship) error {
-	if r.ID == "" { r.ID = uuid.NewString() }
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
 	r.CreatedAt = nowUTC()
 	var remark any
-	if r.Remark != "" { remark = r.Remark } else { remark = nil }
+	if r.Remark != "" {
+		remark = r.Remark
+	} else {
+		remark = nil
+	}
 	// 用普通 INSERT：旧版是 INSERT OR REPLACE，同一对人再建一条会把前一条静默顶掉。
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO relationships(id,from_person_id,to_person_id,type,remark,created_at) VALUES(?,?,?,?,?,?)",
 		r.ID, r.FromPerson, r.ToPerson, r.Type, remark, r.CreatedAt)
@@ -608,7 +641,9 @@ FROM relationships r
 LEFT JOIN live_people pf ON pf.id=r.from_person_id
 LEFT JOIN live_people pt ON pt.id=r.to_person_id
 WHERE pf.id IS NOT NULL AND pt.id IS NOT NULL`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Relationship{}
 	for rows.Next() {
@@ -617,9 +652,15 @@ WHERE pf.id IS NOT NULL AND pt.id IS NOT NULL`)
 		if err := rows.Scan(&r.ID, &r.FromPerson, &r.ToPerson, &r.Type, &remark, &r.CreatedAt, &fn, &tn); err != nil {
 			return nil, err
 		}
-		if remark.Valid { r.Remark = remark.String }
-		if fn.Valid { r.FromName = fn.String }
-		if tn.Valid { r.ToName = tn.String }
+		if remark.Valid {
+			r.Remark = remark.String
+		}
+		if fn.Valid {
+			r.FromName = fn.String
+		}
+		if tn.Valid {
+			r.ToName = tn.String
+		}
 		list = append(list, r)
 	}
 	return list, rows.Err()
@@ -654,18 +695,40 @@ type Repayment struct {
 }
 
 func (s *Store) TransactionCreate(ctx context.Context, t *Transaction) error {
-	if t.ID == "" { t.ID = uuid.NewString() }
-	if t.Kind == "" { t.Kind = "other" }
+	if t.ID == "" {
+		t.ID = uuid.NewString()
+	}
+	if t.Kind == "" {
+		t.Kind = "other"
+	}
 	t.CreatedAt = nowUTC()
 	var dueDate any
-	if t.DueDate != "" { dueDate = t.DueDate } else { dueDate = nil }
+	if t.DueDate != "" {
+		dueDate = t.DueDate
+	} else {
+		dueDate = nil
+	}
 	var settledAt any
-	if t.Settled && t.SettledAt == "" { t.SettledAt = t.OccurredAt }
-	if t.SettledAt != "" { settledAt = t.SettledAt } else { settledAt = nil }
+	if t.Settled && t.SettledAt == "" {
+		t.SettledAt = t.OccurredAt
+	}
+	if t.SettledAt != "" {
+		settledAt = t.SettledAt
+	} else {
+		settledAt = nil
+	}
 	var title any
-	if t.Title != "" { title = t.Title } else { title = nil }
+	if t.Title != "" {
+		title = t.Title
+	} else {
+		title = nil
+	}
 	var eventID any
-	if t.EventID != "" { eventID = t.EventID } else { eventID = nil }
+	if t.EventID != "" {
+		eventID = t.EventID
+	} else {
+		eventID = nil
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
 		t.ID, t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, t.CreatedAt, eventID)
 	if err == nil && t.EventID != "" && t.EventTitle == "" {
@@ -676,13 +739,29 @@ func (s *Store) TransactionCreate(ctx context.Context, t *Transaction) error {
 
 func (s *Store) TransactionUpdate(ctx context.Context, t *Transaction) error {
 	var dueDate any
-	if t.DueDate != "" { dueDate = t.DueDate } else { dueDate = nil }
+	if t.DueDate != "" {
+		dueDate = t.DueDate
+	} else {
+		dueDate = nil
+	}
 	var settledAt any
-	if t.SettledAt != "" { settledAt = t.SettledAt } else { settledAt = nil }
+	if t.SettledAt != "" {
+		settledAt = t.SettledAt
+	} else {
+		settledAt = nil
+	}
 	var title any
-	if t.Title != "" { title = t.Title } else { title = nil }
+	if t.Title != "" {
+		title = t.Title
+	} else {
+		title = nil
+	}
 	var eventID any
-	if t.EventID != "" { eventID = t.EventID } else { eventID = nil }
+	if t.EventID != "" {
+		eventID = t.EventID
+	} else {
+		eventID = nil
+	}
 	return execOne(ctx, s.DB, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=? AND deleted_at IS NULL",
 		t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, eventID, t.ID)
 }
@@ -708,21 +787,37 @@ func scanTransaction(rows *sql.Rows) (*Transaction, error) {
 		&settledAt, &t.CreatedAt, &personName, &t.RepaidFen, &eventID, &eventTitle); err != nil {
 		return nil, err
 	}
-	if title.Valid { t.Title = title.String }
-	if due.Valid { t.DueDate = due.String }
-	if settledAt.Valid { t.SettledAt = settledAt.String }
-	if personName.Valid { t.PersonName = personName.String }
-	if eventID.Valid { t.EventID = eventID.String }
-	if eventTitle.Valid { t.EventTitle = eventTitle.String }
+	if title.Valid {
+		t.Title = title.String
+	}
+	if due.Valid {
+		t.DueDate = due.String
+	}
+	if settledAt.Valid {
+		t.SettledAt = settledAt.String
+	}
+	if personName.Valid {
+		t.PersonName = personName.String
+	}
+	if eventID.Valid {
+		t.EventID = eventID.String
+	}
+	if eventTitle.Valid {
+		t.EventTitle = eventTitle.String
+	}
 	return t, nil
 }
 
 func (s *Store) TransactionGet(ctx context.Context, id string) (*Transaction, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+txColumns+`
 FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.id=?`, id)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
-	if !rows.Next() { return nil, sql.ErrNoRows }
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
 	return scanTransaction(rows)
 }
 
@@ -740,30 +835,51 @@ type TxFilter struct {
 
 func (s *Store) TransactionList(ctx context.Context, f TxFilter) ([]*Transaction, error) {
 	limit := f.Limit
-	if limit <= 0 { limit = 200 }
+	if limit <= 0 {
+		limit = 200
+	}
 	q := `SELECT ` + txColumns + `
 FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id`
 	var args []any
 	var conds []string
-	if f.PersonID != "" { conds = append(conds, "t.person_id=?"); args = append(args, f.PersonID) }
-	if f.Kind != "" { conds = append(conds, "t.kind=?"); args = append(args, f.Kind) }
+	if f.PersonID != "" {
+		conds = append(conds, "t.person_id=?")
+		args = append(args, f.PersonID)
+	}
+	if f.Kind != "" {
+		conds = append(conds, "t.kind=?")
+		args = append(args, f.Kind)
+	}
 	if f.Settled != nil {
 		// settled 列在库里是 0/1，传 bool 会被 driver 写成 true/false 字面量，比较不上。
 		v := 0
-		if *f.Settled { v = 1 }
-		conds = append(conds, "t.settled=?"); args = append(args, v)
+		if *f.Settled {
+			v = 1
+		}
+		conds = append(conds, "t.settled=?")
+		args = append(args, v)
 	}
 	// 同 EventList：没记发生日的那笔不属于任何时间区间，先把它排除掉。
 	if f.From != "" || f.To != "" {
 		conds = append(conds, "COALESCE(t.occurred_at,'')<>''")
-		if f.From != "" { conds = append(conds, "substr(t.occurred_at,1,10)>=?"); args = append(args, f.From) }
-		if f.To != "" { conds = append(conds, "substr(t.occurred_at,1,10)<=?"); args = append(args, f.To) }
+		if f.From != "" {
+			conds = append(conds, "substr(t.occurred_at,1,10)>=?")
+			args = append(args, f.From)
+		}
+		if f.To != "" {
+			conds = append(conds, "substr(t.occurred_at,1,10)<=?")
+			args = append(args, f.To)
+		}
 	}
-	if len(conds) > 0 { q += " WHERE " + strings.Join(conds, " AND ") }
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
 	q += " ORDER BY t.occurred_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
 	rows, err := s.DB.QueryContext(ctx, q, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Transaction{}
 	for rows.Next() {
@@ -795,11 +911,19 @@ type Anniversary struct {
 }
 
 func (s *Store) AnniversaryCreate(ctx context.Context, a *Anniversary) error {
-	if a.ID == "" { a.ID = uuid.NewString() }
-	if a.RemindDays == "" { a.RemindDays = "7,3,1,0" }
+	if a.ID == "" {
+		a.ID = uuid.NewString()
+	}
+	if a.RemindDays == "" {
+		a.RemindDays = "7,3,1,0"
+	}
 	a.CreatedAt = nowUTC()
 	var personID any
-	if a.PersonID != "" { personID = a.PersonID } else { personID = nil }
+	if a.PersonID != "" {
+		personID = a.PersonID
+	} else {
+		personID = nil
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO anniversaries(id,person_id,title,date,is_lunar,repeat_yearly,remind_days,created_at) VALUES(?,?,?,?,?,?,?,?)",
 		a.ID, personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.CreatedAt)
 	return err
@@ -807,7 +931,11 @@ func (s *Store) AnniversaryCreate(ctx context.Context, a *Anniversary) error {
 
 func (s *Store) AnniversaryUpdate(ctx context.Context, a *Anniversary) error {
 	var personID any
-	if a.PersonID != "" { personID = a.PersonID } else { personID = nil }
+	if a.PersonID != "" {
+		personID = a.PersonID
+	} else {
+		personID = nil
+	}
 	return execOne(ctx, s.DB, "UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=?,remind_days=? WHERE id=? AND deleted_at IS NULL", personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.ID)
 }
 
@@ -824,7 +952,9 @@ func (s *Store) AnniversaryPurge(ctx context.Context, id string) error {
 func (s *Store) AnniversaryList(ctx context.Context) ([]*Anniversary, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,a.created_at,p.name
 FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Anniversary{}
 	for rows.Next() {
@@ -833,11 +963,17 @@ FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 		if err := rows.Scan(&a.ID, &personID, &a.Title, &a.Date, &a.IsLunar, &a.RepeatYearly, &a.RemindDays, &a.CreatedAt, &personName); err != nil {
 			return nil, err
 		}
-		if personID.Valid { a.PersonID = personID.String }
-		if personName.Valid { a.PersonName = personName.String }
+		if personID.Valid {
+			a.PersonID = personID.String
+		}
+		if personName.Valid {
+			a.PersonName = personName.String
+		}
 		list = append(list, a)
 	}
-	if err := rows.Err(); err != nil { return nil, err }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 
 	// 计算下一次发生日期与倒计时，并按「即将到来在前、已过在后」排序。
 	today := lunar.NowLocal()
@@ -865,7 +1001,9 @@ FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 		di, dj := list[i].DaysUntil, list[j].DaysUntil
 		switch {
 		case di != nil && dj != nil:
-			if *di != *dj { return *di < *dj }
+			if *di != *dj {
+				return *di < *dj
+			}
 			return list[i].Date < list[j].Date
 		case di != nil:
 			return true
@@ -894,14 +1032,28 @@ type Reminder struct {
 }
 
 func (s *Store) ReminderCreate(ctx context.Context, r *Reminder) error {
-	if r.ID == "" { r.ID = uuid.NewString() }
-	if r.RefType == "" { r.RefType = "custom" }
-	if r.Status == "" { r.Status = "pending" }
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
+	if r.RefType == "" {
+		r.RefType = "custom"
+	}
+	if r.Status == "" {
+		r.Status = "pending"
+	}
 	r.CreatedAt = nowUTC()
 	var personID any
-	if r.PersonID != "" { personID = r.PersonID } else { personID = nil }
+	if r.PersonID != "" {
+		personID = r.PersonID
+	} else {
+		personID = nil
+	}
 	var refID any
-	if r.RefID != "" { refID = r.RefID } else { refID = nil }
+	if r.RefID != "" {
+		refID = r.RefID
+	} else {
+		refID = nil
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO reminders(id,person_id,ref_type,ref_id,title,due_at,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)",
 		r.ID, personID, r.RefType, refID, r.Title, r.DueAt, r.Status, r.CreatedAt, nil)
 	return err
@@ -909,11 +1061,23 @@ func (s *Store) ReminderCreate(ctx context.Context, r *Reminder) error {
 
 func (s *Store) ReminderUpdate(ctx context.Context, r *Reminder) error {
 	var personID any
-	if r.PersonID != "" { personID = r.PersonID } else { personID = nil }
+	if r.PersonID != "" {
+		personID = r.PersonID
+	} else {
+		personID = nil
+	}
 	var refID any
-	if r.RefID != "" { refID = r.RefID } else { refID = nil }
+	if r.RefID != "" {
+		refID = r.RefID
+	} else {
+		refID = nil
+	}
 	var completedAt any
-	if r.CompletedAt != "" { completedAt = r.CompletedAt } else { completedAt = nil }
+	if r.CompletedAt != "" {
+		completedAt = r.CompletedAt
+	} else {
+		completedAt = nil
+	}
 	return execOne(ctx, s.DB, "UPDATE reminders SET person_id=?,ref_type=?,ref_id=?,title=?,due_at=?,status=?,completed_at=? WHERE id=? AND deleted_at IS NULL", personID, r.RefType, refID, r.Title, r.DueAt, r.Status, completedAt, r.ID)
 }
 
@@ -940,7 +1104,8 @@ func (s *Store) ReminderList(ctx context.Context, status string, limit, offset i
 FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 	var args []any
 	if status != "" {
-		q += " AND r.status=?"; args = append(args, status)
+		q += " AND r.status=?"
+		args = append(args, status)
 	}
 	q += " ORDER BY r.due_at ASC"
 	if limit > 0 {
@@ -948,7 +1113,9 @@ FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 		args = append(args, limit, offset)
 	}
 	rows, err := s.DB.QueryContext(ctx, q, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Reminder{}
 	for rows.Next() {
@@ -957,10 +1124,18 @@ FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 		if err := rows.Scan(&r.ID, &personID, &r.RefType, &refID, &r.Title, &r.DueAt, &r.Status, &r.CreatedAt, &completedAt, &personName); err != nil {
 			return nil, err
 		}
-		if personID.Valid { r.PersonID = personID.String }
-		if refID.Valid { r.RefID = refID.String }
-		if completedAt.Valid { r.CompletedAt = completedAt.String }
-		if personName.Valid { r.PersonName = personName.String }
+		if personID.Valid {
+			r.PersonID = personID.String
+		}
+		if refID.Valid {
+			r.RefID = refID.String
+		}
+		if completedAt.Valid {
+			r.CompletedAt = completedAt.String
+		}
+		if personName.Valid {
+			r.PersonName = personName.String
+		}
 		list = append(list, r)
 	}
 	return list, rows.Err()
@@ -985,7 +1160,9 @@ WHERE r.status='pending'`
 	}
 	q += " ORDER BY r.due_at ASC"
 	rows, err := s.DB.QueryContext(ctx, q, args...)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	list := []*Reminder{}
 	for rows.Next() {
 		r := &Reminder{}
@@ -994,10 +1171,18 @@ WHERE r.status='pending'`
 			rows.Close()
 			return nil, err
 		}
-		if pid.Valid { r.PersonID = pid.String }
-		if refid.Valid { r.RefID = refid.String }
-		if completed.Valid { r.CompletedAt = completed.String }
-		if pn.Valid { r.PersonName = pn.String }
+		if pid.Valid {
+			r.PersonID = pid.String
+		}
+		if refid.Valid {
+			r.RefID = refid.String
+		}
+		if completed.Valid {
+			r.CompletedAt = completed.String
+		}
+		if pn.Valid {
+			r.PersonName = pn.String
+		}
 		list = append(list, r)
 	}
 	rows.Close() // 连接池只有 1 条，必须先释放再查纪念日
@@ -1030,7 +1215,9 @@ type anniversaryRow struct {
 func (s *Store) anniversaryRows(ctx context.Context) ([]anniversaryRow, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,p.name
 FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	raw := []anniversaryRow{}
 	for rows.Next() {
@@ -1041,7 +1228,9 @@ FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 		}
 		raw = append(raw, anniversaryRow{anID.String, personID.String, title.String, date.String, remindDays.String, personName.String, isLunar, repeatYearly})
 	}
-	if err := rows.Err(); err != nil { return nil, err }
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	rows.Close()
 	return raw, nil
 }
@@ -1051,14 +1240,20 @@ FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 // 不逐年循环的纪念日过了当天就结束：原先无条件走 NextOccurrence，
 // 会把一次性的 2026-03-01 在明年同一天再提醒一遍。
 func anniversaryOccurrence(a anniversaryRow, today qiansiLunar.YMD) (qiansiLunar.YMD, int, bool) {
-	if a.date == "" || a.title == "" { return qiansiLunar.YMD{}, 0, false }
+	if a.date == "" || a.title == "" {
+		return qiansiLunar.YMD{}, 0, false
+	}
 	anchor := qiansiLunar.ParseDate(a.date)
-	if anchor.Year == 0 || anchor.Month < 1 || anchor.Day < 1 { return qiansiLunar.YMD{}, 0, false }
+	if anchor.Year == 0 || anchor.Month < 1 || anchor.Day < 1 {
+		return qiansiLunar.YMD{}, 0, false
+	}
 	next := anchor
 	if a.repeatYearly {
 		next = qiansiLunar.NextOccurrence(anchor, a.isLunar, today)
 	}
-	if next.Before(today) { return qiansiLunar.YMD{}, 0, false }
+	if next.Before(today) {
+		return qiansiLunar.YMD{}, 0, false
+	}
 	return next, qiansiLunar.DaysBetween(today, next), true
 }
 
@@ -1067,9 +1262,13 @@ func anniversaryOccurrence(a anniversaryRow, today qiansiLunar.YMD) (qiansiLunar
 // 10-09 推一条「还有 7 天」（其实还有 9 天）是自我矛盾的。
 func anniversaryLabel(a anniversaryRow, next qiansiLunar.YMD, daysLeft int) string {
 	typeTag := ""
-	if a.isLunar { typeTag = " 农历" }
+	if a.isLunar {
+		typeTag = " 农历"
+	}
 	when := "今天"
-	if daysLeft > 0 { when = "还有 " + strconv.Itoa(daysLeft) + " 天" }
+	if daysLeft > 0 {
+		when = "还有 " + strconv.Itoa(daysLeft) + " 天"
+	}
 	return a.title + "（" + next.String() + typeTag + "，" + when + "）"
 }
 
@@ -1078,9 +1277,13 @@ func anniversaryLabel(a anniversaryRow, next qiansiLunar.YMD, daysLeft int) stri
 // 返回 false 表示所有提前量都还没到 —— 这一行今天不该出现在待办里。
 func arrivedTier(remindDays string, daysLeft int) (int, bool) {
 	offsets := qiansiLunar.RemindDates(remindDays)
-	if len(offsets) == 0 { offsets = []int{0} }
+	if len(offsets) == 0 {
+		offsets = []int{0}
+	}
 	for _, o := range offsets {
-		if o >= daysLeft { return o, true }
+		if o >= daysLeft {
+			return o, true
+		}
 	}
 	return 0, false
 }
@@ -1100,18 +1303,28 @@ func arrivedTier(remindDays string, daysLeft int) (int, bool) {
 func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Reminder, error) {
 	today := qiansiLunar.NowLocal()
 	raw, err := s.anniversaryRows(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	dismissed := s.dismissedOccurrences(ctx)
 	list := []*Reminder{}
 	for _, a := range raw {
 		next, daysLeft, ok := anniversaryOccurrence(a, today)
-		if !ok { continue }
-		if horizonDays > 0 && daysLeft > horizonDays { continue }
+		if !ok {
+			continue
+		}
+		if horizonDays > 0 && daysLeft > horizonDays {
+			continue
+		}
 		offset, fired := arrivedTier(a.remindDays, daysLeft)
-		if !fired { continue }
+		if !fired {
+			continue
+		}
 		// 本次发生 + 提前量构成唯一的一次提醒
 		occurrence := next.String() + ":" + strconv.Itoa(offset)
-		if dismissed[a.id+"|"+occurrence] { continue }
+		if dismissed[a.id+"|"+occurrence] {
+			continue
+		}
 		list = append(list, &Reminder{
 			ID:         "anniv:" + a.id + ":" + occurrence,
 			PersonID:   a.personID,
@@ -1136,12 +1349,18 @@ func (s *Store) AnniversaryUpcoming(ctx context.Context, horizonDays int) ([]*Re
 func (s *Store) AnniversarySoon(ctx context.Context, days int) ([]*Reminder, error) {
 	today := qiansiLunar.NowLocal()
 	raw, err := s.anniversaryRows(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	list := []*Reminder{}
 	for _, a := range raw {
 		next, daysLeft, ok := anniversaryOccurrence(a, today)
-		if !ok { continue }
-		if days > 0 && daysLeft > days { continue }
+		if !ok {
+			continue
+		}
+		if days > 0 && daysLeft > days {
+			continue
+		}
 		list = append(list, &Reminder{
 			ID:         "anniv:" + a.id + ":" + next.String(),
 			PersonID:   a.personID,
@@ -1250,12 +1469,12 @@ func (s *Store) MemoFulfill(ctx context.Context, memoID string) error {
 // ===== Global search =====
 
 type SearchResult struct {
-	Type    string `json:"type"`
-	ID      string `json:"id"`
-	Title   string `json:"title"`
+	Type     string `json:"type"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
 	Subtitle string `json:"subtitle,omitempty"`
-	Date    string `json:"date,omitempty"`
-	Path    string `json:"path"`
+	Date     string `json:"date,omitempty"`
+	Path     string `json:"path"`
 }
 
 // Search 跨人物 / 往来 / 对话 / 金钱 / 纪念日做一次统一检索。
@@ -1276,9 +1495,13 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 	if err == nil {
 		for _, p := range people {
 			sub := ""
-			if p.Phone != "" { sub = p.Phone }
+			if p.Phone != "" {
+				sub = p.Phone
+			}
 			if p.Wechat != "" {
-				if sub != "" { sub += " · " }
+				if sub != "" {
+					sub += " · "
+				}
 				sub += "微信 " + p.Wechat
 			}
 			out = append(out, &SearchResult{Type: "person", ID: p.ID, Title: p.Name, Subtitle: sub, Path: "/people/" + p.ID})
@@ -1312,9 +1535,15 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 				continue
 			}
 			path := "/events"
-			if qr.kind == "memo" { path = "/memos" }
-			if qr.kind == "transaction" { path = "/money" }
-			if qr.kind == "anniversary" { path = "/anniversaries" }
+			if qr.kind == "memo" {
+				path = "/memos"
+			}
+			if qr.kind == "transaction" {
+				path = "/money"
+			}
+			if qr.kind == "anniversary" {
+				path = "/anniversaries"
+			}
 			out = append(out, &SearchResult{Type: qr.kind, ID: id, Title: title, Subtitle: sub, Date: date, Path: path})
 		}
 		rows.Close()
@@ -1345,7 +1574,9 @@ UNION ALL
 SELECT date,'anniversary',title,?, (SELECT name FROM people WHERE id=?), id FROM live_anniversaries WHERE person_id=?
 ORDER BY date DESC`
 	rows, err := s.DB.QueryContext(ctx, q, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*TimelineItem{}
 	for rows.Next() {
@@ -1363,7 +1594,9 @@ ORDER BY date DESC`
 }
 
 func (s *Store) GlobalTimeline(ctx context.Context, limit int) ([]*TimelineItem, error) {
-	if limit <= 0 { limit = 100 }
+	if limit <= 0 {
+		limit = 100
+	}
 	q := `SELECT event_date AS date, 'event' AS type, title,
   (SELECT GROUP_CONCAT(p2.name, ', ') FROM live_people p2 JOIN event_participants ep2 ON ep2.person_id=p2.id WHERE ep2.event_id=live_events.id) AS participants,
   id FROM live_events
@@ -1375,7 +1608,9 @@ UNION ALL
 SELECT date,'anniversary',title, (SELECT name FROM live_people WHERE id=person_id), id FROM live_anniversaries
 ORDER BY date DESC LIMIT ?`
 	rows, err := s.DB.QueryContext(ctx, q, limit)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*TimelineItem{}
 	for rows.Next() {
@@ -1384,7 +1619,9 @@ ORDER BY date DESC LIMIT ?`
 		if err := rows.Scan(&ti.Date, &ti.Type, &ti.Title, &persons, &ti.ID); err != nil {
 			return nil, err
 		}
-		if persons.Valid { ti.PersonName = persons.String }
+		if persons.Valid {
+			ti.PersonName = persons.String
+		}
 		list = append(list, ti)
 	}
 	return list, rows.Err()
@@ -1447,7 +1684,9 @@ func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 // 月份维度取三张表的并集：原先以 events 为主表分组，
 // 某月只有备忘或金钱往来时整月会缺失，趋势图出现空洞。
 func (s *Store) StatsByMonth(ctx context.Context, months int) ([]map[string]any, error) {
-	if months <= 0 { months = 12 }
+	if months <= 0 {
+		months = 12
+	}
 	rows, err := s.DB.QueryContext(ctx, `WITH months(month) AS (
   SELECT DISTINCT strftime('%Y-%m', event_date) FROM live_events WHERE event_date IS NOT NULL AND event_date <> ''
   UNION
@@ -1461,13 +1700,17 @@ SELECT m.month,
 (SELECT COUNT(*) FROM live_transactions y WHERE strftime('%Y-%m', y.occurred_at)=m.month) AS tx_count
 FROM months m WHERE m.month IS NOT NULL AND m.month <> ''
 ORDER BY m.month DESC LIMIT ?`, months)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []map[string]any{}
 	for rows.Next() {
 		var month string
 		var ec, mc, tc int
-		if err := rows.Scan(&month, &ec, &mc, &tc); err != nil { return nil, err }
+		if err := rows.Scan(&month, &ec, &mc, &tc); err != nil {
+			return nil, err
+		}
 		list = append(list, map[string]any{
 			"month": month, "event_count": ec, "memo_count": mc, "tx_count": tc,
 		})
@@ -1478,12 +1721,16 @@ ORDER BY m.month DESC LIMIT ?`, months)
 
 func (s *Store) GradeDistribution(ctx context.Context) ([]*GradeDist, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT grade, COUNT(*) FROM live_people WHERE archived=0 GROUP BY grade ORDER BY grade`)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*GradeDist{}
 	for rows.Next() {
 		g := &GradeDist{}
-		if err := rows.Scan(&g.Grade, &g.Count); err != nil { return nil, err }
+		if err := rows.Scan(&g.Grade, &g.Count); err != nil {
+			return nil, err
+		}
 		list = append(list, g)
 	}
 	return list, rows.Err()
@@ -1494,17 +1741,25 @@ func (s *Store) GradeDistribution(ctx context.Context) ([]*GradeDist, error) {
 func (s *Store) EventGet(ctx context.Context, id string) (*Event, error) {
 	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventColumns+`
 FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
-	if !rows.Next() { return nil, sql.ErrNoRows }
+	if !rows.Next() {
+		return nil, sql.ErrNoRows
+	}
 	e, err := scanEvent(rows)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	rows.Close()
 	prows, _ := s.DB.QueryContext(ctx, `SELECT p.id,p.name FROM live_people p JOIN event_participants ep ON ep.person_id=p.id WHERE ep.event_id=? ORDER BY ep.rowid`, e.ID)
 	defer prows.Close()
 	for prows.Next() {
 		var pid, pn string
-		if prows.Scan(&pid, &pn) == nil { e.Participants = append(e.Participants, &Person{ID: pid, Name: pn}) }
+		if prows.Scan(&pid, &pn) == nil {
+			e.Participants = append(e.Participants, &Person{ID: pid, Name: pn})
+		}
 	}
 	if exps, err := s.EventExpenses(ctx, e.ID); err == nil {
 		e.Expenses = exps
@@ -1515,7 +1770,9 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id
 // ===== Repayments =====
 
 func (s *Store) RepaymentCreate(ctx context.Context, r *Repayment) error {
-	if r.ID == "" { r.ID = uuid.NewString() }
+	if r.ID == "" {
+		r.ID = uuid.NewString()
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO repayments(id,transaction_id,amount_fen,occurred_at,note) VALUES(?,?,?,?,?)",
 		r.ID, r.TransactionID, r.AmountFen, r.OccurredAt, r.Note)
 	return err
@@ -1527,14 +1784,20 @@ func (s *Store) RepaymentDelete(ctx context.Context, id string) error {
 
 func (s *Store) RepaymentsOf(ctx context.Context, transactionID string) ([]*Repayment, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT id,transaction_id,amount_fen,occurred_at,note FROM repayments WHERE transaction_id=? ORDER BY occurred_at DESC", transactionID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Repayment{}
 	for rows.Next() {
 		r := &Repayment{}
 		var note sql.NullString
-		if err := rows.Scan(&r.ID, &r.TransactionID, &r.AmountFen, &r.OccurredAt, &note); err != nil { return nil, err }
-		if note.Valid { r.Note = note.String }
+		if err := rows.Scan(&r.ID, &r.TransactionID, &r.AmountFen, &r.OccurredAt, &note); err != nil {
+			return nil, err
+		}
+		if note.Valid {
+			r.Note = note.String
+		}
 		list = append(list, r)
 	}
 	return list, rows.Err()
@@ -1544,10 +1807,16 @@ func (s *Store) RepaymentsOf(ctx context.Context, transactionID string) ([]*Repa
 
 func (s *Store) PersonDetail(ctx context.Context, id string) (*Person, []*PersonField, error) {
 	p, err := s.PersonGet(ctx, id)
-	if err != nil { return nil, nil, err }
-	if p == nil { return nil, nil, nil }
+	if err != nil {
+		return nil, nil, err
+	}
+	if p == nil {
+		return nil, nil, nil
+	}
 	fields, err := s.PersonFieldList(ctx, id)
-	if err != nil { return p, nil, err }
+	if err != nil {
+		return p, nil, err
+	}
 	return p, fields, nil
 }
 
@@ -1570,20 +1839,24 @@ type TrendPoint struct {
 }
 
 type PersonIntimacy struct {
-	CurrentScore   int          `json:"current_score"`
-	Grade          int          `json:"grade"`
-	RecentEvents   int          `json:"recent_events"`
-	LastInteraction string      `json:"last_interaction,omitempty"`
-	Tags           []string     `json:"tags,omitempty"`
+	CurrentScore    int      `json:"current_score"`
+	Grade           int      `json:"grade"`
+	RecentEvents    int      `json:"recent_events"`
+	LastInteraction string   `json:"last_interaction,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
 	// Trend 供详情页折线图使用；快照不足时至少回退为当天一点，避免前端拿到 undefined。
-	Trend          []TrendPoint `json:"trend"`
+	Trend []TrendPoint `json:"trend"`
 }
 
 func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonIntimacy, error) {
 	p, err := s.PersonGet(ctx, personID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	grade := 0
-	if p != nil { grade = p.Grade }
+	if p != nil {
+		grade = p.Grade
+	}
 	// Recent event count
 	var recentCount int
 	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?) AND e.event_date >= ?`, personID, daysFromTodayLocal(-60)).Scan(&recentCount)
@@ -1591,18 +1864,29 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 	var last sql.NullString
 	_ = s.DB.QueryRowContext(ctx, `SELECT MAX(event_date) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?)`, personID).Scan(&last)
 	// Score = grade*20 + recentEvents*3 + (archived ? 0 : 10)
-	score := grade * 20 + recentCount*3 + 10
-	if p != nil && p.Archived { score -= 15 }
-	if score > 100 { score = 100 }
-	if score < 0 { score = 0 }
+	score := grade*20 + recentCount*3 + 10
+	if p != nil && p.Archived {
+		score -= 15
+	}
+	if score > 100 {
+		score = 100
+	}
+	if score < 0 {
+		score = 0
+	}
 	out := &PersonIntimacy{CurrentScore: score, Grade: grade, RecentEvents: recentCount}
-	if last.Valid { out.LastInteraction = last.String }
+	if last.Valid {
+		out.LastInteraction = last.String
+	}
 
 	// 趋势：读取快照表，并把今天的最新分数补到末尾，保证至少有一个点。
 	out.Trend = []TrendPoint{}
 	if rows, err := s.DB.QueryContext(ctx,
 		`SELECT day,score FROM intimacy_snapshots WHERE person_id=? ORDER BY day DESC LIMIT 30`, personID); err == nil {
-		type row struct{ day string; score int }
+		type row struct {
+			day   string
+			score int
+		}
 		collected := []row{}
 		for rows.Next() {
 			var d string
@@ -1626,14 +1910,18 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 func (s *Store) PersonWordCloudText(ctx context.Context, personID string) ([]map[string]any, error) {
 	// naive: collect memo content words
 	rows, err := s.DB.QueryContext(ctx, "SELECT content FROM live_memos WHERE person_id=?", personID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	words := make(map[string]int)
 	for rows.Next() {
 		var c string
 		if rows.Scan(&c) == nil {
 			for _, w := range tokenizeSimple(c) {
-				if len(w) >= 2 { words[w]++ }
+				if len(w) >= 2 {
+					words[w]++
+				}
 			}
 		}
 	}
@@ -1642,7 +1930,9 @@ func (s *Store) PersonWordCloudText(ctx context.Context, personID string) ([]map
 		list = append(list, map[string]any{"word": k, "count": v})
 	}
 	sort.Slice(list, func(i, j int) bool { return list[i]["count"].(int) > list[j]["count"].(int) })
-	if len(list) > 50 { list = list[:50] }
+	if len(list) > 50 {
+		list = list[:50]
+	}
 	return list, nil
 }
 
@@ -1655,11 +1945,15 @@ func tokenizeSimple(s string) []string {
 		alnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c > 127
 		if !alnum {
 			tok := s[start:i]
-			if len(tok) >= 2 { out = append(out, tok) }
+			if len(tok) >= 2 {
+				out = append(out, tok)
+			}
 			start = i + 1
 		}
 	}
-	if len(s)-start >= 2 { out = append(out, s[start:]) }
+	if len(s)-start >= 2 {
+		out = append(out, s[start:])
+	}
 	return out
 }
 
@@ -1670,7 +1964,9 @@ func (s *Store) RelationshipsOf(ctx context.Context, personID string) ([]*Relati
 pf.name,pt.name FROM relationships r
 LEFT JOIN live_people pf ON pf.id=r.from_person_id LEFT JOIN live_people pt ON pt.id=r.to_person_id
 WHERE (r.from_person_id=? OR r.to_person_id=?) AND pf.id IS NOT NULL AND pt.id IS NOT NULL`, personID, personID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Relationship{}
 	for rows.Next() {
@@ -1679,9 +1975,15 @@ WHERE (r.from_person_id=? OR r.to_person_id=?) AND pf.id IS NOT NULL AND pt.id I
 		if err := rows.Scan(&r.ID, &r.FromPerson, &r.ToPerson, &r.Type, &remark, &r.CreatedAt, &fn, &tn); err != nil {
 			return nil, err
 		}
-		if remark.Valid { r.Remark = remark.String }
-		if fn.Valid { r.FromName = fn.String }
-		if tn.Valid { r.ToName = tn.String }
+		if remark.Valid {
+			r.Remark = remark.String
+		}
+		if fn.Valid {
+			r.FromName = fn.String
+		}
+		if tn.Valid {
+			r.ToName = tn.String
+		}
 		list = append(list, r)
 	}
 	return list, rows.Err()
@@ -1713,22 +2015,28 @@ const graphNodeLimit = 500
 // GraphData 关系图的一页数据。截断不是静默的：被丢掉的人与因此悬空的边
 // 都计数返回，前端据此提示「图里只有前 N 人」。
 type GraphData struct {
-	People        []*Person          `json:"people"`
-	Relationships []*Relationship    `json:"relationships"`
-	Tags          map[string][]*Tag  `json:"tags"`
-	TotalPeople   int                `json:"total_people"`
-	Truncated     bool               `json:"truncated"`
-	DroppedEdges  int                `json:"dropped_edges"`
+	People        []*Person         `json:"people"`
+	Relationships []*Relationship   `json:"relationships"`
+	Tags          map[string][]*Tag `json:"tags"`
+	TotalPeople   int               `json:"total_people"`
+	Truncated     bool              `json:"truncated"`
+	DroppedEdges  int               `json:"dropped_edges"`
 }
 
 func (s *Store) RelationshipGraph(ctx context.Context) (*GraphData, error) {
 	out := &GraphData{People: []*Person{}, Relationships: []*Relationship{}, Tags: map[string][]*Tag{}}
 	people, err := s.PersonList(ctx, "", 0, 0, false, 0, graphNodeLimit, 0)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	total, err := s.PersonCount(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	rels, err := s.RelationshipList(ctx)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	ids := make([]string, len(people))
 	kept := make(map[string]bool, len(people))
 	for i, p := range people {
@@ -1744,7 +2052,9 @@ func (s *Store) RelationshipGraph(ctx context.Context) (*GraphData, error) {
 		}
 	}
 	tags, err := s.TagsFor(ctx, ids)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	out.People = people
 	out.Tags = tags
 	out.TotalPeople = total
@@ -1755,18 +2065,20 @@ func (s *Store) RelationshipGraph(ctx context.Context) (*GraphData, error) {
 // ===== Attachments =====
 
 type Attachment struct {
-	ID        string `json:"id"`
+	ID         string `json:"id"`
 	EntityType string `json:"entity_type"`
-	EntityID  string `json:"entity_id"`
-	FileName  string `json:"file_name"`
+	EntityID   string `json:"entity_id"`
+	FileName   string `json:"file_name"`
 	StoredName string `json:"stored_name"`
-	Mime      string `json:"mime"`
-	Size      int    `json:"size"`
-	CreatedAt string `json:"created_at"`
+	Mime       string `json:"mime"`
+	Size       int    `json:"size"`
+	CreatedAt  string `json:"created_at"`
 }
 
 func (s *Store) AttachmentCreate(ctx context.Context, a *Attachment) error {
-	if a.ID == "" { a.ID = uuid.NewString() }
+	if a.ID == "" {
+		a.ID = uuid.NewString()
+	}
 	a.CreatedAt = nowUTC()
 	_, err := s.DB.ExecContext(ctx, "INSERT INTO attachments(id,entity_type,entity_id,file_name,stored_name,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)",
 		a.ID, a.EntityType, a.EntityID, a.FileName, a.StoredName, a.Mime, a.Size, a.CreatedAt)
@@ -1786,7 +2098,9 @@ func (s *Store) AttachmentDelete(ctx context.Context, id string) (*Attachment, e
 
 func (s *Store) AttachmentsOf(ctx context.Context, entityType, entityID string) ([]*Attachment, error) {
 	rows, err := s.DB.QueryContext(ctx, "SELECT id,entity_type,entity_id,file_name,stored_name,mime,size,created_at FROM attachments WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC", entityType, entityID)
-	if err != nil { return nil, err }
+	if err != nil {
+		return nil, err
+	}
 	defer rows.Close()
 	list := []*Attachment{}
 	for rows.Next() {
