@@ -19,7 +19,12 @@ type Config struct {
 	CORSOrigins []string
 }
 
-func Load() *Config {
+// Resolve 只按环境变量算出各路径，不碰文件系统。
+//
+// 与 Load 的差别就是「不建目录」这一条：`qiansi backup` 这类导出进程由外部备份工具
+// 在应用运行时经 docker exec 调起，库不存在时它必须直接失败，而不是先把 data/
+// 建出来、再对着一个空库产出一份「看着合法」的备份。
+func Resolve() *Config {
 	cfg := &Config{
 		Addr:    getenv("QIANSI_ADDR", ":8080"),
 		DataDir: getenv("QIANSI_DATA_DIR", "data"),
@@ -29,6 +34,12 @@ func Load() *Config {
 	cfg.DBPath = filepath.Join(cfg.DataDir, "qiansi.db")
 	cfg.Uploads = filepath.Join(cfg.DataDir, "uploads")
 	cfg.Backups = filepath.Join(cfg.DataDir, "backups")
+	return cfg
+}
+
+// Load 解析配置并保证数据目录存在（服务路径：首次启动即建目录、建库）。
+func Load() *Config {
+	cfg := Resolve()
 	_ = os.MkdirAll(cfg.DataDir, 0o755)
 	_ = os.MkdirAll(cfg.Uploads, 0o755)
 	_ = os.MkdirAll(cfg.Backups, 0o755)

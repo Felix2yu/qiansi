@@ -67,6 +67,34 @@ data/
 - 设置页「导出数据库」会生成一份一致性快照（等同于在线热备份），「从备份恢复」会先把当前数据归档再覆盖
 - 冷备份：`docker compose stop` 后直接拷贝 `qiansi.db`（连同 `-wal`/`-shm`，如有）
 
+### 命令行导出：`qiansi backup`
+
+热拷贝正在写入的 `qiansi.db` 不是原子操作，可能拷出损坏的副本或漏掉 `-wal` 里已提交的数据。
+因此导出由应用自身完成：`backup` 子命令用 `VACUUM INTO` 生成事务级一致快照写到 stdout，
+不跑迁移、不建目录、不改源库（库文件不存在时直接报错，绝不交出一份空备份）。
+外部备份工具（docker-db-auto-backup）正是经 `docker exec` 采集这段 stdout。
+
+```bash
+# db 形态（默认）：只有数据库
+docker exec qiansi qiansi backup > qiansi-$(date +%F).db
+
+# zip 形态：数据库 + uploads 图片
+docker exec qiansi qiansi backup --format zip > qiansi-$(date +%F).zip
+```
+
+| 形态 | 内容 | 是否完整备份 | 恢复 |
+|---|---|---|---|
+| `db`（默认） | 仅 `qiansi.db` | **不完整**：`uploads/` 里的头像等图片附件不在库内，需另行备份 | 把文件放回 `/data` 卷（修好属主）重启容器 |
+| `zip` | `qiansi.db` + `uploads/<原目录结构>` | 完整：库与库外文件一次带走 | 解包后 `.db` 放回 `/data`、`uploads/` 放回 `/data/uploads`，重启容器 |
+
+- 默认是 `db`，因为备份工具的 SQLite 产物默认按 `.db` 与 SQLite 魔数校验；
+  用 `zip` 必须同时声明 `BACKUP_SQLITE_EXT: "zip"`，否则校验失败、该轮备份标记为失败（不静默存坏备份）。
+- 应用没有导入 zip 的入口（`/api/v1/import/json` 只吃 JSON、`/api/v1/backup/restore` 只吃单个 `.db`），
+  所以 zip 走上面那条「解包放回」的路子。
+- 只想要一份完整档案又不想动环境变量：直接定期跑 `--format zip` 重定向到数据目录之外即可。
+
+日志一律走 stderr，stdout 只有产物字节，因此上面的重定向不需要额外处理。
+
 ## 本地开发
 
 依赖：Go 1.27+、Node 26+（构建前端）。

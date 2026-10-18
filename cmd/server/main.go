@@ -2,6 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +16,7 @@ import (
 	"time"
 
 	"github.com/qiansi/app/internal/api"
+	"github.com/qiansi/app/internal/backup"
 	bsched "github.com/qiansi/app/internal/backup/scheduler"
 	"github.com/qiansi/app/internal/config"
 	"github.com/qiansi/app/internal/db"
@@ -20,6 +25,18 @@ import (
 )
 
 func main() {
+	// 外部备份工具（docker-db-auto-backup）经 docker exec 调用 `qiansi backup`，
+	// 把一致性快照写到 stdout。必须拦在最前面——早于 flag 解析、config 加载、存储初始化、
+	// 迁移、后台调度器与 HTTP 服务：导出进程只做导出这一件事。
+	// 尤其不能走 config.Load，它会 MkdirAll：库不存在时导出要报错，而不是先建目录再产一个空库。
+	// stdout 只承载产物字节，日志一律留在 stderr（Go 的 log 默认就写 stderr）。
+	if len(os.Args) > 1 && os.Args[1] == "backup" {
+		if err := runBackup(os.Args[2:], os.Stdout); err != nil {
+			log.Fatalf("备份导出失败: %v", err)
+		}
+		return
+	}
+
 	cfg := config.Load()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -79,6 +96,51 @@ func main() {
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelShutdown()
 		_ = srv.Shutdown(shutdownCtx)
+	}
+}
+
+// runBackup 实现 `qiansi backup`：把一份备份写到 w（由调用方给 os.Stdout）。
+//
+// db（默认）= SQLite 自身的一致性快照（VACUUM INTO），产物只有数据库；
+// zip = 快照 + uploads 目录，牵丝的图片存在库外，只有 zip 形态是「一份产物还原全部」。
+// 默认取 db 是为了对上备份工具的默认扩展名：改用 zip 必须同时告诉它 BACKUP_SQLITE_EXT=zip，
+// 否则工具会拿 SQLite 魔数去校验 zip 产物，这一轮备份判失败（不静默存坏备份）。
+//
+// 库路径沿用应用自己的解析（QIANSI_DATA_DIR，默认 data/qiansi.db）；
+// -db 只是「导出别处的库」留的口子，uploads 目录按它的父目录一起算。
+func runBackup(args []string, w io.Writer) error {
+	fs := flag.NewFlagSet("qiansi backup", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr) // 用法错误与 -h 只能进 stderr，stdout 留给产物
+	dbPath := fs.String("db", "", "SQLite 数据文件路径（默认按 QIANSI_DATA_DIR 解析）")
+	format := fs.String("format", "db", "导出格式：db（SQLite 一致性快照）或 zip（快照 + uploads）")
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil // -h 已自行打印到 stderr，不算失败
+		}
+		return err
+	}
+
+	cfg := config.Resolve()
+	if *dbPath != "" {
+		cfg.DBPath = *dbPath
+		cfg.Uploads = filepath.Join(filepath.Dir(*dbPath), "uploads")
+	}
+
+	// 只读式打开：不建目录、不跑迁移。库打不开就直接失败，交出一份空备份比不备份更糟。
+	database, err := db.OpenForExport(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+
+	ctx := context.Background()
+	switch strings.ToLower(strings.TrimSpace(*format)) {
+	case "db":
+		return backup.WriteSnapshot(ctx, database, cfg.DBPath, w)
+	case "zip":
+		return backup.WriteZIP(ctx, database, cfg.DBPath, cfg.Uploads, w)
+	default:
+		return fmt.Errorf("未知格式 %q（可选 db / zip）", *format)
 	}
 }
 
