@@ -10,13 +10,10 @@
 #   /usr/local/bin/qiansi   服务二进制
 #   /app/web/dist           前端静态产物（运行时读取）
 #   /data                   唯一数据卷：SQLite 数据库、上传文件、备份
-
-FROM alpine:3.24
-
-# tzdata：牵丝的日期口径基于本机时区（internal/store/rhythm.go 用 time.Local
-#         解析自然日），容器里没有时区库会静默退化成 UTC，且只在容器里复现。
-# ca-certificates：外呼与 TLS 校验都依赖它。
-RUN apk add --no-cache ca-certificates tzdata
+#
+# 基镜 ghcr.io/felix2yu/base:alpine-3.24 已内置 ca-certificates、tzdata（牵丝的日期
+# 口径基于本机时区，缺了会静默退化成 UTC）、su-exec 与 PUID/PGID 降权入口。
+FROM ghcr.io/felix2yu/base:alpine-3.24
 
 WORKDIR /app
 
@@ -26,7 +23,8 @@ COPY dist /app/web/dist
 ENV TZ=Asia/Shanghai \
     QIANSI_ADDR=:8080 \
     QIANSI_DATA_DIR=/data \
-    QIANSI_WEB_DIR=/app/web/dist
+    QIANSI_WEB_DIR=/app/web/dist \
+    APP_DATA_DIR=/data
 
 VOLUME ["/data"]
 
@@ -36,4 +34,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD wget -qO- http://127.0.0.1:8080/api/v1/health >/dev/null || exit 1
 
-ENTRYPOINT ["/usr/local/bin/qiansi"]
+CMD ["/usr/local/bin/qiansi"]
