@@ -7,16 +7,16 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data
+      - ./data:/app/data
     environment:
       QIANSI_ADDR: ":8080"
-      QIANSI_DATA_DIR: "/data"
+      QIANSI_DATA_DIR: "/app/data"
       # 外部备份工具（docker-db-auto-backup）经 docker exec 调用的自导出命令：
-      # `qiansi backup` 把 VACUUM INTO 的 SQLite 一致性快照写到 stdout，只读、不跑迁移。
-      # 镜像里的二进制在 /usr/local/bin/qiansi（PATH 上），所以写裸名即可。
+      # `/app/qiansi backup` 把 VACUUM INTO 的 SQLite 一致性快照写到 stdout，只读、不跑迁移。
+      # 镜像里的二进制在 /app/qiansi，而 /app 不在 PATH 上，所以必须写绝对路径。
       # 导出身份沿用基镜烘入的 PUID/PGID（与数据属主一致），无需 BACKUP_SQLITE_USER。
-      BACKUP_SQLITE_CMD: "qiansi backup"
+      BACKUP_SQLITE_CMD: "/app/qiansi backup"
       # 想连带 uploads/ 一起备份就改用 zip 形态：把上面的命令写成
-      # "qiansi backup --format zip"，并同步声明 BACKUP_SQLITE_EXT: "zip"，
+      # "/app/qiansi backup --format zip"，并同步声明 BACKUP_SQLITE_EXT: "zip"，
       # 否则工具会按 SQLite 魔数校验 zip 产物，本轮备份直接判失败。
       # BACKUP_SQLITE_EXT: "zip"

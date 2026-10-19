@@ -28,10 +28,10 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      - ./data:/data
+      - ./data:/app/data
     environment:
       QIANSI_ADDR: ":8080"
-      QIANSI_DATA_DIR: "/data"
+      QIANSI_DATA_DIR: "/app/data"
 ```
 
 ```bash
@@ -45,7 +45,7 @@ docker compose up -d
 | 变量 | 默认值 | 说明 |
 |---|---|---|
 | `QIANSI_ADDR` | `:8080` | HTTP 监听地址 |
-| `QIANSI_DATA_DIR` | `data` | 数据目录（数据库、上传文件） |
+| `QIANSI_DATA_DIR` | `data` | 数据目录（数据库、上传文件；镜像内已固定为 `/app/data`） |
 | `QIANSI_WEB_DIR` | — | 前端静态文件目录（镜像内已固定为 `/app/web/dist`，一般无需设置） |
 | `QIANSI_TOKEN` | — | 访问令牌。设置后 `/api/` 与 `/uploads/` 需要 `Authorization: Bearer <token>`；不设则放行 |
 | `QIANSI_CORS_ORIGINS` | — | 允许跨域的来源，逗号分隔。默认不返回 CORS 头（仅同源可用） |
@@ -54,10 +54,10 @@ docker compose up -d
 
 ## 数据与备份
 
-所有状态都在挂载的数据目录里，备份即备份该目录：
+所有状态都在挂载的数据目录里（容器内 `/app/data`，由 `QIANSI_DATA_DIR` 指定），备份即备份该目录：
 
 ```
-data/
+/app/data/          # 容器内数据目录；绑定挂载时对应宿主的 ./data
 ├── qiansi.db        # SQLite 数据库（WAL 模式，含 -wal/-shm 边车文件）
 ├── uploads/         # 上传的图片附件（头像等）
 └── backups/         # 归档快照（每日 04:00 自动一份，最多保留 7 份）
@@ -76,16 +76,18 @@ data/
 
 ```bash
 # db 形态（默认）：只有数据库
-docker exec qiansi qiansi backup > qiansi-$(date +%F).db
+docker exec qiansi /app/qiansi backup > qiansi-$(date +%F).db
 
 # zip 形态：数据库 + uploads 图片
-docker exec qiansi qiansi backup --format zip > qiansi-$(date +%F).zip
+docker exec qiansi /app/qiansi backup --format zip > qiansi-$(date +%F).zip
 ```
+
+> 镜像里的二进制在 `/app/qiansi`，而 `/app` 不在 `PATH` 上，所以 `docker exec` 要写绝对路径。
 
 | 形态 | 内容 | 是否完整备份 | 恢复 |
 |---|---|---|---|
-| `db`（默认） | 仅 `qiansi.db` | **不完整**：`uploads/` 里的头像等图片附件不在库内，需另行备份 | 把文件放回 `/data` 卷（修好属主）重启容器 |
-| `zip` | `qiansi.db` + `uploads/<原目录结构>` | 完整：库与库外文件一次带走 | 解包后 `.db` 放回 `/data`、`uploads/` 放回 `/data/uploads`，重启容器 |
+| `db`（默认） | 仅 `qiansi.db` | **不完整**：`uploads/` 里的头像等图片附件不在库内，需另行备份 | 把文件放回 `/app/data` 卷（修好属主）重启容器 |
+| `zip` | `qiansi.db` + `uploads/<原目录结构>` | 完整：库与库外文件一次带走 | 解包后 `.db` 放回 `/app/data`、`uploads/` 放回 `/app/data/uploads`，重启容器 |
 
 - 默认是 `db`，因为备份工具的 SQLite 产物默认按 `.db` 与 SQLite 魔数校验；
   用 `zip` 必须同时声明 `BACKUP_SQLITE_EXT: "zip"`，否则校验失败、该轮备份标记为失败（不静默存坏备份）。
