@@ -182,7 +182,7 @@
               class="mt-2 h-2 w-2 rounded-full"
               style="background: #ef4444;"
             ></div>
-          {:else}<div class="mt-2 h-2 w-2 rounded-full" style="background: #6366f1;"></div>{/if}
+          {:else}<div class="mt-2 h-2 w-2 rounded-full" style="background: #9E2A2B;"></div>{/if}
           <div class="min-w-0 flex-1">
             <div class="text-sm">{t.title}</div>
             <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
@@ -264,7 +264,7 @@
         >
           <div
             class="mt-2 h-2 w-2 rounded-full"
-            style="background: {e.type_color || '#6366f1'};"
+            style="background: {e.type_color || '#9E2A2B'};"
           ></div>
           <div class="min-w-0 flex-1">
             <div class="flex items-start justify-between gap-2">

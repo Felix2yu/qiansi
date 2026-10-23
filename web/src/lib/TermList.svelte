@@ -28,7 +28,7 @@
     onchange: () => void;
   } = $props();
 
-  let draft = $state({ name: '', color: '#6366f1' });
+  let draft = $state({ name: '', color: '#9E2A2B' });
   let editingId = $state(0);
   let editForm = $state({ name: '', color: '' });
   let busy = $state(false);

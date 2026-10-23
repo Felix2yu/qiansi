@@ -19,7 +19,7 @@ export const THEME_LABEL: Record<ThemeMode, string> = {
 // 推荐主题色：主题色在界面里主要当按钮/选中态的底色用，上面压白字，
 // 所以一律挑深色（对白字对比度 ≥ 3.9），浅粉浅黄这类点下去按钮就看不清了。
 export const THEME_PRESETS = [
-  { name: '靛蓝（默认）', color: '#6366f1' },
+  { name: '沉绛（默认）', color: '#9E2A2B' },
   { name: '紫罗兰', color: '#7c3aed' },
   { name: '海蓝', color: '#0284c7' },
   { name: '青碧', color: '#0d9488' },
@@ -53,7 +53,7 @@ function readMode(): ThemeMode {
 
 export const theme = $state<{ mode: ThemeMode; color: string }>({
   mode: readMode(),
-  color: localStorage.getItem(KEY_COLOR) || '#6366f1'
+  color: localStorage.getItem(KEY_COLOR) || '#9E2A2B'
 });
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -64,12 +64,20 @@ export function isDark(): boolean {
   return theme.mode === 'dark';
 }
 
+/**
+ * 暗色模式下把主题色提亮一档：沉绛 #9E2A2B 压在暗底（#0b1020）上可见度偏低，
+ * 换成手调的亮绛 #C0392B 才看得清选中态/按钮描边。其他色暂沿用原值。
+ */
+function darkAccent(color: string): string {
+  return color.trim().toLowerCase() === '#9e2a2b' ? '#c0392b' : color;
+}
+
 /** 把当前状态写进 DOM。首屏与每次切换都调它，逻辑只有这一份。 */
 export function applyTheme() {
   const root = document.documentElement;
   root.classList.toggle('dark', isDark());
   root.style.colorScheme = isDark() ? 'dark' : 'light';
-  root.style.setProperty('--q-theme', theme.color);
+  root.style.setProperty('--q-theme', isDark() ? darkAccent(theme.color) : theme.color);
   // 移动端浏览器地址栏/状态栏跟随页面配色
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (meta) meta.content = isDark() ? '#0b1020' : theme.color;

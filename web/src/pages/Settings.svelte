@@ -573,7 +573,7 @@
           disabled={rhythmToggling}
           onchange={() => toggleRhythm(rhythmOn)}
           aria-label="按联系节奏派生待办与推送"
-          class="h-4 w-4 accent-indigo-500"
+          class="h-4 w-4 accent-[var(--q-theme)]"
         />
         {rhythmOn ? '按节奏提醒' : '已关闭提醒'}
       </label>
@@ -738,7 +738,7 @@
               <input
                 type="checkbox"
                 bind:checked={status.schedule.enabled}
-                class="h-4 w-4 accent-indigo-500"
+                class="h-4 w-4 accent-[var(--q-theme)]"
               />
               {auto.schedule.enabled ? '已开启' : '已关闭'}
             </label>

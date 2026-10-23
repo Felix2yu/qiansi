@@ -24,7 +24,7 @@ export default defineConfig({
         display_override: ['standalone', 'minimal-ui'],
         orientation: 'any',
         background_color: '#f8fafc',
-        theme_color: '#6366f1',
+        theme_color: '#9E2A2B',
         categories: ['productivity', 'social'],
         icons: [
           { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any' },
@@ -40,6 +40,12 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable'
+          },
+          {
+            src: '/icon-monochrome-512.png',
+            sizes: '512x512',
+            type: 'image/png',
+            purpose: 'monochrome'
           },
           { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' }
         ]

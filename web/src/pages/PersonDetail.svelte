@@ -815,7 +815,7 @@
                 ></div>
               {:else}<div
                   class="mt-2 h-2 w-2 shrink-0 rounded-full"
-                  style="background: #6366f1;"
+                  style="background: #9E2A2B;"
                 ></div>{/if}
               <div class="min-w-0 flex-1">
                 <div class="flex items-start justify-between gap-2">
