@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	github.com/6tail/lunar-go v1.4.6
-	github.com/go-chi/chi/v5 v5.4.0
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-chi/cors v1.2.2
 	github.com/google/uuid v1.6.0
 	github.com/unraid/apprise-go v0.3.3
