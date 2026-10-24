@@ -1,6 +1,6 @@
 @import 'tailwindcss';
 :root {
-  --q-theme: #9E2A2B; /* 主色（沉绛）；暗色模式的提亮档由 theme.svelte.ts 的 applyTheme 写入，别在 html.dark 里改（会被内联值覆盖） */
+  --q-theme: #9e2a2b; /* 主色（沉绛）；暗色模式的提亮档由 theme.svelte.ts 的 applyTheme 写入，别在 html.dark 里改（会被内联值覆盖） */
   --q-bg: #f8fafc;
   --q-surface: #ffffff;
   --q-text: #1e293b;
