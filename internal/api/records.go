@@ -22,6 +22,11 @@ func (a *API) registerEvents(r chi.Router) {
 		r.Post("/", a.eventCreate)
 		r.Put("/{id}", a.eventUpdate)
 		r.Delete("/{id}", a.eventDelete)
+		// 货殖账单关联：一次往来可以挂多张，单独成组而不是塞进事件体里——
+		// 关联/解除是即时生效的独立动作，不该要求把整张表单重新提交一遍。
+		r.Post("/{id}/bills", a.eventBillsLink)
+		r.Post("/{id}/bills/refresh", a.eventBillsRefresh)
+		r.Delete("/{id}/bills/{billID}", a.eventBillsUnlink)
 	})
 }
 
@@ -202,6 +207,19 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 	body.Event.Locations = cleanStrings(body.Event.Locations)
 	if len(body.Event.Locations) > 0 {
 		body.Event.Location = strings.Join(body.Event.Locations, " · ")
+	}
+	// 有货殖账单时手填开销一律不认：账单是权威，两边同时写会让同一笔钱算两次。
+	// 前端已把输入框置为只读，这里拦的是绕过界面的调用（脚本、旧版本页面）。
+	if body.Event.ExpenseFen > 0 {
+		has, err := a.Store.EventHasBills(r.Context(), id)
+		if err != nil {
+			writeStoreErr(w, err)
+			return
+		}
+		if has {
+			writeErr(w, 409, "该往来已关联货殖账单，开销按账单汇总；要手填请先解除关联")
+			return
+		}
 	}
 	expense, err := eventExpense(&body.Event, body.ParticipantIDs)
 	if err != nil {

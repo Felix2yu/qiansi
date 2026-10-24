@@ -55,6 +55,7 @@ func New(s *store.Store, cfg *config.Config) *API {
 	api.registerPeople(r)
 	api.registerRelationships(r)
 	api.registerEvents(r)
+	api.registerHuozhi(r)
 	api.registerMemos(r)
 	api.registerTransactions(r)
 	api.registerAnniversaries(r)

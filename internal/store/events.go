@@ -34,6 +34,9 @@ type Event struct {
 	ExpenseFen      int            `json:"expense_fen,omitempty"` // 关联开销合计（分）
 	ExpensePersonID string         `json:"expense_person_id,omitempty"`
 	Expenses        []*Transaction `json:"expenses,omitempty"`
+	// 关联的货殖账单（1:N）。有账单时 expense_fen 取账单之和，见 eventColumns。
+	Bills     []*EventBill `json:"bills,omitempty"`
+	BillCount int          `json:"bill_count,omitempty"`
 	// 事件自带的那笔礼金（N2）。金额/方向/归属都是 transactions 的投影，
 	// 写入时它们是表单上填的意图，读出时是账本上的现状；
 	// GiftTransactionID 指向被事件认领的那一条，手工登记的礼单不在其列。
@@ -270,12 +273,20 @@ func (s *Store) EventPurge(ctx context.Context, id string) error {
 // 再算进「花费」会让同一笔 800 在一张卡片上出现两次。
 // 后面三列是事件自带那笔礼金的投影：金额/方向/归属都从 transactions 读，
 // 事件表里只留一个认领用的 id。
+//
+// 第一列开销有两套口径，按「有没有关联货殖账单」切换：
+// 有账单 → 账单金额之和（账单是权威，手填的那笔不再计入，否则同一笔钱算两次）；
+// 没账单 → 沿用原有 logic：挂在本往来上的支出交易之和，减去自带礼金那笔。
 const eventColumns = `e.id,e.title,e.type_id,e.event_date,e.location,e.locations,e.has_gift,e.gift,e.summary,e.created_at,e.updated_at,et.name,et.color,
-(SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id),
+(CASE WHEN EXISTS(SELECT 1 FROM event_bills eb WHERE eb.event_id=e.id)
+  THEN (SELECT COALESCE(SUM(eb.amount_fen),0) FROM event_bills eb WHERE eb.event_id=e.id)
+  ELSE (SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id)
+ END),
 (SELECT COALESCE((SELECT t.id FROM live_transactions t WHERE t.id=e.gift_transaction_id),'')),
 (SELECT t.amount_fen FROM live_transactions t WHERE t.id=e.gift_transaction_id),
 (SELECT t.direction FROM live_transactions t WHERE t.id=e.gift_transaction_id),
-(SELECT t.person_id FROM live_transactions t WHERE t.id=e.gift_transaction_id)`
+(SELECT t.person_id FROM live_transactions t WHERE t.id=e.gift_transaction_id),
+(SELECT COUNT(*) FROM event_bills eb WHERE eb.event_id=e.id)`
 
 func scanEvent(rows *sql.Rows) (*Event, error) {
 	e := &Event{}
@@ -284,7 +295,7 @@ func scanEvent(rows *sql.Rows) (*Event, error) {
 	var giftFen sql.NullInt64
 	if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &locs, &e.HasGift, &e.Gift, &e.Summary,
 		&e.CreatedAt, &e.UpdatedAt, &tn, &tc, &e.ExpenseFen,
-		&giftTx, &giftFen, &giftDir, &giftPerson); err != nil {
+		&giftTx, &giftFen, &giftDir, &giftPerson, &e.BillCount); err != nil {
 		return nil, err
 	}
 	if tn.Valid {
@@ -1762,6 +1773,12 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id
 	}
 	if exps, err := s.EventExpenses(ctx, e.ID); err == nil {
 		e.Expenses = exps
+	}
+	// prows 已迭代完（Next 返回 false 时 database/sql 会自动关闭），
+	// 单连接池下再发查询不会争锁。
+	if bills, err := s.EventBills(ctx, e.ID); err == nil {
+		e.Bills = bills
+		e.BillCount = len(bills)
 	}
 	return e, nil
 }

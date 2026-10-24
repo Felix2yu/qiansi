@@ -138,10 +138,59 @@ export type Event = {
   expense_fen?: number;
   expense_person_id?: string;
   expenses?: Transaction[];
+  /** 关联的货殖账单（1:N）。有账单时 expense_fen 是账单之和，手填金额不再计入 */
+  bills?: EventBill[];
+  bill_count?: number;
   /** 事件自带的那笔礼金（N2），金额/方向/归属都是 transactions 的投影 */ gift_transaction_id?: string;
   gift_amount_fen?: number;
   gift_direction?: 'out' | 'in' | string;
   gift_person_id?: string;
+};
+
+/** 往来关联的一条货殖账单（快照）。账单本体在货殖，删除请去货殖操作。 */
+export type EventBill = {
+  id: string;
+  event_id: string;
+  remote_id: string;
+  remote_base?: string;
+  amount_fen: number;
+  type?: string;
+  tx_date?: string;
+  description?: string;
+  category_name?: string;
+  account_name?: string;
+  book_name?: string;
+  created_at: string;
+  synced_at: string;
+};
+
+/** 货殖账单搜索结果里的一项（金额单位为分，与牵丝一致） */
+export type HuozhiBill = {
+  id: number;
+  amount_fen: number;
+  type: string;
+  tx_date: string;
+  description: string;
+  merchant?: string;
+  location?: string;
+  category_name?: string;
+  account_name?: string;
+  book_name?: string;
+};
+
+export type HuozhiSearchResult = {
+  items: HuozhiBill[];
+  total: number;
+  page: number;
+  page_size: number;
+  base: string;
+};
+
+export type HuozhiStatus = {
+  configured: boolean;
+  ok: boolean;
+  base?: string;
+  error?: string;
 };
 export type Memo = {
   id: string;

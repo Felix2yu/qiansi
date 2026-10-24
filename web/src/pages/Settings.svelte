@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { navigate } from '../lib/router';
-  import { API, gradeLabel, type BackupItem, type BackupStatus, type RhythmTier } from '../lib/api';
+  import {
+    API,
+    gradeLabel,
+    type BackupItem,
+    type BackupStatus,
+    type RhythmTier,
+    type HuozhiStatus
+  } from '../lib/api';
   import TermList from '../lib/TermList.svelte';
   import {
     Download,
@@ -15,7 +22,8 @@
     SlidersHorizontal,
     Users,
     Database,
-    KeyRound
+    KeyRound,
+    Link2
   } from '@lucide/svelte';
   import {
     theme,
@@ -36,6 +44,12 @@
   let settings = $state<Record<string, string>>({});
   let appriseUrls = $state('');
   let pushHour = $state(9);
+
+  // 货殖对接：地址与密钥都存在 settings 表里，密钥只在本机服务端使用
+  let hzBase = $state('');
+  let hzKey = $state('');
+  let hzStatus = $state<HuozhiStatus | null>(null);
+  let hzBusy = $state(false);
 
   // 这三个字典在本页编辑，改完必须显式刷新，否则别的页面还是旧名单
   const categories = $derived(dict.categories);
@@ -172,6 +186,8 @@
       pushHour = parseInt(s['push_time_hour'] || '9', 10);
       selfId = s['self_person_id'] || '';
       selfSaved = selfId;
+      hzBase = s['huozhi_base_url'] || '';
+      hzKey = s['huozhi_api_key'] || '';
       rhythmOn = !['0', 'false', 'off', 'no'].includes(
         (s['contact_rhythm_enabled'] || '').trim().toLowerCase()
       );
@@ -182,6 +198,32 @@
     });
     if (b) backups = b;
     await Promise.all([loadAuto(), loadRhythm()]);
+    void checkHuozhi();
+  }
+
+  // checkHuozhi 只报告状态，不弹错：设置页开着的时候货殖没启动是常见情形，
+  // 每次进页面都弹一次红条属于噪声。
+  async function checkHuozhi() {
+    hzStatus = await API.get<HuozhiStatus>('/api/v1/huozhi/status').catch(() => null);
+  }
+
+  async function saveHuozhi() {
+    hzBusy = true;
+    try {
+      await API.post('/api/v1/settings/bulk', {
+        huozhi_base_url: hzBase.trim(),
+        huozhi_api_key: hzKey.trim()
+      });
+    } catch (err) {
+      toast.fail('保存货殖配置失败', err);
+      hzBusy = false;
+      return;
+    }
+    // 保存之后立刻打一次真实请求，让「填了但连不通」当场暴露，而不是等关联账单时才报错
+    await checkHuozhi();
+    hzBusy = false;
+    if (hzStatus?.ok) toast.ok('货殖连接正常');
+    else toast.error(hzStatus?.error || '货殖连接失败，请检查地址与密钥');
   }
 
   async function loadAuto() {
@@ -675,6 +717,54 @@
         支持 bark、feishu、telegram、discord、smtp 等 100+ 渠道；一行一个 URL，逗号或换行分隔。
       </p>
     </div>
+  </section>
+
+  <section
+    class="rounded-xl p-5"
+    style="background: var(--q-surface); border: 1px solid var(--q-border);"
+  >
+    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold"><Link2 size={14} /> 货殖账单</h2>
+    <p class="mb-3 text-xs leading-relaxed" style="color: var(--q-muted);">
+      关联后，一次往来的开销可以来自货殖里的多张账单，往来卡片按账单汇总。
+      牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端。
+    </p>
+    <div class="space-y-2">
+      <div class="flex flex-wrap items-center gap-2">
+        <input
+          bind:value={hzBase}
+          placeholder="货殖地址，如 https://huozhi.example.com"
+          class="min-w-[220px] flex-1 rounded-lg px-3 py-1.5 text-sm outline-none"
+          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+        />
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <input
+          bind:value={hzKey}
+          type="password"
+          autocomplete="off"
+          placeholder="API Key（货殖 → 设置 → API 密钥）"
+          class="min-w-[220px] flex-1 rounded-lg px-3 py-1.5 font-mono text-sm outline-none"
+          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+        />
+        <button
+          class="shrink-0 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap text-white disabled:opacity-50"
+          style="background: var(--q-theme);"
+          disabled={hzBusy}
+          onclick={saveHuozhi}>{hzBusy ? '检查中…' : '保存并测试'}</button
+        >
+      </div>
+    </div>
+    {#if hzStatus}
+      <p class="mt-2 text-xs" style="color: {hzStatus.ok ? 'var(--q-ok)' : 'var(--q-danger)'};">
+        {#if !hzStatus.configured}
+          还没有配置。填好地址与密钥后点「保存并测试」。
+        {:else if hzStatus.ok}
+          连接正常{hzStatus.base ? ` · ${hzStatus.base}` : ''}
+        {:else}
+          连接失败：{hzStatus.error || '未知错误'}
+        {/if}
+      </p>
+    {/if}
   </section>
 
   <section

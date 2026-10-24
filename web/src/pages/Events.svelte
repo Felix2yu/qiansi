@@ -283,14 +283,23 @@
               </div>
             </div>
             <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-              {e.type_name && `[${e.type_name}] `}
-              {new Date(e.event_date).toLocaleDateString()}
-              {locText(e) && ` · ${locText(e)}`}
-              {e.participants &&
-                e.participants.length > 0 &&
-                ` · ${selfFirst(e.participants)
-                  .map((p) => personLabel(p))
-                  .join(', ')}`}
+              {#if e.type_name}<span>[{e.type_name}]</span>{/if}
+              <span>{new Date(e.event_date).toLocaleDateString()}</span>
+              {#if locText(e)}<span> · {locText(e)}</span>{/if}
+              {#if e.participants && e.participants.length > 0}
+                <span> · </span>
+                {#each selfFirst(e.participants) as p, i (p.id)}
+                  {#if i > 0}<span>, </span>{/if}
+                  <a
+                    class="link-quiet"
+                    href={`/people/${p.id}`}
+                    onclick={(ev) => {
+                      ev.preventDefault();
+                      navigate(`/people/${p.id}`);
+                    }}>{personLabel(p)}</a
+                  >
+                {/each}
+              {/if}
             </div>
             <div class="mt-1.5 flex flex-wrap gap-1.5">
               {#if e.has_gift}
@@ -305,6 +314,13 @@
                   class="rounded px-1.5 py-0.5 text-xs"
                   style="background: var(--q-bg); border: 1px solid var(--q-border);"
                   >花费 ¥{yuan(e.expense_fen)}</span
+                >
+              {/if}
+              {#if e.bill_count}
+                <span
+                  class="rounded px-1.5 py-0.5 text-xs"
+                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+                  title="开销由货殖账单汇总">货殖 {e.bill_count} 笔</span
                 >
               {/if}
               {#if e.gift_amount_fen}

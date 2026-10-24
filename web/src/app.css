@@ -41,3 +41,16 @@ html.dark body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+
+/* 安静的内联链接：沿用所在行的弱化色，hover/聚焦才亮成主色并出现下划线。
+   用于列表里的姓名等「文字本身就是入口」的场景，不额外加按钮底框。 */
+.link-quiet {
+  color: inherit;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.link-quiet:hover,
+.link-quiet:focus-visible {
+  color: var(--q-theme);
+  text-decoration: underline;
+}
