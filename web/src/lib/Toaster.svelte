@@ -12,28 +12,26 @@
 </script>
 
 <div
-  class="pointer-events-none fixed inset-x-0 bottom-4 z-[60] flex flex-col items-center gap-2 px-4"
+  class="pointer-events-none fixed inset-x-0 bottom-4 z-[80] flex flex-col items-center gap-2 px-4"
   role="status"
   aria-live="polite"
 >
   {#each toasts as t (t.id)}
     {@const Icon = ICON[t.kind]}
     <div
-      class="toast-item pointer-events-auto flex w-full max-w-md items-start gap-2 rounded-xl px-3 py-2 text-sm"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); box-shadow: 0 8px 24px rgba(0,0,0,.16);"
+      class="toast-item pointer-events-auto flex w-full max-w-md items-start gap-2.5 rounded-[var(--q-radius)] px-3.5 py-2.5 text-sm"
+      style="background: var(--q-surface); border: 1px solid var(--q-border); box-shadow: var(--q-shadow-pop);"
     >
       <span class="mt-0.5 shrink-0" style="color: {COLOR[t.kind]};"><Icon size={15} /></span>
       <span class="min-w-0 flex-1" style="word-break: break-word;">{t.text}</span>
       {#if t.onUndo}
         <button
-          class="shrink-0 rounded-md px-2 py-0.5 text-sm font-medium"
-          style="color: var(--q-theme); background: var(--q-bg);"
+          class="q-btn q-btn--sm q-btn--ghost shrink-0 !px-2 !py-0.5"
           onclick={() => runUndo(t)}>{t.undoLabel}</button
         >
       {/if}
       <button
-        class="shrink-0 p-0.5"
-        style="color: var(--q-muted);"
+        class="q-iconbtn !h-6 !w-6 shrink-0"
         title="关闭"
         aria-label="关闭提示"
         onclick={() => dismiss(t.id)}><X size={14} /></button
@@ -44,12 +42,12 @@
 
 <style>
   .toast-item {
-    animation: q-toast-in 0.16s ease-out;
+    animation: q-toast-in 0.18s cubic-bezier(0.22, 0.8, 0.3, 1);
   }
   @keyframes q-toast-in {
     from {
       opacity: 0;
-      transform: translateY(8px);
+      transform: translateY(10px);
     }
     to {
       opacity: 1;

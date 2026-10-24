@@ -23,7 +23,7 @@ export default defineConfig({
         display: 'standalone',
         display_override: ['standalone', 'minimal-ui'],
         orientation: 'any',
-        background_color: '#f8fafc',
+        background_color: '#f2ede2',
         theme_color: '#9E2A2B',
         categories: ['productivity', 'social'],
         icons: [

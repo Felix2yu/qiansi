@@ -11,8 +11,11 @@
     type Person
   } from '../lib/api';
   import PersonForm from '../lib/PersonForm.svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { navigate } from '../lib/router';
-  import { Search, Plus, Trash2, X, Upload, Download, Undo2 } from '@lucide/svelte';
+  import { Search, Plus, Trash2, Upload, Download, Undo2, Pencil, Users } from '@lucide/svelte';
   import { dict, ensure } from '../lib/dict.svelte';
   import { toast } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
@@ -35,9 +38,6 @@
     selectMode = false;
     selectedIds = [];
     load();
-  }
-  function tabStyle(active: boolean) {
-    return active ? 'background: var(--q-theme); color: #fff;' : 'color: var(--q-muted);';
   }
   let showForm = $state(false);
   let editing = $state<Person | null>(null);
@@ -302,15 +302,12 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between gap-3">
-    <div class="min-w-0">
-      <h1 class="text-2xl font-semibold">人物</h1>
-      <p class="mt-1 truncate text-sm" style="color: var(--q-muted);">
-        {onlyArchived ? '归档只是隐藏，取消归档即可找回' : '管理你的联系人档案'}
-      </p>
-    </div>
-    <div class="flex shrink-0 items-center gap-2">
+<div class="q-page">
+  <PageHeader
+    title="人物"
+    subtitle={onlyArchived ? '归档只是隐藏，取消归档即可找回' : '管理你的联系人档案'}
+  >
+    {#snippet actions()}
       <input
         type="file"
         accept=".vcf,.vcard,text/vcard,text/x-vcard"
@@ -318,210 +315,160 @@
         bind:this={vcardInput}
         onchange={importVCard}
       />
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap disabled:opacity-50"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-        disabled={importing}
-        onclick={exportVCard}
-      >
-        <Download size={14} /> 导出 vCard
+      <button class="q-btn q-btn--ghost q-btn--sm" disabled={importing} onclick={exportVCard}>
+        <Download size={14} /> 导出
       </button>
       <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap disabled:opacity-50"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
+        class="q-btn q-btn--ghost q-btn--sm"
         disabled={importing}
         onclick={() => vcardInput?.click()}
       >
         <Upload size={14} />
-        {importing ? '导入中…' : '导入 vCard'}
+        {importing ? '导入中…' : '导入'}
       </button>
       <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap disabled:opacity-50"
-        style={selectMode
-          ? 'background: var(--q-theme); border: 1px solid var(--q-theme); color: #fff;'
-          : 'background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);'}
+        class="q-btn q-btn--sm"
+        class:q-btn--primary={!selectMode}
+        class:q-btn--danger-ghost={selectMode}
         onclick={toggleSelectMode}
       >
         {selectMode ? '退出选择' : '批量'}
       </button>
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap text-white"
-        style="background: var(--q-theme);"
-        onclick={openCreate}
-      >
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
         <Plus size={14} /> 新建
       </button>
-    </div>
-  </header>
+    {/snippet}
+  </PageHeader>
 
-  <div class="flex flex-wrap gap-2">
-    <div
-      class="flex shrink-0 rounded-lg p-0.5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <button
-        class="rounded-md px-3 py-1.5 text-sm whitespace-nowrap"
-        style={tabStyle(!onlyArchived)}
-        onclick={() => {
-          if (onlyArchived) toggleArchived();
-        }}>联系人</button
-      >
-      <button
-        class="rounded-md px-3 py-1.5 text-sm whitespace-nowrap"
-        style={tabStyle(onlyArchived)}
-        onclick={() => {
-          if (!onlyArchived) toggleArchived();
-        }}>已归档</button
-      >
-    </div>
-    <div class="relative min-w-[200px] flex-1">
-      <Search
-        size={14}
-        class="absolute top-1/2 left-3 -translate-y-1/2"
-        style="color: var(--q-muted);"
-      />
-      <input
-        class="w-full rounded-lg py-2 pr-3 pl-9 text-sm outline-none"
-        placeholder="搜索…"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-        bind:value={q}
-        onkeydown={(e) => e.key === 'Enter' && load()}
-      />
-    </div>
-    <select
-      bind:value={selectedCat}
-      onchange={() => load()}
-      class="rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-    >
-      <option value={0}>全部圈子</option>
-      {#each categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
-    </select>
-    <select
-      bind:value={selectedTag}
-      onchange={() => load()}
-      class="rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-    >
-      <option value={0}>全部标签</option>
-      {#each tags as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
-    </select>
-    <select
-      bind:value={selectedGender}
-      onchange={() => load()}
-      class="rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-    >
-      <option value="">全部性别</option>
-      {#each GENDER_OPTIONS as o, i (i)}<option value={o.code}>{o.label}</option>{/each}
-      <option value="none">未填</option>
-    </select>
-  </div>
-
-  {#if selectMode}
-    <div
-      class="flex flex-wrap items-center gap-2 rounded-lg px-3 py-2"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <label
-        class="flex cursor-pointer items-center gap-1.5 text-sm select-none"
-        style="color: var(--q-text);"
-      >
-        <input type="checkbox" checked={allVisibleSelected()} onchange={toggleAll} />
-        全选本页
-      </label>
-      <span class="text-sm" style="color: var(--q-muted);">已选 {selectedIds.length} 位</span>
-      <div class="flex-1"></div>
-      <span class="text-sm" style="color: var(--q-muted);">批量更新</span>
-      <select
-        bind:value={bulkField}
-        onchange={resetBulkValue}
-        class="rounded-lg px-3 py-1.5 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        disabled={selectedIds.length === 0}
-      >
-        {#each BULK_FIELDS as f, i (i)}<option value={f.key}>{f.label}</option>{/each}
-      </select>
-      {#if bulkDef.options}
-        <select
-          bind:value={bulkValue}
-          class="rounded-lg px-3 py-1.5 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          disabled={selectedIds.length === 0}
+  <div class="q-stack">
+    <!-- 筛选工具条 -->
+    <div class="q-card q-card--tight flex flex-wrap items-center gap-2">
+      <div class="q-seg">
+        <button
+          aria-pressed={!onlyArchived}
+          class="q-seg__btn"
+          onclick={() => {
+            if (onlyArchived) toggleArchived();
+          }}>联系人</button
         >
-          {#each bulkDef.options as o, i (i)}<option value={o.v}>{o.t}</option>{/each}
-        </select>
-      {:else}
-        <input
-          bind:value={bulkValue}
-          placeholder="新的{bulkDef.label}"
-          class="w-32 rounded-lg px-3 py-1.5 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          disabled={selectedIds.length === 0}
+        <button
+          aria-pressed={onlyArchived}
+          class="q-seg__btn"
+          onclick={() => {
+            if (!onlyArchived) toggleArchived();
+          }}>已归档</button
+        >
+      </div>
+      <div class="relative min-w-[180px] flex-1">
+        <Search
+          size={14}
+          class="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2"
+          style="color: var(--q-faint);"
         />
-      {/if}
-      <label
-        class="flex cursor-pointer items-center gap-1.5 text-sm whitespace-nowrap select-none"
-        style="color: var(--q-text);"
-        title="勾上就只补没填过的人，已填的原值不动"
-      >
-        <input type="checkbox" bind:checked={bulkOnlyEmpty} />
-        只填空着的
-      </label>
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm"
-        style="background: var(--q-theme); color: #fff;"
-        disabled={selectedIds.length === 0 || busyBulk}
-        onclick={applyBulkField}
-      >
-        {busyBulk ? '应用中…' : '应用'}
-      </button>
-      <select
-        bind:value={bulkCat}
-        class="rounded-lg px-3 py-1.5 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        disabled={selectedIds.length === 0}
-      >
-        <option value={0}>加入圈子…</option>
+        <input
+          class="q-input !py-2 pl-9"
+          placeholder="搜索姓名、备注…"
+          bind:value={q}
+          onkeydown={(e) => e.key === 'Enter' && load()}
+        />
+      </div>
+      <select bind:value={selectedCat} onchange={() => load()} class="q-select !py-2">
+        <option value={0}>全部圈子</option>
         {#each categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
       </select>
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm"
-        style="background: var(--q-theme); color: #fff;"
-        disabled={selectedIds.length === 0 || bulkCat === 0}
-        onclick={addSelectedToCircle}
-      >
-        加入
-      </button>
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        disabled={selectedIds.length === 0}
-        onclick={askDeleteSelected}
-      >
-        删除选中
-      </button>
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm text-white"
-        style="background: #dc2626;"
-        onclick={askClearAll}
-      >
-        清空全部
-      </button>
+      <select bind:value={selectedTag} onchange={() => load()} class="q-select !py-2">
+        <option value={0}>全部标签</option>
+        {#each tags as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+      </select>
+      <select bind:value={selectedGender} onchange={() => load()} class="q-select !py-2">
+        <option value="">全部性别</option>
+        {#each GENDER_OPTIONS as o, i (i)}<option value={o.code}>{o.label}</option>{/each}
+        <option value="none">未填</option>
+      </select>
     </div>
-  {/if}
 
-  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-    {#each list as p (p.id)}
-      <div
-        class="rounded-xl p-4 transition hover:-translate-y-0.5"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-start gap-3">
+    {#if selectMode}
+      <div class="q-card q-card--tight flex flex-wrap items-center gap-2">
+        <label class="flex cursor-pointer items-center gap-1.5 text-sm select-none">
+          <input type="checkbox" checked={allVisibleSelected()} onchange={toggleAll} />
+          全选本页
+        </label>
+        <span class="q-badge q-badge--theme">已选 {selectedIds.length} 位</span>
+        <div class="flex-1"></div>
+        <span class="text-xs" style="color: var(--q-muted);">批量更新</span>
+        <select
+          bind:value={bulkField}
+          onchange={resetBulkValue}
+          class="q-select q-btn--sm !py-1.5"
+          disabled={selectedIds.length === 0}
+        >
+          {#each BULK_FIELDS as f, i (i)}<option value={f.key}>{f.label}</option>{/each}
+        </select>
+        {#if bulkDef.options}
+          <select
+            bind:value={bulkValue}
+            class="q-select q-btn--sm !py-1.5"
+            disabled={selectedIds.length === 0}
+          >
+            {#each bulkDef.options as o, i (i)}<option value={o.v}>{o.t}</option>{/each}
+          </select>
+        {:else}
+          <input
+            bind:value={bulkValue}
+            placeholder="新的{bulkDef.label}"
+            class="q-input q-btn--sm w-32 !py-1.5"
+            disabled={selectedIds.length === 0}
+          />
+        {/if}
+        <label
+          class="flex cursor-pointer items-center gap-1.5 text-sm whitespace-nowrap select-none"
+          title="勾上就只补没填过的人，已填的原值不动"
+        >
+          <input type="checkbox" bind:checked={bulkOnlyEmpty} />
+          只填空着的
+        </label>
+        <button
+          class="q-btn q-btn--primary q-btn--sm"
+          disabled={selectedIds.length === 0 || busyBulk}
+          onclick={applyBulkField}
+        >
+          {busyBulk ? '应用中…' : '应用'}
+        </button>
+        <select
+          bind:value={bulkCat}
+          class="q-select q-btn--sm !py-1.5"
+          disabled={selectedIds.length === 0}
+        >
+          <option value={0}>加入圈子…</option>
+          {#each categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
+        </select>
+        <button
+          class="q-btn q-btn--primary q-btn--sm"
+          disabled={selectedIds.length === 0 || bulkCat === 0}
+          onclick={addSelectedToCircle}
+        >
+          加入
+        </button>
+        <button
+          class="q-btn q-btn--danger-ghost q-btn--sm"
+          disabled={selectedIds.length === 0}
+          onclick={askDeleteSelected}
+        >
+          删除选中
+        </button>
+        <button class="q-btn q-btn--danger q-btn--sm" onclick={askClearAll}>清空全部</button>
+      </div>
+    {/if}
+
+    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      {#each list as p (p.id)}
+        <div
+          class="q-card q-card--tight flex items-start gap-3 transition-transform hover:-translate-y-0.5"
+        >
           {#if selectMode}
             <input
               type="checkbox"
-              class="mt-2.5 shrink-0"
+              class="mt-3 shrink-0"
               checked={selectedIds.includes(p.id)}
               onchange={() => toggleSelect(p.id)}
             />
@@ -538,34 +485,30 @@
               }
             }}
           >
-            <div
-              class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full font-semibold text-white"
-              style={`background: ${avatarBg(p.gender)};`}
-            >
+            <div class="q-avatar h-11 w-11 text-base" style={`background: ${avatarBg(p.gender)};`}>
               {p.name.slice(0, 1)}
             </div>
             <div class="min-w-0 flex-1">
               <div class="truncate font-medium">{p.name}</div>
               {#if p.grade > 0 || (p.categories?.length ?? 0) > 0 || genderLabel(p.gender)}
                 <div
-                  class="mt-0.5 flex flex-wrap items-center gap-1 text-xs"
+                  class="mt-1 flex flex-wrap items-center gap-1 text-xs"
                   style="color: var(--q-muted);"
                 >
                   {#if genderLabel(p.gender)}<span class="shrink-0">{genderLabel(p.gender)}</span
                     >{/if}
-                  {#if p.grade > 0}<span class="shrink-0">{'♥'.repeat(p.grade)}</span>{/if}
-                  {#each p.categories ?? [] as c (c.id)}
-                    <span
-                      class="rounded-full px-1.5 py-0.5 whitespace-nowrap"
-                      style={`background: color-mix(in srgb, ${c.color} 18%, transparent); color: ${c.color};`}
-                      >{c.name}</span
+                  {#if p.grade > 0}
+                    <span class="shrink-0" style="color: var(--q-warn);">{'♥'.repeat(p.grade)}</span
                     >
+                  {/if}
+                  {#each p.categories ?? [] as c (c.id)}
+                    <span class="q-tag" style="--c: {c.color};">{c.name}</span>
                   {/each}
                 </div>
               {/if}
               {#if p.stats}
                 <div
-                  class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
+                  class="q-num mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs"
                   style="color: var(--q-muted);"
                 >
                   {#if p.stats.gift_out_fen || p.stats.gift_in_fen}
@@ -582,77 +525,66 @@
                     >{/if}
                 </div>
               {/if}
-              {#if p.notes}<div class="mt-1 line-clamp-2 text-xs" style="color: var(--q-muted);">
+              {#if p.notes}
+                <div class="mt-1 line-clamp-2 text-xs" style="color: var(--q-muted);">
                   {p.notes}
-                </div>{/if}
+                </div>
+              {/if}
             </div>
           </a>
-          <div class="flex gap-1">
+          <div class="flex shrink-0 flex-col gap-0.5">
             {#if onlyArchived}
-              <button
-                class="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10"
-                onclick={() => unarchive(p)}
-                title="取消归档"><Undo2 size={14} /></button
-              >
+              <button class="q-iconbtn !h-7 !w-7" onclick={() => unarchive(p)} title="取消归档">
+                <Undo2 size={14} />
+              </button>
             {/if}
-            <button
-              class="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10"
-              onclick={() => openEdit(p)}
-              title="编辑">✎</button
-            >
-            <button
-              class="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10"
-              onclick={() => remove(p)}
-              title="删除"><Trash2 size={14} /></button
-            >
+            <button class="q-iconbtn !h-7 !w-7" onclick={() => openEdit(p)} title="编辑">
+              <Pencil size={13} />
+            </button>
+            <button class="q-iconbtn !h-7 !w-7" onclick={() => remove(p)} title="删除">
+              <Trash2 size={14} />
+            </button>
           </div>
         </div>
-      </div>
-    {:else}
-      <div class="col-span-full py-12 text-center text-sm" style="color: var(--q-muted);">
-        {#if onlyArchived}没有已归档的联系人{:else}暂无联系人，点击右上角新建，或导入 vCard
-          通讯录文件{/if}
-      </div>
-    {/each}
-  </div>
-  {#if hasMore}
-    <div class="text-center">
-      <button
-        class="rounded-lg px-4 py-2 text-sm"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-        onclick={loadMore}
-      >
-        加载更多（已显示 {list.length} 位）
-      </button>
+      {:else}
+        <div class="col-span-full">
+          {#if onlyArchived}
+            <Empty icon={Users} text="没有已归档的联系人" />
+          {:else}
+            <Empty icon={Users} text="暂无联系人，新建一位，或导入 vCard 通讯录文件">
+              {#snippet actions()}
+                <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
+                  <Plus size={14} /> 新建联系人
+                </button>
+                <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => vcardInput?.click()}>
+                  <Upload size={14} /> 导入 vCard
+                </button>
+              {/snippet}
+            </Empty>
+          {/if}
+        </div>
+      {/each}
     </div>
-  {/if}
+
+    {#if hasMore}
+      <div class="text-center">
+        <button class="q-btn q-btn--ghost" onclick={loadMore}>
+          加载更多（已显示 {list.length} 位）
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => (showForm = false)}
-    ></button>
-    <div
-      class="relative max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{editing ? '编辑' : '新建'}联系人</h2>
-        <button class="rounded p-1" onclick={() => (showForm = false)}><X size={18} /></button>
-      </div>
-      <PersonForm
-        person={editing}
-        {categories}
-        {tags}
-        onsave={onSaved}
-        onrelchange={() => load()}
-        oncancel={() => (showForm = false)}
-      />
-    </div>
-  </div>
+  <Modal wide onclose={() => (showForm = false)} title={editing ? '编辑联系人' : '新建联系人'}>
+    <PersonForm
+      person={editing}
+      {categories}
+      {tags}
+      onsave={onSaved}
+      onrelchange={() => load()}
+      oncancel={() => (showForm = false)}
+    />
+  </Modal>
 {/if}

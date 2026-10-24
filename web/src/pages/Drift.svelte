@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { API, contactAgo, gradeLabel, daysSince, type DriftPerson } from '../lib/api';
   import { navigate } from '../lib/router';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { HeartPulse, PenLine } from '@lucide/svelte';
   import { toast } from '../lib/toast.svelte';
 
@@ -55,84 +57,76 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <h1 class="text-2xl font-semibold">渐远名单</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">按亲密度设定的节奏，算出谁该联系了</p>
-    </div>
-    <button class="text-xs" style="color: var(--q-theme);" onclick={() => navigate('/settings')}
-      >改联系节奏</button
-    >
-  </header>
-
-  <div class="flex items-center gap-2">
-    {#each [{ v: true, n: '已逾期' }, { v: false, n: '全部' }] as tab (tab.v)}
-      <button
-        onclick={() => {
-          onlyOverdue = tab.v;
-          load();
-        }}
-        aria-pressed={onlyOverdue === tab.v}
-        class="rounded-lg px-3 py-1.5 text-sm"
-        style={onlyOverdue === tab.v
-          ? 'background: var(--q-theme); color: #fff;'
-          : 'background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);'}
-      >
-        {tab.n}{#if tab.v && !loading}<span class="ml-1 opacity-80">{list.length}</span>{/if}
+<div class="q-page">
+  <PageHeader title="渐远名单" subtitle="按亲密度设定的节奏，算出谁该联系了">
+    {#snippet actions()}
+      <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => navigate('/settings')}>
+        改联系节奏
       </button>
-    {/each}
-  </div>
+    {/snippet}
+  </PageHeader>
 
-  {#if loading}
-    <div class="py-8 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
-  {:else if list.length === 0}
-    <div class="py-10 text-center text-sm" style="color: var(--q-muted);">
-      {onlyOverdue ? '没有到期的人。要连同还没到期的名单一起看，切到「全部」。' : '还没有联系人。'}
-    </div>
-  {:else}
-    <ul class="space-y-2">
-      {#each list as d (d.person_id)}
-        <li
-          class="flex flex-wrap items-center gap-3 rounded-lg p-3"
-          style="background: var(--q-surface); border: 1px solid var(--q-border);"
+  <div class="q-stack">
+    <div class="q-seg">
+      {#each [{ v: true, n: '已逾期' }, { v: false, n: '全部' }] as tab (tab.v)}
+        <button
+          onclick={() => {
+            onlyOverdue = tab.v;
+            load();
+          }}
+          aria-pressed={onlyOverdue === tab.v}
+          class="q-seg__btn"
         >
-          <div class="min-w-0 flex-1">
-            <button
-              class="truncate text-sm font-medium hover:underline"
-              style="color: var(--q-text);"
-              onclick={() => navigate(`/people/${d.person_id}`)}>{d.name}</button
-            >
-            <div class="mt-0.5 text-xs" style="color: var(--q-muted);">{rowMeta(d)}</div>
-          </div>
-          {#if d.overdue}
-            <span
-              class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-              style="background: var(--q-theme); color: #fff;"
-              ><HeartPulse size={12} /> 已逾期 {d.overdue_days} 天</span
-            >
-          {:else}
-            {@const left = untilDue(d)}
-            <span
-              class="shrink-0 rounded-full px-2 py-0.5 text-xs"
-              style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-            >
-              {left === null ? d.due_at : left === 0 ? '今天该联系' : `还有 ${left} 天`}
-            </span>
-          {/if}
-          <button
-            class="shrink-0 rounded px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            onclick={() => checkin(d)}>联系过了</button
-          >
-          <button
-            class="flex shrink-0 items-center gap-1 rounded px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            onclick={() => navigate(`/events?new=1&with=${d.person_id}`)}
-            ><PenLine size={12} /> 记一笔</button
-          >
-        </li>
+          {tab.n}{#if tab.v && !loading}<span class="q-num ml-1 opacity-80">{list.length}</span
+            >{/if}
+        </button>
       {/each}
-    </ul>
-  {/if}
+    </div>
+
+    {#if loading}
+      <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
+    {:else if list.length === 0}
+      <Empty
+        icon={HeartPulse}
+        text={onlyOverdue
+          ? '没有到期的人。要连同还没到期的名单一起看，切到「全部」。'
+          : '还没有联系人。'}
+      />
+    {:else}
+      <div class="q-stack--tight flex flex-col">
+        {#each list as d (d.person_id)}
+          <div class="q-row flex-wrap">
+            <div class="min-w-0 flex-1">
+              <button
+                class="link-quiet truncate text-sm font-medium"
+                onclick={() => navigate(`/people/${d.person_id}`)}>{d.name}</button
+              >
+              <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+                {rowMeta(d)}
+              </div>
+            </div>
+            {#if d.overdue}
+              <span class="q-badge q-badge--danger shrink-0">
+                <HeartPulse size={12} /> 已逾期 {d.overdue_days} 天
+              </span>
+            {:else}
+              {@const left = untilDue(d)}
+              <span class="q-badge shrink-0">
+                {left === null ? d.due_at : left === 0 ? '今天该联系' : `还有 ${left} 天`}
+              </span>
+            {/if}
+            <button class="q-btn q-btn--ok q-btn--sm shrink-0" onclick={() => checkin(d)}>
+              联系过了
+            </button>
+            <button
+              class="q-btn q-btn--ghost q-btn--sm shrink-0"
+              onclick={() => navigate(`/events?new=1&with=${d.person_id}`)}
+            >
+              <PenLine size={12} /> 记一笔
+            </button>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  </div>
 </div>

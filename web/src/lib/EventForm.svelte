@@ -346,58 +346,38 @@
   }
 </script>
 
-<div class="space-y-3" class:opacity-60={loading}>
+<div class="q-stack" class:opacity-60={loading}>
   {#if loading}
     <div class="py-6 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
   {:else}
     {#if !editId}
-      <div class="flex flex-wrap gap-1">
+      <div class="flex flex-wrap gap-1.5">
         {#each TEMPLATES as t (t.name)}
-          <button
-            class="rounded-md px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-            onclick={() => applyTemplate(t)}>{t.name}</button
-          >
+          <button class="q-chip" onclick={() => applyTemplate(t)}>{t.name}</button>
         {/each}
       </div>
     {/if}
-    <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      placeholder="标题"
-      bind:value={form.title}
-    />
-    <div class="grid grid-cols-2 gap-3">
-      <select
-        bind:value={form.type_id}
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      >
+    <input class="q-input" placeholder="标题" bind:value={form.title} />
+    <div class="grid grid-cols-2 gap-2">
+      <select bind:value={form.type_id} class="q-select">
         <option value={0}>不选类型</option>
         {#each typeList as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
       </select>
-      <input
-        type="date"
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        bind:value={form.event_date}
-      />
+      <input type="date" class="q-input" bind:value={form.event_date} />
     </div>
 
-    <div class="space-y-2">
-      <div class="text-xs" style="color: var(--q-muted);">地点（可多个）</div>
+    <div class="q-stack--tight flex flex-col">
+      <div class="q-label !mb-0">地点（可多个）</div>
       {#each form.locations as _, i (i)}
         <div class="flex items-center gap-2">
           <input
-            class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+            class="q-input"
             placeholder={i === 0 ? '地点，如 茶馆' : '追加地点'}
             bind:value={form.locations[i]}
           />
           {#if form.locations.length > 1}
             <button
-              class="rounded px-2 py-1 text-xs"
-              style="color: var(--q-muted);"
+              class="q-btn q-btn--subtle q-btn--sm shrink-0"
               onclick={() => (form.locations = form.locations.filter((_, j) => j !== i))}
               >移除</button
             >
@@ -405,45 +385,35 @@
         </div>
       {/each}
       <button
-        class="rounded px-2 py-1 text-xs"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
+        class="q-btn q-btn--ghost q-btn--sm w-fit"
         onclick={() => (form.locations = [...form.locations, ''])}>+ 添加地点</button
       >
     </div>
 
     <div class="flex items-center gap-2">
-      <label class="flex shrink-0 items-center gap-1.5 text-sm">
+      <label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm">
         <input type="checkbox" bind:checked={form.has_gift} /> 有礼物
       </label>
       {#if form.has_gift}
-        <input
-          class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          placeholder="礼物说明，如 送了两盒茶"
-          bind:value={form.gift}
-        />
+        <input class="q-input" placeholder="礼物说明，如 送了两盒茶" bind:value={form.gift} />
       {/if}
     </div>
 
     {#if hasBills}
       <!-- 有账单时手填金额让位：一个数字只能有一个来源，否则卡片上会出现两套花费 -->
-      <div
-        class="flex items-center justify-between rounded-lg px-3 py-2"
-        style="background: var(--q-bg); border: 1px dashed var(--q-border);"
-      >
-        <span class="text-sm">开销 <span class="font-medium">¥{yuan(billsSum)}</span></span>
+      <div class="q-well flex items-center justify-between !py-2.5 text-sm">
+        <span>开销 <span class="q-num font-semibold">¥{yuan(billsSum)}</span></span>
         <span class="text-xs" style="color: var(--q-muted);">
           由 {bills.length} 张货殖账单汇总
         </span>
       </div>
     {:else}
-      <div class="grid grid-cols-2 gap-3">
+      <div class="grid grid-cols-2 gap-2">
         <input
           type="number"
           step="0.01"
           min="0"
-          class="rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+          class="q-input"
           placeholder="开销（元，可空）"
           bind:value={form.expense_yuan}
         />
@@ -458,9 +428,9 @@
       </div>
     {/if}
 
-    <div class="space-y-1.5">
+    <div class="q-stack--tight flex flex-col">
       <div class="flex items-center justify-between">
-        <div class="flex items-center gap-1 text-xs" style="color: var(--q-muted);">
+        <div class="q-label !mb-0 flex items-center gap-1">
           <Link2 size={12} /> 货殖账单{#if bills.length > 0}（{bills.length}）{/if}
         </div>
         {#if editId}
@@ -468,16 +438,14 @@
             {#if bills.length > 0}
               <button
                 type="button"
-                class="rounded px-2 py-0.5 text-xs"
-                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+                class="q-btn q-btn--ghost q-btn--sm"
                 disabled={billBusy}
                 onclick={refreshBills}>刷新</button
               >
             {/if}
             <button
               type="button"
-              class="rounded px-2 py-0.5 text-xs"
-              style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+              class="q-btn q-btn--primary q-btn--sm"
               disabled={billBusy}
               onclick={() => (showBillPicker = true)}>+ 关联账单</button
             >
@@ -485,18 +453,15 @@
         {/if}
       </div>
       {#if bills.length === 0}
-        <p class="text-xs" style="color: var(--q-muted);">
+        <p class="q-hint !mt-0">
           {editId
             ? '关联货殖里已有的账单后，这次往来的开销按账单汇总；不关联就用手填金额。'
             : '保存后可以关联货殖账单，把这次的花费按账单汇总。'}
         </p>
       {:else}
-        <ul class="space-y-1">
+        <ul class="q-stack--tight flex flex-col">
           {#each bills as b (b.id)}
-            <li
-              class="flex items-center gap-2 rounded-md px-2 py-1.5 text-xs"
-              style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            >
+            <li class="q-well q-num flex items-center gap-2 !py-1.5 text-xs">
               <span class="shrink-0" style="color: var(--q-muted);">{b.tx_date || '—'}</span>
               <span class="min-w-0 flex-1 truncate">
                 {b.description || '（无备注）'}{#if b.category_name}<span
@@ -505,21 +470,19 @@
                     · {b.category_name}</span
                   >{/if}
               </span>
-              <span class="shrink-0 tabular-nums">¥{yuan(b.amount_fen)}</span>
+              <span class="shrink-0">¥{yuan(b.amount_fen)}</span>
               {#if b.remote_base}
                 <a
                   href={`${b.remote_base}/transactions/edit/${b.remote_id}`}
                   target="_blank"
                   rel="noreferrer"
-                  class="shrink-0 rounded p-0.5"
-                  style="color: var(--q-muted);"
+                  class="q-iconbtn !h-6 !w-6 shrink-0"
                   title="在货殖里打开"><ExternalLink size={12} /></a
                 >
               {/if}
               <button
                 type="button"
-                class="shrink-0 rounded p-0.5"
-                style="color: var(--q-muted);"
+                class="q-iconbtn !h-6 !w-6 shrink-0"
                 title="解除关联（不会删除货殖里的账单）"
                 disabled={billBusy}
                 onclick={() => unlinkBill(b.id)}><X size={12} /></button
@@ -531,21 +494,16 @@
     </div>
 
     <!-- 礼金：现场记完事就结账，保存时自动生成一条 kind=gift 的账目挂在这个往来上 -->
-    <div class="grid grid-cols-2 gap-3">
+    <div class="grid grid-cols-2 gap-2">
       <input
         type="number"
         step="0.01"
         min="0"
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+        class="q-input"
         placeholder="礼金（元，可空）"
         bind:value={form.gift_yuan}
       />
-      <select
-        bind:value={form.gift_direction}
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      >
+      <select bind:value={form.gift_direction} class="q-select">
         <option value="out">随出去（我给的）</option>
         <option value="in">收到（别人给的）</option>
       </select>
@@ -562,52 +520,52 @@
     {/if}
 
     <textarea
-      class="min-h-[80px] w-full rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+      class="q-textarea"
+      style="min-height: 80px;"
       placeholder="备注"
       bind:value={form.summary}></textarea>
     <div>
-      <div class="mb-1 flex items-center justify-between">
-        <div class="text-xs" style="color: var(--q-muted);">
+      <div class="mb-1.5 flex items-center justify-between">
+        <div class="q-label !mb-0">
           参与人（已选 {form.participant_ids.length} 人）
         </div>
         <div class="relative">
           <Search
             size={12}
-            class="absolute top-1/2 left-2 -translate-y-1/2"
-            style="color: var(--q-muted);"
+            class="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2"
+            style="color: var(--q-faint);"
           />
           <input
             bind:value={peopleQuery}
             oninput={scheduleSearch}
             placeholder="搜索联系人"
-            class="w-36 rounded-md py-1 pr-2 pl-7 text-xs outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+            class="q-input w-36 !py-1.5 pl-7 text-xs"
           />
         </div>
       </div>
       {#if pickedPeople.length > 0}
-        <div class="mb-1 flex flex-wrap gap-1">
+        <div class="mb-1.5 flex flex-wrap gap-1.5">
           {#each pickedPeople as p (p.id)}
-            <button
-              class="flex items-center gap-1 rounded-md px-2 py-1 text-xs"
-              style="background: var(--q-theme); color: white; border: 1px solid var(--q-theme);"
-              onclick={() => toggleParticipant(p.id)}>{personLabel(p)} ×</button
-            >
+            <button class="q-chip" aria-pressed="true" onclick={() => toggleParticipant(p.id)}>
+              {personLabel(p)} ×
+            </button>
           {/each}
         </div>
       {/if}
-      <div class="flex max-h-40 flex-wrap gap-1 overflow-auto">
+      <div class="flex max-h-40 flex-wrap gap-1.5 overflow-auto">
         {#each unmatched as p (p.id)}
           <button
-            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs transition"
+            class="q-chip"
             style={isSelf(p.id)
-              ? 'background: var(--q-bg); color: #f59e0b; border: 1px solid #f59e0b;'
-              : 'background: var(--q-bg); color: var(--q-text); border: 1px solid var(--q-border);'}
+              ? 'color: var(--q-warn); border-color: color-mix(in srgb, var(--q-warn) 55%, var(--q-border));'
+              : ''}
             onclick={() => toggleParticipant(p.id)}>{personLabel(p)}</button
           >
         {:else}
-          <span class="text-xs" style={searchFailed ? 'color: #dc2626;' : 'color: var(--q-muted);'}>
+          <span
+            class="text-xs"
+            style={searchFailed ? 'color: var(--q-danger);' : 'color: var(--q-muted);'}
+          >
             {searching ? '搜索中…' : searchFailed ? '搜索失败，请重试' : '没有匹配的联系人'}
           </span>
         {/each}
@@ -616,11 +574,10 @@
   {/if}
 </div>
 
-<div class="mt-5 flex items-center justify-between gap-2">
+<div class="mt-4 flex items-center justify-between gap-2">
   {#if editId && onremove}
     <button
-      class="flex items-center gap-1 rounded-lg px-3 py-2 text-sm"
-      style="border: 1px solid var(--q-border); color: #ef4444;"
+      class="q-btn q-btn--danger-ghost"
       onclick={() => onremove?.(editId, form.title, originExpenseFen)}
     >
       <Trash2 size={14} /> 删除
@@ -629,17 +586,8 @@
     <span></span>
   {/if}
   <div class="flex gap-2">
-    <button
-      class="rounded-lg px-4 py-2 text-sm"
-      style="background: var(--q-bg); border: 1px solid var(--q-border);"
-      onclick={() => oncancel?.()}>取消</button
-    >
-    <button
-      class="rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60"
-      style="background: var(--q-theme);"
-      disabled={saving || loading}
-      onclick={submit}
-    >
+    <button class="q-btn q-btn--ghost" onclick={() => oncancel?.()}>取消</button>
+    <button class="q-btn q-btn--primary" disabled={saving || loading} onclick={submit}>
       {saving ? '保存中…' : '保存'}
     </button>
   </div>

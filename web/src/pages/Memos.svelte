@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { API, MEMO_STATUS_LABEL, todayLocal, type Memo } from '../lib/api';
-  import { Plus, X } from '@lucide/svelte';
+  import { Plus, MessageCircle } from '@lucide/svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { personLabel, loadSelf } from '../lib/self.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import { toast } from '../lib/toast.svelte';
@@ -75,6 +78,11 @@
     showForm = true;
   }
 
+  function closeForm() {
+    showForm = false;
+    editId = '';
+  }
+
   async function submit() {
     if (!form.content.trim()) {
       toast.error('内容必填');
@@ -93,8 +101,7 @@
       toast.fail('保存失败', err);
       return;
     }
-    showForm = false;
-    editId = '';
+    closeForm();
     toast.ok(isEdit ? '已更新' : '已保存');
     await load();
   }
@@ -148,166 +155,129 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">对话 / 承诺</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">记录重要的话与约定</p>
-    </div>
-    <button
-      class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-      style="background: var(--q-theme);"
-      onclick={openCreate}
-    >
-      <Plus size={14} /> 新建
-    </button>
-  </header>
-  <div class="flex items-center gap-3">
-    <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-      <input type="checkbox" bind:checked={onlyPromises} onchange={() => load()} /> 仅显示承诺
-    </label>
-  </div>
-  <ul class="space-y-2">
-    {#each list as m (m.id)}
-      <li
-        class="rounded-lg p-3"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-start gap-2">
-          <div class="min-w-0 flex-1 text-sm">{m.content}</div>
-          <button
-            class="shrink-0 rounded px-2 py-0.5 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-            onclick={() => openEdit(m)}>编辑</button
-          >
-          <button class="shrink-0 text-xs" style="color: var(--q-muted);" onclick={() => remove(m)}
-            >删除</button
-          >
-        </div>
-        <div class="mt-2 flex items-center gap-2 text-xs" style="color: var(--q-muted);">
-          {#if m.is_promise}<span
-              class="rounded-full px-2 py-0.5"
-              style="background: #fef3c7; color: #92400e;">承诺</span
-            >{/if}
-          {#if m.status === 'open' && m.is_promise}<button
-              onclick={() => mark(m, 'fulfilled')}
-              style="color: var(--q-ok);">兑现</button
-            >{/if}
-          {#if m.status === 'open' && m.is_promise}<button
-              onclick={() => mark(m, 'broken')}
-              style="color: var(--q-danger);">未兑现</button
-            >{/if}
-          {#if m.status !== 'open'}<span
-              class="rounded-full px-2 py-0.5"
-              style="background: var(--q-bg);">{MEMO_STATUS_LABEL[m.status] || m.status}</span
-            >
-            <!-- 兑现/未兑现已定论后仍要能改回来：否则一次误点就永久盖住了这条承诺 -->
-            <button onclick={() => mark(m, 'open')}>改回待办</button>{/if}
-          <span
-            >{memoWho(m)} · {m.speaker === 'me' ? '我说' : '对方说'} · {new Date(
-              m.said_at
-            ).toLocaleDateString()}</span
-          >
-          {#if m.due_date}<span>到期 {new Date(m.due_date).toLocaleDateString()}</span>{/if}
-          <button onclick={() => togglePromise(m)}>{m.is_promise ? '取消承诺' : '标记承诺'}</button>
-        </div>
-      </li>
-    {:else}
-      <li class="py-8 text-center text-sm" style="color: var(--q-muted);">暂无记录</li>
-    {/each}
-  </ul>
-  {#if hasMore}
-    <div class="text-center">
-      <button
-        class="rounded-lg px-4 py-2 text-sm"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-        onclick={loadMore}
-      >
-        加载更多（已显示 {list.length} 条）
+<div class="q-page">
+  <PageHeader title="对话 / 承诺" subtitle="记录重要的话与约定">
+    {#snippet actions()}
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
+        <Plus size={14} /> 新建
       </button>
+    {/snippet}
+  </PageHeader>
+
+  <div class="q-stack">
+    <div class="q-card q-card--tight flex items-center gap-2">
+      <label class="flex cursor-pointer items-center gap-2 text-sm select-none">
+        <input type="checkbox" bind:checked={onlyPromises} onchange={() => load()} /> 仅显示承诺
+      </label>
     </div>
-  {/if}
+
+    <div class="q-stack--tight flex flex-col">
+      {#each list as m (m.id)}
+        <div class="q-card q-card--tight">
+          <div class="flex items-start gap-2">
+            <div class="min-w-0 flex-1 text-sm leading-relaxed">{m.content}</div>
+            <button class="q-btn q-btn--ghost q-btn--sm shrink-0" onclick={() => openEdit(m)}
+              >编辑</button
+            >
+            <button class="q-btn q-btn--subtle q-btn--sm shrink-0" onclick={() => remove(m)}
+              >删除</button
+            >
+          </div>
+          <div
+            class="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs"
+            style="color: var(--q-muted);"
+          >
+            {#if m.is_promise}<span class="q-badge q-badge--warn">承诺</span>{/if}
+            {#if m.status === 'open' && m.is_promise}
+              <button
+                class="link-btn"
+                style="color: var(--q-ok);"
+                onclick={() => mark(m, 'fulfilled')}>兑现</button
+              >
+              <button
+                class="link-btn"
+                style="color: var(--q-danger);"
+                onclick={() => mark(m, 'broken')}>未兑现</button
+              >
+            {/if}
+            {#if m.status !== 'open'}
+              <span
+                class="q-badge"
+                class:q-badge--ok={m.status === 'fulfilled'}
+                class:q-badge--danger={m.status === 'broken'}
+                >{MEMO_STATUS_LABEL[m.status] || m.status}</span
+              >
+              <!-- 兑现/未兑现已定论后仍要能改回来：否则一次误点就永久盖住了这条承诺 -->
+              <button class="link-btn" onclick={() => mark(m, 'open')}>改回待办</button>
+            {/if}
+            <span class="q-num"
+              >{memoWho(m)} · {m.speaker === 'me' ? '我说' : '对方说'} ·
+              {new Date(m.said_at).toLocaleDateString()}</span
+            >
+            {#if m.due_date}<span class="q-num"
+                >到期 {new Date(m.due_date).toLocaleDateString()}</span
+              >{/if}
+            <button class="link-btn ml-auto" onclick={() => togglePromise(m)}>
+              {m.is_promise ? '取消承诺' : '标记承诺'}
+            </button>
+          </div>
+        </div>
+      {:else}
+        <Empty
+          icon={MessageCircle}
+          text={onlyPromises ? '还没有承诺记录' : '暂无记录，把重要的话记下来'}
+        />
+      {/each}
+    </div>
+
+    {#if hasMore}
+      <div class="text-center">
+        <button class="q-btn q-btn--ghost" onclick={loadMore}>
+          加载更多（已显示 {list.length} 条）
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => {
-        showForm = false;
-        editId = '';
-      }}
-    ></button>
-    <div
-      class="relative w-full max-w-lg rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{editId ? '编辑' : '新建'}</h2>
-        <button
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}><X size={18} /></button
-        >
+  <Modal wide onclose={closeForm} title={editId ? '编辑对话' : '新建对话'}>
+    <div class="q-stack--tight flex flex-col">
+      <PersonPicker
+        bind:value={form.person_id}
+        selectedName={pickedName}
+        placeholder="选择联系人（可选）"
+      />
+      <div class="grid grid-cols-2 gap-2">
+        <select bind:value={form.speaker} class="q-select">
+          <option value="other">对方说</option>
+          <option value="me">我说</option>
+        </select>
+        <input type="date" bind:value={form.said_at} class="q-input" />
       </div>
-      <div class="space-y-3">
-        <PersonPicker
-          bind:value={form.person_id}
-          selectedName={pickedName}
-          placeholder="选择联系人（可选）"
+      <textarea
+        class="q-textarea"
+        style="min-height: 110px;"
+        placeholder="对话 / 内容"
+        bind:value={form.content}></textarea>
+      <label
+        class="flex cursor-pointer items-center gap-2 text-sm select-none"
+        style="color: var(--q-muted);"
+      >
+        <input type="checkbox" bind:checked={form.is_promise} /> 这是一个承诺（可设置到期）
+      </label>
+      {#if form.is_promise}
+        <input
+          type="date"
+          bind:value={form.due_date}
+          class="q-input"
+          placeholder="到期日期（可选）"
         />
-        <div class="grid grid-cols-2 gap-3">
-          <select
-            bind:value={form.speaker}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          >
-            <option value="other">对方说</option><option value="me">我说</option>
-          </select>
-          <input
-            type="date"
-            bind:value={form.said_at}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          />
-        </div>
-        <textarea
-          class="min-h-[100px] w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="对话 / 内容"
-          bind:value={form.content}></textarea>
-        <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);"
-          ><input type="checkbox" bind:checked={form.is_promise} /> 这是一个承诺（可设置到期）</label
-        >
-        {#if form.is_promise}
-          <input
-            type="date"
-            bind:value={form.due_date}
-            class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            placeholder="到期日期（可选）"
-          />
-        {/if}
-      </div>
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}>取消</button
-        >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={submit}>保存</button
-        >
-      </div>
+      {/if}
     </div>
-  </div>
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
+      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+    {/snippet}
+  </Modal>
 {/if}

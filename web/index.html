@@ -35,12 +35,21 @@
           var c = localStorage.getItem('q_theme');
           if (c) el.style.setProperty('--q-theme', c);
           var meta = document.querySelector('meta[name="theme-color"]');
-          if (meta) meta.setAttribute('content', dark ? '#0b1020' : c || '#9E2A2B');
+          if (meta) meta.setAttribute('content', dark ? '#15120e' : c || '#9E2A2B');
         } catch (e) {
           /* 隐私模式下 localStorage 可能抛错，忽略即可 */
         }
       })();
     </script>
+    <!-- 首屏底色：CSS 包到达前先铺好宣纸/墨色，避免闪白 -->
+    <style>
+      html {
+        background: #f2ede2;
+      }
+      html.dark {
+        background: #15120e;
+      }
+    </style>
   </head>
   <body>
     <div id="app"></div>

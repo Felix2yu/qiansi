@@ -65,7 +65,7 @@ export function isDark(): boolean {
 }
 
 /**
- * 暗色模式下把主题色提亮一档：沉绛 #9E2A2B 压在暗底（#0b1020）上可见度偏低，
+ * 暗色模式下把主题色提亮一档：沉绛 #9E2A2B 压在墨色暗底（#15120e）上可见度偏低，
  * 换成手调的亮绛 #C0392B 才看得清选中态/按钮描边。其他色暂沿用原值。
  */
 function darkAccent(color: string): string {
@@ -80,7 +80,7 @@ export function applyTheme() {
   root.style.setProperty('--q-theme', isDark() ? darkAccent(theme.color) : theme.color);
   // 移动端浏览器地址栏/状态栏跟随页面配色
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-  if (meta) meta.content = isDark() ? '#0b1020' : theme.color;
+  if (meta) meta.content = isDark() ? '#15120e' : theme.color;
 }
 
 /**

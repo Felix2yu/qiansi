@@ -5,6 +5,8 @@
   import { toast } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { TRASH_LABEL, restoreTrash, type TrashItem, type TrashKind } from '../lib/trash';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
 
   let list = $state<TrashItem[]>([]);
   let loading = $state(true);
@@ -92,58 +94,37 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between gap-3">
-    <div>
-      <h1 class="text-2xl font-semibold">回收站</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">
-        联系人、往来、对话、账目、纪念日与待办的删除都在这里
-      </p>
-    </div>
-    {#if list.length > 0}
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;"
-        onclick={emptyAll}
-      >
-        <Trash2 size={14} /> 清空回收站
-      </button>
-    {/if}
-  </header>
+<div class="q-page">
+  <PageHeader title="回收站" subtitle="联系人、往来、对话、账目、纪念日与待办的删除都在这里">
+    {#snippet actions()}
+      {#if list.length > 0}
+        <button class="q-btn q-btn--danger-ghost q-btn--sm" onclick={emptyAll}>
+          <Trash2 size={14} /> 清空回收站
+        </button>
+      {/if}
+    {/snippet}
+  </PageHeader>
 
   {#if loading}
-    <div class="py-8 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
+    <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
   {:else if list.length === 0}
-    <div class="py-10 text-center text-sm" style="color: var(--q-muted);">回收站是空的</div>
+    <Empty icon={Trash2} text="回收站是空的" />
   {:else}
-    <ul class="space-y-2">
+    <div class="q-stack--tight flex flex-col">
       {#each list as it (it.type + it.id)}
-        <li
-          class="flex items-center gap-3 rounded-lg p-3"
-          style="background: var(--q-surface); border: 1px solid var(--q-border);"
-        >
+        <div class="q-row">
           <div class="min-w-0 flex-1">
             <div class="flex flex-wrap items-center gap-2">
-              <span
-                class="shrink-0 rounded px-1.5 py-0.5 text-[10px]"
-                style="background: var(--q-bg); color: var(--q-muted);">{TRASH_LABEL[it.type]}</span
-              >
-              <span class="truncate text-sm">{it.title}</span>
+              <span class="q-badge shrink-0">{TRASH_LABEL[it.type]}</span>
+              <span class="truncate text-sm font-medium">{it.title}</span>
               {#if it.type === 'person' && it.hidden}
-                <span
-                  class="rounded px-1.5 py-0.5 text-[10px]"
-                  style="background: var(--q-bg); color: var(--q-muted);"
-                  >恢复后带回 {it.hidden} 条</span
-                >
+                <span class="q-badge shrink-0">恢复后带回 {it.hidden} 条</span>
               {/if}
               {#if it.type !== 'person' && it.person_trashed}
-                <span
-                  class="rounded px-1.5 py-0.5 text-[10px]"
-                  style="background: var(--q-bg); color: #ef4444;">联系人还在回收站</span
-                >
+                <span class="q-badge q-badge--danger shrink-0">联系人还在回收站</span>
               {/if}
             </div>
-            <div class="mt-1 text-xs" style="color: var(--q-muted);">
+            <div class="q-num mt-1 truncate text-xs" style="color: var(--q-muted);">
               {#if it.detail}{it.detail} ·
               {/if}
               {#if it.person_name}{it.person_name} ·
@@ -151,20 +132,14 @@
               删除于 {deletedTime(it)}（{contactAgo(it.deleted_at.slice(0, 10))}）
             </div>
           </div>
-          <button
-            class="flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            onclick={() => restore(it)}
-          >
+          <button class="q-btn q-btn--ghost q-btn--sm shrink-0" onclick={() => restore(it)}>
             <RefreshCcw size={12} /> 恢复
           </button>
-          <button
-            class="shrink-0 rounded-lg px-2.5 py-1.5 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;"
-            onclick={() => purge(it)}>彻底删除</button
-          >
-        </li>
+          <button class="q-btn q-btn--danger-ghost q-btn--sm shrink-0" onclick={() => purge(it)}>
+            彻底删除
+          </button>
+        </div>
       {/each}
-    </ul>
+    </div>
   {/if}
 </div>

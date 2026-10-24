@@ -2,7 +2,7 @@
   import { onDestroy } from 'svelte';
   import { selfFirst, personLabel, loadSelf } from './self.svelte';
   import { searchPeople, resolvePerson, cachedPerson, type PersonLite } from './personSearch';
-  import { X, Search } from '@lucide/svelte';
+  import { X, Search, ChevronDown } from '@lucide/svelte';
 
   // 选人控件：输入即搜，不再依赖「先把 500 人全拉下来」的名单。
   // 展开时原地换成搜索框，免得在弹窗里被 overflow 裁掉。
@@ -45,14 +45,6 @@
   let timer: ReturnType<typeof setTimeout> | undefined;
   let wrap: HTMLDivElement | undefined = $state();
   let input: HTMLInputElement | undefined = $state();
-
-  const fieldCls = $derived(
-    compact
-      ? 'w-full px-2 py-1 rounded-md text-xs outline-none'
-      : 'w-full px-3 py-2 rounded-lg text-sm outline-none'
-  );
-  const fieldStyle =
-    'background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);';
 
   function matchText(p: PersonLite, q: string) {
     if (!q) return true;
@@ -185,57 +177,55 @@
     <div class="flex items-center gap-1">
       <button
         type="button"
-        class={fieldCls}
-        style={fieldStyle}
+        class={compact ? 'q-input !py-1.5 text-xs' : 'q-input'}
+        class:text-left={true}
+        style="cursor: pointer;"
         onclick={show}
         aria-label={selected ? personLabel(selected) : placeholder}
       >
-        <span style={selected ? '' : 'color: var(--q-muted);'}>
-          {selected ? personLabel(selected) : placeholder}
+        <span class="flex items-center justify-between gap-2">
+          <span class={selected ? 'truncate' : 'truncate !text-[var(--q-faint)]'}>
+            {selected ? personLabel(selected) : placeholder}
+          </span>
+          <ChevronDown size={compact ? 12 : 14} class="shrink-0 opacity-60" />
         </span>
       </button>
       {#if clearable && value}
-        <button
-          type="button"
-          class="shrink-0 rounded p-1"
-          style="color: var(--q-muted);"
-          title="清除"
-          onclick={clear}><X size={compact ? 12 : 14} /></button
+        <button type="button" class="q-iconbtn !h-7 !w-7 shrink-0" title="清除" onclick={clear}
+          ><X size={compact ? 12 : 14} /></button
         >
       {/if}
     </div>
   {:else}
     <div
-      class="absolute top-0 right-0 left-0 z-30 rounded-lg"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); box-shadow: 0 6px 18px rgba(0,0,0,.15);"
+      class="absolute top-0 right-0 left-0 z-40 overflow-hidden rounded-[var(--q-radius-sm)]"
+      style="background: var(--q-surface); border: 1px solid var(--q-border-strong); box-shadow: var(--q-shadow-pop);"
     >
-      <div class="flex items-center gap-1 px-2 py-1">
-        <Search size={compact ? 12 : 14} style="color: var(--q-muted); flex: none;" />
+      <div class="flex items-center gap-1.5 px-2.5 py-1.5">
+        <Search size={compact ? 12 : 14} class="shrink-0" style="color: var(--q-faint);" />
         <input
           bind:this={input}
           bind:value={query}
           oninput={schedule}
-          class="flex-1 py-1.5 text-sm outline-none"
+          class="min-w-0 flex-1 py-1 text-sm outline-none"
           style="background: transparent; color: var(--q-text); border: 0;"
           {placeholder}
           aria-label="搜索联系人"
         />
-        <button
-          type="button"
-          class="rounded p-1"
-          style="color: var(--q-muted);"
-          title="收起"
-          onclick={hide}><X size={14} /></button
+        <button type="button" class="q-iconbtn !h-6 !w-6" title="收起" onclick={hide}
+          ><X size={13} /></button
         >
       </div>
       <div class="max-h-56 overflow-y-auto" style="border-top: 1px solid var(--q-border);">
         {#if preferList.length > 0}
-          <p class="px-3 pt-2 pb-0.5 text-xs" style="color: var(--q-muted);">参与人</p>
+          <p class="px-3 pt-2 pb-0.5 text-xs tracking-wide" style="color: var(--q-faint);">
+            参与人
+          </p>
           {#each preferList as p, i (p.id)}
             <button
               type="button"
-              class="w-full px-3 py-2 text-left text-sm"
-              style={i === active ? 'background: var(--q-bg);' : 'color: var(--q-text);'}
+              class="block w-full px-3 py-2 text-left text-sm"
+              style={i === active ? 'background: var(--q-surface-2);' : 'color: var(--q-text);'}
               onmouseenter={() => (active = i)}
               onclick={() => pick(p)}
             >
@@ -249,8 +239,8 @@
         {/if}
         {#if rest.length > 0 && prefer.length > 0}
           <p
-            class="px-3 pt-2 pb-0.5 text-xs"
-            style="color: var(--q-muted); border-top: 1px solid var(--q-border);"
+            class="px-3 pt-2 pb-0.5 text-xs tracking-wide"
+            style="color: var(--q-faint); border-top: 1px solid var(--q-border);"
           >
             其他联系人
           </p>
@@ -258,9 +248,9 @@
         {#each rest as p, j (p.id)}
           <button
             type="button"
-            class="w-full px-3 py-2 text-left text-sm"
+            class="block w-full px-3 py-2 text-left text-sm"
             style={preferList.length + j === active
-              ? 'background: var(--q-bg);'
+              ? 'background: var(--q-surface-2);'
               : 'color: var(--q-text);'}
             onmouseenter={() => (active = preferList.length + j)}
             onclick={() => pick(p)}

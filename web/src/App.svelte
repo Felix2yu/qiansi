@@ -29,7 +29,8 @@
     Sun,
     Moon,
     Trash2,
-    HeartPulse
+    HeartPulse,
+    Cake
   } from '@lucide/svelte';
   import Toaster from './lib/Toaster.svelte';
   import AskHost from './lib/AskHost.svelte';
@@ -54,20 +55,41 @@
     Settings: () => import('./pages/Settings.svelte')
   };
 
-  const navItems = [
-    { label: '今日', path: '/', icon: Home },
-    { label: '人物', path: '/people', icon: Users },
-    { label: '往来', path: '/events', icon: CalendarDays },
-    { label: '对话/承诺', path: '/memos', icon: MessageCircle },
-    { label: '金钱', path: '/money', icon: Wallet },
-    { label: '纪念日', path: '/anniversaries', icon: CalendarDays },
-    { label: '待办', path: '/reminders', icon: Bell },
-    { label: '渐远名单', path: '/drift', icon: HeartPulse },
-    { label: '时间线', path: '/timeline', icon: History },
-    { label: '关系图', path: '/graph', icon: Network },
-    { label: '统计', path: '/analytics', icon: LineChart },
-    { label: '回收站', path: '/trash', icon: Trash2 },
-    { label: '设置', path: '/settings', icon: Settings }
+  // 侧栏导航：按使用情境分四组，桌面端与移动抽屉共用同一份定义
+  const NAV_GROUPS = [
+    {
+      label: '纵览',
+      items: [
+        { label: '今日', path: '/', icon: Home },
+        { label: '人物', path: '/people', icon: Users },
+        { label: '往来', path: '/events', icon: CalendarDays },
+        { label: '对话承诺', path: '/memos', icon: MessageCircle },
+        { label: '金钱', path: '/money', icon: Wallet }
+      ]
+    },
+    {
+      label: '挂念',
+      items: [
+        { label: '纪念日', path: '/anniversaries', icon: Cake },
+        { label: '待办', path: '/reminders', icon: Bell },
+        { label: '渐远名单', path: '/drift', icon: HeartPulse }
+      ]
+    },
+    {
+      label: '洞察',
+      items: [
+        { label: '时间线', path: '/timeline', icon: History },
+        { label: '关系图', path: '/graph', icon: Network },
+        { label: '统计', path: '/analytics', icon: LineChart }
+      ]
+    },
+    {
+      label: '其他',
+      items: [
+        { label: '回收站', path: '/trash', icon: Trash2 },
+        { label: '设置', path: '/settings', icon: Settings }
+      ]
+    }
   ];
 
   // 侧边栏外观切换的三档，顺序即"从自动到最具体"
@@ -145,6 +167,14 @@
     return p === path || p.startsWith(path + '/');
   }
 
+  // 导航点击沿用原有的 history 行为；桌面端与移动抽屉共用
+  function go(path: string) {
+    mobileOpen = false;
+    if (location.pathname === path) return;
+    history.pushState({}, '', path);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }
+
   function current() {
     const p = $route.path;
     if (p === '/' || p === '') return 'Today';
@@ -183,99 +213,71 @@
   });
 </script>
 
-<div class="flex min-h-screen">
-  <!-- sidebar -->
-  <aside
-    class="hidden w-60 shrink-0 flex-col border-r md:flex"
-    style="background: var(--q-surface); border-color: var(--q-border);"
-  >
-    <div class="flex items-center gap-2 border-b px-5 py-5" style="border-color: var(--q-border);">
-      <div
-        class="flex h-8 w-8 items-center justify-center rounded-xl font-semibold text-white"
-        style="background: var(--q-theme);"
-      >
-        牵
-      </div>
+<div class="q-shell">
+  <!-- 桌面侧栏 -->
+  <aside class="q-side hidden md:flex">
+    <div class="q-brand">
+      <div class="q-brand__seal">牵</div>
       <div>
-        <div class="leading-none font-semibold">牵丝</div>
-        <div class="text-xs" style="color: var(--q-muted);">人际关系记录</div>
+        <div class="q-brand__name">牵丝</div>
+        <div class="q-brand__sub">人情往来录</div>
       </div>
     </div>
-    <div class="px-3 pt-3">
-      <div class="relative">
-        <Search
-          size={14}
-          class="absolute top-1/2 left-3 -translate-y-1/2"
-          style="color: var(--q-muted);"
-        />
-        <input
-          bind:value={searchQ}
-          oninput={runSearch}
-          onkeydown={onSearchKey}
-          placeholder="搜索人物、往来、对话…"
-          class="w-full rounded-lg py-2 pr-3 pl-9 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        />
-      </div>
+
+    <div class="q-side__search">
+      <Search size={14} class="q-side__searchicon" />
+      <input
+        bind:value={searchQ}
+        oninput={runSearch}
+        onkeydown={onSearchKey}
+        placeholder="搜索人物、往来、对话…"
+      />
       {#if searchOpen && searchResults.length > 0}
-        <ul
-          class="mt-1 overflow-hidden rounded-lg text-sm"
-          style="background: var(--q-surface); border: 1px solid var(--q-border);"
-        >
+        <div class="q-searchpop">
           {#each searchResults as r, i (i)}
-            <li>
-              <button
-                class="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-black/5 dark:hover:bg-white/5"
-                onclick={() => openResult(r)}
-              >
-                <span
-                  class="shrink-0 rounded px-1.5 py-0.5 text-[10px]"
-                  style="background: var(--q-bg); color: var(--q-muted);"
-                  >{SEARCH_LABEL[r.type] || r.type}</span
-                >
-                <span class="truncate">{r.title}</span>
-              </button>
-            </li>
+            <button onclick={() => openResult(r)}>
+              <span class="q-badge shrink-0">{SEARCH_LABEL[r.type] || r.type}</span>
+              <span class="truncate">{r.title}</span>
+            </button>
           {/each}
-        </ul>
+        </div>
       {/if}
     </div>
-    <nav class="flex-1 py-3">
-      {#each navItems as it, i (i)}
-        {@const Icon = it.icon}
-        <a
-          href={it.path}
-          class="flex items-center gap-3 px-5 py-2 text-sm transition-colors"
-          style="color: var(--q-text); {isActive(it.path)
-            ? 'background: color-mix(in srgb, var(--q-theme) 12%, transparent);'
-            : ''}"
-          onclick={(e) => {
-            e.preventDefault();
-            if (location.pathname === it.path) return;
-            history.pushState({}, '', it.path);
-            window.dispatchEvent(new PopStateEvent('popstate'));
-          }}
-        >
-          <Icon size={18} />
-          <span>{it.label}</span>
-        </a>
+
+    <nav class="q-side__nav">
+      {#each NAV_GROUPS as g, gi (gi)}
+        <div class="q-navgroup">
+          <div class="q-navgroup__label">{g.label}</div>
+          {#each g.items as it (it.path)}
+            {@const Icon = it.icon}
+            <a
+              href={it.path}
+              class="q-navitem"
+              aria-current={isActive(it.path)}
+              onclick={(e) => {
+                e.preventDefault();
+                go(it.path);
+              }}
+            >
+              <Icon size={16} strokeWidth={1.9} />
+              <span>{it.label}</span>
+            </a>
+          {/each}
+        </div>
       {/each}
     </nav>
-    <div class="flex items-center gap-1.5 px-5 py-3">
-      <div class="mr-auto text-xs" style="color: var(--q-muted);">v0.1 · local-only</div>
+
+    <div class="q-side__foot">
+      <span class="q-side__ver">v0.1 · local-only</span>
       <!-- 外观快速切换：跟随系统 / 浅色 / 深色，图标表示当前选择 -->
-      <div
-        class="flex items-center gap-0.5 rounded-lg p-0.5"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
-      >
+      <div class="q-seg q-seg--fill">
         {#each THEME_ICONS as t, i (i)}
           <button
             onclick={() => setThemeMode(t.mode)}
             title={THEME_LABEL[t.mode]}
             aria-label={THEME_LABEL[t.mode]}
             aria-pressed={theme.mode === t.mode}
-            class="flex h-6 w-6 items-center justify-center rounded"
-            style="color: {theme.mode === t.mode ? 'var(--q-theme)' : 'var(--q-muted)'};"
+            class="q-seg__btn !px-2"
           >
             <t.icon size={13} />
           </button>
@@ -284,15 +286,13 @@
     </div>
   </aside>
 
-  <!-- mobile top bar -->
-  <div
-    class="fixed inset-x-0 top-0 z-30 flex items-center justify-between border-b px-4 py-2 md:hidden"
-    style="background: var(--q-surface); border-color: var(--q-border);"
-  >
-    <div class="font-semibold">牵丝</div>
-    <div class="flex items-center gap-1">
+  <!-- 移动顶栏 -->
+  <div class="q-topbar md:hidden">
+    <span class="q-topbar__name">牵丝</span>
+    <div class="flex items-center gap-0.5">
       <!-- 移动端唯一的查询入口：手机才是「当场想起一个人」的终端，搜索不能只活在侧栏 -->
       <button
+        class="q-iconbtn"
         onclick={() => {
           searchQ = '';
           searchResults = [];
@@ -301,51 +301,48 @@
         }}
         title="搜索"
         aria-label="搜索"
-        class="flex h-7 w-7 items-center justify-center rounded"
-        style="color: var(--q-muted);"
       >
-        <Search size={17} />
+        <Search size={18} />
       </button>
       <!-- 移动端逐档循环切换外观：系统 → 浅色 → 深色 → 系统 -->
       <button
+        class="q-iconbtn"
         onclick={() => setThemeMode(nextMode(theme.mode))}
         title={`外观：${THEME_LABEL[theme.mode]}`}
         aria-label={`外观：${THEME_LABEL[theme.mode]}，点击切换`}
-        class="flex h-7 w-7 items-center justify-center rounded"
-        style="color: var(--q-muted);"
       >
-        {#if theme.mode === 'system'}<Monitor size={17} />{:else if theme.mode === 'light'}<Sun
-            size={17}
-          />{:else}<Moon size={17} />{/if}
+        {#if theme.mode === 'system'}<Monitor size={18} />{:else if theme.mode === 'light'}<Sun
+            size={18}
+          />{:else}<Moon size={18} />{/if}
       </button>
-      <button
-        onclick={() => (mobileOpen = !mobileOpen)}
-        class="rounded p-1 hover:bg-black/5 dark:hover:bg-white/5"
-        aria-label="菜单"
-      >
+      <button class="q-iconbtn" onclick={() => (mobileOpen = !mobileOpen)} aria-label="菜单">
         {#if mobileOpen}<X size={22} />{:else}<Menu size={22} />{/if}
       </button>
     </div>
   </div>
 
+  <!-- 移动导航抽屉：与侧栏共用 NAV_GROUPS -->
   {#if mobileOpen}
-    <div
-      class="fixed inset-0 top-11 z-20 overflow-y-auto md:hidden"
-      style="background: var(--q-surface);"
-    >
-      {#each navItems as it, i (i)}
-        {@const Icon = it.icon}
-        <a
-          href={it.path}
-          class="flex items-center gap-3 border-b px-5 py-3"
-          style="border-color: var(--q-border); color: var(--q-text); {isActive(it.path)
-            ? 'background: color-mix(in srgb, var(--q-theme) 12%, transparent);'
-            : ''}"
-          onclick={() => (mobileOpen = false)}
-        >
-          <Icon size={18} />
-          <span>{it.label}</span>
-        </a>
+    <div class="q-sheet md:hidden">
+      {#each NAV_GROUPS as g, gi (gi)}
+        <div class="q-navgroup">
+          <div class="q-navgroup__label">{g.label}</div>
+          {#each g.items as it (it.path)}
+            {@const Icon = it.icon}
+            <a
+              href={it.path}
+              class="q-navitem"
+              aria-current={isActive(it.path)}
+              onclick={(e) => {
+                e.preventDefault();
+                go(it.path);
+              }}
+            >
+              <Icon size={17} strokeWidth={1.9} />
+              <span>{it.label}</span>
+            </a>
+          {/each}
+        </div>
       {/each}
     </div>
   {/if}
@@ -354,8 +351,8 @@
   {#if mobileSearch}
     <div class="fixed inset-0 z-40 flex flex-col md:hidden" style="background: var(--q-bg);">
       <div
-        class="flex items-center gap-2 border-b px-3 py-2"
-        style="background: var(--q-surface); border-color: var(--q-border);"
+        class="flex items-center gap-2 px-3"
+        style="height: 3.4rem; background: var(--q-surface); border-bottom: 1px solid var(--q-border);"
       >
         <input
           use:autofocus
@@ -363,12 +360,10 @@
           oninput={runSearch}
           onkeydown={onSearchKey}
           placeholder="搜索人物、往来、对话…"
-          class="min-w-0 flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+          class="q-input !py-2"
         />
         <button
-          class="px-2 py-1 text-sm"
-          style="color: var(--q-muted);"
+          class="q-btn q-btn--subtle q-btn--sm shrink-0"
           onclick={() => {
             mobileSearch = false;
             searchQ = '';
@@ -379,63 +374,49 @@
       </div>
       <div class="flex-1 overflow-y-auto">
         {#if searchResults.length === 0}
-          <div class="py-10 text-center text-sm" style="color: var(--q-muted);">
+          <div class="py-12 text-center text-sm" style="color: var(--q-muted);">
             {searchQ.trim() ? '没有匹配的记录' : '输入名字、事由或对话内容'}
           </div>
         {:else}
-          <ul>
+          <div class="p-2">
             {#each searchResults as r, i (i)}
-              <li>
-                <button
-                  class="flex w-full items-center gap-2 border-b px-4 py-3 text-left"
-                  style="border-color: var(--q-border); color: var(--q-text);"
-                  onclick={() => openResult(r)}
-                >
-                  <span
-                    class="shrink-0 rounded px-1.5 py-0.5 text-[10px]"
-                    style="background: var(--q-surface); color: var(--q-muted);"
-                    >{SEARCH_LABEL[r.type] || r.type}</span
-                  >
-                  <span class="truncate">{r.title}</span>
-                </button>
-              </li>
+              <button
+                class="flex w-full items-center gap-2 rounded-lg px-3 py-3 text-left"
+                style="color: var(--q-text);"
+                onclick={() => openResult(r)}
+              >
+                <span class="q-badge shrink-0">{SEARCH_LABEL[r.type] || r.type}</span>
+                <span class="truncate">{r.title}</span>
+              </button>
             {/each}
-          </ul>
+          </div>
         {/if}
       </div>
     </div>
   {/if}
 
-  <!-- main -->
-  <main class="min-w-0 flex-1 pt-12 md:pt-0">
-    <div class="mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8">
-      {#if cur === 'Today'}
-        <Today />
-      {:else if typeof cur === 'string'}
-        {#if pages[cur]}
-          {@const Page = pages[cur]}
-          {#if cur === 'PeopleNew'}<Page mode="new" />
-          {:else if cur === 'Timeline'}<Page onlyTimeline={true} />
-          {:else}<Page />{/if}
-        {:else}
-          <div class="py-16 text-center" style="color: var(--q-muted);">加载中…</div>
-        {/if}
-      {:else if pages.PersonDetail}
-        {@const Page = pages.PersonDetail}
-        <Page id={cur.id} />
+  <!-- 页面区：每个页面自带 .q-page 容器（统一宽度与留白） -->
+  <main class="q-main">
+    {#if cur === 'Today'}
+      <Today />
+    {:else if typeof cur === 'string'}
+      {#if pages[cur]}
+        {@const Page = pages[cur]}
+        {#if cur === 'PeopleNew'}<Page mode="new" />
+        {:else if cur === 'Timeline'}<Page onlyTimeline={true} />
+        {:else}<Page />{/if}
       {:else}
-        <div class="py-16 text-center" style="color: var(--q-muted);">加载中…</div>
+        <div class="q-page text-center" style="color: var(--q-muted);">加载中…</div>
       {/if}
-    </div>
+    {:else if pages.PersonDetail}
+      {@const Page = pages.PersonDetail}
+      <Page id={cur.id} />
+    {:else}
+      <div class="q-page text-center" style="color: var(--q-muted);">加载中…</div>
+    {/if}
   </main>
 </div>
 
 <!-- 反馈条与确认框：全站一套，挂在最外层 -->
 <Toaster />
 <AskHost />
-
-<style>
-  a[href]:hover {
-    background: color-mix(in srgb, var(--q-theme) 8%, transparent);
-  }
-</style>

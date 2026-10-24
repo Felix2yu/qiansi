@@ -177,23 +177,19 @@
 </datalist>
 
 <div class="space-y-3">
-  <div class="flex items-center justify-between">
-    <span class="text-xs" style="color: var(--q-muted);">
+  <div class="flex items-center justify-between gap-2">
+    <span class="q-hint !mt-0">
       {loading ? '加载中…' : rels.length > 0 ? `已维护 ${rels.length} 条` : '还没有维护关系'}
     </span>
     {#if !showAdd}
-      <button
-        class="flex items-center gap-1 rounded px-2 py-1 text-xs"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        onclick={openAdd}
-      >
-        <Plus size={12} /> 添加关系
+      <button class="q-btn q-btn--ghost q-btn--sm" onclick={openAdd}>
+        <Plus size={13} /> 添加关系
       </button>
     {/if}
   </div>
 
   {#if showAdd}
-    <div class="space-y-2 rounded-lg p-2" style="background: var(--q-bg);">
+    <div class="q-well space-y-2">
       <div class="grid grid-cols-2 gap-2">
         <PersonPicker
           bind:value={addForm.to_person_id}
@@ -205,87 +201,72 @@
           list={listId}
           bind:value={addForm.type}
           placeholder="关系类型（可自定义）"
-          class="w-full rounded-lg px-2 py-2 text-sm outline-none"
-          style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
+          class="q-input"
         />
       </div>
       <div class="flex gap-2">
-        <input
-          bind:value={addForm.remark}
-          placeholder="备注（可选）"
-          class="flex-1 rounded-lg px-2 py-2 text-sm outline-none"
-          style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-        />
+        <input bind:value={addForm.remark} placeholder="备注（可选）" class="q-input flex-1" />
+        <button class="q-btn q-btn--primary" disabled={busy} onclick={add}>保存</button>
         <button
-          class="rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60"
-          style="background: var(--q-theme);"
-          disabled={busy}
-          onclick={add}>保存</button
-        >
-        <button
-          class="rounded-lg px-2 py-2 text-sm"
-          style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
+          class="q-iconbtn q-iconbtn--border"
           title="取消"
-          onclick={() => (showAdd = false)}><X size={14} /></button
+          aria-label="取消"
+          onclick={() => (showAdd = false)}><X size={15} /></button
         >
       </div>
     </div>
   {/if}
 
-  <ul class="space-y-1">
+  <ul class="space-y-1.5">
     {#each rels as r (r.id)}
-      <li class="rounded-md px-2 py-1.5 text-sm" style="background: var(--q-bg);">
+      <li
+        class="rounded-[var(--q-radius-sm)] px-3 py-2 text-sm"
+        style="background: var(--q-surface-2); border: 1px solid var(--q-border);"
+      >
         {#if editingId === r.id}
           <div class="flex flex-wrap items-center gap-2">
-            <span class="text-xs" style="color: var(--q-muted);">{otherName(r)}</span>
+            <span class="q-hint !mt-0 shrink-0">{otherName(r)}</span>
             <input
               list={listId}
               bind:value={editForm.type}
               placeholder="关系类型"
-              class="w-28 rounded-lg px-2 py-1 text-xs outline-none"
-              style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
+              class="q-input w-32 !py-1.5 !text-xs"
             />
             <input
               bind:value={editForm.remark}
               placeholder="备注"
-              class="min-w-24 flex-1 rounded-lg px-2 py-1 text-xs outline-none"
-              style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
+              class="q-input min-w-24 flex-1 !py-1.5 !text-xs"
             />
             <button
-              class="rounded p-1 disabled:opacity-60"
+              class="q-iconbtn !h-8 !w-8"
               style="color: var(--q-theme);"
               title="保存"
+              aria-label="保存"
               disabled={busy}
               onclick={() => saveEdit(r)}><Check size={14} /></button
             >
-            <button
-              class="rounded p-1"
-              style="color: var(--q-muted);"
-              title="取消"
-              onclick={cancelEdit}><X size={14} /></button
+            <button class="q-iconbtn !h-8 !w-8" title="取消" aria-label="取消" onclick={cancelEdit}
+              ><X size={14} /></button
             >
           </div>
         {:else}
           <div class="flex items-center gap-2">
-            <span
-              class="shrink-0 rounded px-1.5 py-0.5 text-xs"
-              style="background: var(--q-surface); color: var(--q-muted);">{r.type}</span
-            >
-            <span class="truncate">{otherName(r)}</span>
+            <span class="q-badge q-badge--theme shrink-0">{r.type}</span>
+            <span class="truncate font-medium">{otherName(r)}</span>
             {#if r.remark}<span class="truncate text-xs" style="color: var(--q-muted);"
                 >· {r.remark}</span
               >{/if}
-            <span class="ml-auto flex shrink-0 items-center gap-1">
+            <span class="ml-auto flex shrink-0 items-center gap-0.5">
               <button
-                class="rounded p-1"
-                style="color: var(--q-muted);"
+                class="q-iconbtn !h-8 !w-8"
                 title="编辑"
+                aria-label="编辑"
                 onclick={() => startEdit(r)}><Pencil size={14} /></button
               >
               <button
-                class="rounded p-1"
-                style="color: var(--q-muted);"
+                class="q-iconbtn !h-8 !w-8"
                 title="删除"
+                aria-label="删除"
                 onclick={() => remove(r)}><Trash2 size={14} /></button
               >
             </span>
@@ -294,7 +275,7 @@
       </li>
     {:else}
       {#if !loading && !showAdd}
-        <li class="text-sm" style="color: var(--q-muted);">点右上角「添加关系」，把 TA 连进来</li>
+        <li class="q-hint !mt-0">点右上角「添加关系」，把 TA 连进来</li>
       {/if}
     {/each}
   </ul>

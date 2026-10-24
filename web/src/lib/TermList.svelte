@@ -107,80 +107,132 @@
   }
 </script>
 
-<ul class={pill ? 'mb-3 flex flex-wrap gap-2' : 'mb-3 space-y-1'}>
+<ul class={pill ? 'mb-3 flex flex-wrap gap-2' : 'mb-3 space-y-1.5'}>
   {#each items as t (t.id)}
     {#if pill}
-      <li
-        class="flex items-center gap-1 rounded-full px-2 py-1 text-xs"
-        style="background: color-mix(in srgb, {t.color} 15%, transparent); color: {t.color};"
-      >
-        {t.name}
-        <button title="编辑" onclick={() => startEdit(t)}><Pencil size={12} /></button>
-        <button title="删除" onclick={() => remove(t)}><Trash2 size={12} /></button>
+      <li class="term-pill" style={`--c: ${t.color};`}>
+        <span class="q-dot" style={`--c: ${t.color};`}></span>
+        <span class="max-w-40 truncate">{t.name}</span>
+        <span class="ml-0.5 flex items-center">
+          <button
+            class="term-ico"
+            title="编辑"
+            aria-label={`编辑${noun}`}
+            onclick={() => startEdit(t)}
+          >
+            <Pencil size={11} />
+          </button>
+          <button
+            class="term-ico"
+            title="删除"
+            aria-label={`删除${noun}`}
+            onclick={() => remove(t)}
+          >
+            <Trash2 size={11} />
+          </button>
+        </span>
       </li>
     {:else}
       <li
-        class="flex items-center gap-2 rounded-md px-2 py-1 text-sm"
-        style="background: var(--q-bg);"
+        class="flex items-center gap-2.5 rounded-[var(--q-radius-sm)] px-3 py-2 text-sm"
+        style="background: var(--q-surface-2); border: 1px solid var(--q-border);"
       >
-        <span class="h-3 w-3 shrink-0 rounded-full" style="background: {t.color};"></span>
+        <span class="q-dot shrink-0" style={`--c: ${t.color};`}></span>
         <span class="truncate">{t.name}</span>
-        <span class="ml-auto flex shrink-0 items-center gap-1">
+        <span class="ml-auto flex shrink-0 items-center gap-0.5">
           <button
-            class="p-0.5"
-            style="color: var(--q-muted);"
+            class="q-iconbtn !h-7 !w-7"
             title="编辑"
-            onclick={() => startEdit(t)}><Pencil size={14} /></button
+            aria-label={`编辑${noun}`}
+            onclick={() => startEdit(t)}
           >
+            <Pencil size={14} />
+          </button>
           <button
-            class="p-0.5"
-            style="color: var(--q-muted);"
+            class="q-iconbtn !h-7 !w-7"
             title="删除"
-            onclick={() => remove(t)}><Trash2 size={14} /></button
+            aria-label={`删除${noun}`}
+            onclick={() => remove(t)}
           >
+            <Trash2 size={14} />
+          </button>
         </span>
       </li>
     {/if}
   {:else}
-    <li class="text-sm" style="color: var(--q-muted);">还没有{noun}</li>
+    <li class="q-hint !mt-0">还没有{noun}</li>
   {/each}
 </ul>
 
-<div class="flex gap-2">
+<div class="flex flex-wrap items-center gap-2">
   {#if editing}
-    <input
-      bind:value={editForm.name}
-      class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      placeholder="{noun}名"
-    />
-    <input type="color" bind:value={editForm.color} class="h-10 w-10 rounded-lg border" />
+    <input bind:value={editForm.name} class="q-input min-w-32 flex-1" placeholder="{noun}名" />
+    <input type="color" bind:value={editForm.color} class="term-color" aria-label="选择颜色" />
+    <button class="q-btn q-btn--primary" disabled={busy} onclick={save}>保存</button>
     <button
-      class="rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60"
-      style="background: var(--q-theme);"
-      disabled={busy}
-      onclick={save}>保存</button
-    >
-    <button
-      class="rounded-lg px-2 py-2 text-sm"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
+      class="q-iconbtn q-iconbtn--border"
       title="取消"
-      onclick={() => (editingId = 0)}><X size={14} /></button
+      aria-label="取消"
+      onclick={() => (editingId = 0)}><X size={15} /></button
     >
   {:else}
     <input
       bind:value={draft.name}
-      class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+      class="q-input min-w-32 flex-1"
       {placeholder}
       onkeydown={(e) => e.key === 'Enter' && create()}
     />
-    <input type="color" bind:value={draft.color} class="h-10 w-10 rounded-lg border" />
-    <button
-      class="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-white disabled:opacity-60"
-      style="background: var(--q-theme);"
-      disabled={busy}
-      onclick={create}><Plus size={14} /> 添加</button
-    >
+    <input type="color" bind:value={draft.color} class="term-color" aria-label="选择颜色" />
+    <button class="q-btn q-btn--primary" disabled={busy} onclick={create}>
+      <Plus size={14} /> 添加
+    </button>
   {/if}
 </div>
+
+<style>
+  /* 带分类色的胶囊：颜色由 --c 传入，操作图标随字色、悬停微亮 */
+  .term-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.26rem 0.38rem 0.26rem 0.62rem;
+    border-radius: 999px;
+    font-size: 0.74rem;
+    line-height: 1.4;
+    background: color-mix(in srgb, var(--c) 12%, var(--q-surface));
+    color: var(--c);
+    border: 1px solid color-mix(in srgb, var(--c) 32%, var(--q-border));
+  }
+  .term-ico {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.35rem;
+    height: 1.35rem;
+    border-radius: 999px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    opacity: 0.72;
+    transition:
+      background-color 0.15s ease,
+      opacity 0.15s ease;
+  }
+  .term-ico:hover {
+    opacity: 1;
+    background: color-mix(in srgb, currentColor 16%, transparent);
+  }
+
+  /* 取色器与 q-input 等高对齐 */
+  .term-color {
+    width: 2.6rem;
+    height: 2.3rem;
+    flex: none;
+    padding: 2px;
+    cursor: pointer;
+    background: var(--q-surface);
+    border: 1px solid var(--q-border-strong);
+    border-radius: var(--q-radius-sm);
+  }
+</style>

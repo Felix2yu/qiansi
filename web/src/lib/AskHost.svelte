@@ -11,39 +11,32 @@
 </script>
 
 {#if a}
-  <div
-    class="fixed inset-0 z-[70] flex items-center justify-center p-4"
-    role="alertdialog"
-    aria-modal="true"
-    aria-label={a.title}
-  >
+  <div class="q-modal z-[70]" role="alertdialog" aria-modal="true" aria-label={a.title}>
     <button
       type="button"
       aria-label="关闭确认框"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,.3);"
+      class="q-modal__veil"
       onclick={() => answerAsk(false)}
     ></button>
-    <div
-      class="relative w-full max-w-md rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <h2 class="font-semibold" style={a.danger ? 'color: var(--q-danger);' : ''}>{a.title}</h2>
-      {#if a.detail}
-        <p class="mt-2 text-sm leading-relaxed" style="color: var(--q-muted);">{a.detail}</p>
-      {/if}
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          bind:this={box}
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          onclick={() => answerAsk(false)}>{a.cancelLabel || '取消'}</button
-        >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: {a.danger ? 'var(--q-danger)' : 'var(--q-theme)'};"
-          onclick={() => answerAsk(true)}>{a.confirmLabel || '确定'}</button
-        >
+    <div class="q-modal__panel" role="document">
+      <div class="q-modal__body !pt-9">
+        <h2 class="q-modal__title mb-2" style={a.danger ? 'color: var(--q-danger);' : ''}>
+          {a.title}
+        </h2>
+        {#if a.detail}
+          <p class="text-sm leading-relaxed" style="color: var(--q-muted);">{a.detail}</p>
+        {/if}
+        <div class="mt-5 flex justify-end gap-2">
+          <button bind:this={box} class="q-btn q-btn--ghost" onclick={() => answerAsk(false)}
+            >{a.cancelLabel || '取消'}</button
+          >
+          <button
+            class="q-btn"
+            class:q-btn--danger={a.danger}
+            class:q-btn--primary={!a.danger}
+            onclick={() => answerAsk(true)}>{a.confirmLabel || '确定'}</button
+          >
+        </div>
       </div>
     </div>
   </div>

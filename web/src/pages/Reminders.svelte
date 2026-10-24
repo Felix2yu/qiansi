@@ -3,7 +3,10 @@
   import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api';
   import { loadSelf } from '../lib/self.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
-  import { Plus, X, Check } from '@lucide/svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
+  import { Plus, Check, Undo2, Bell } from '@lucide/svelte';
   import { toast } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
@@ -72,6 +75,11 @@
     showForm = true;
   }
 
+  function closeForm() {
+    showForm = false;
+    editId = '';
+  }
+
   async function submit() {
     if (!form.title.trim() || !form.due_at) {
       toast.error('内容和日期必填');
@@ -87,8 +95,7 @@
       toast.fail('保存失败', err);
       return;
     }
-    showForm = false;
-    editId = '';
+    closeForm();
     toast.ok(isEdit ? '已更新' : '已添加待办');
     await load();
   }
@@ -164,156 +171,106 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">待办</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">自定义 & 自动生成</p>
+<div class="q-page">
+  <PageHeader title="待办" subtitle="自定义 & 自动生成">
+    {#snippet actions()}
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
+        <Plus size={14} /> 新建
+      </button>
+    {/snippet}
+  </PageHeader>
+
+  <div class="q-stack">
+    <div class="q-card q-card--tight flex items-center gap-2">
+      <label class="flex cursor-pointer items-center gap-2 text-sm select-none">
+        <input type="checkbox" bind:checked={showDone} onchange={() => load()} /> 查看已完成
+      </label>
     </div>
-    <button
-      class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-      style="background: var(--q-theme);"
-      onclick={openCreate}
-    >
-      <Plus size={14} /> 新建
-    </button>
-  </header>
-  <div class="flex items-center gap-3">
-    <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-      <input type="checkbox" bind:checked={showDone} onchange={() => load()} /> 查看已完成
-    </label>
-  </div>
-  {#if groups.length === 0}
-    <div class="py-8 text-center text-sm" style="color: var(--q-muted);">
-      {showDone ? '还没有已完成的待办' : '没有待办 🎉'}
-    </div>
-  {:else}
-    {#each groups as g, i (i)}
-      <section class="space-y-2">
-        <h2
-          class="flex items-center gap-2 text-xs font-medium"
-          style="color: {g.key === 'overdue' ? '#ef4444' : 'var(--q-muted)'};"
-        >
-          {g.label}
-          <span
-            class="rounded-full px-1.5"
-            style="background: var(--q-surface); border: 1px solid var(--q-border);"
-            >{g.items.length}</span
+
+    {#if groups.length === 0}
+      <Empty icon={Bell} text={showDone ? '还没有已完成的待办' : '没有待办，正好去见见想见的人'} />
+    {:else}
+      {#each groups as g, i (i)}
+        <section>
+          <h2
+            class="mb-2 flex items-center gap-2 text-xs font-medium tracking-widest"
+            style={`color: ${g.key === 'overdue' ? 'var(--q-danger)' : 'var(--q-muted)'};`}
           >
-        </h2>
-        <ul class="space-y-2">
-          {#each g.items as r (r.id)}
-            <li
-              class="flex items-center gap-3 rounded-lg p-3"
-              style="background: var(--q-surface); border: 1px solid var(--q-border);"
-            >
-              {#if r.status === 'pending'}
-                <button
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
-                  onclick={() => done(r)}
-                  style="border-color: var(--q-border);"
-                  title="标记完成"
-                >
-                  <Check size={14} style="color: var(--q-muted);" />
-                </button>
-              {:else if isDerived(r)}
-                <!-- 派生待办完成了就是来源记录定了论，这里点不回，按钮留着只会报错 -->
-                <span
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
-                  style="border-color: var(--q-border); color: var(--q-muted);"
-                  ><Check size={14} /></span
-                >
-              {:else}
-                <button
-                  class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border"
-                  onclick={() => undo(r)}
-                  style="border-color: var(--q-border);"
-                  title="撤销完成">↩</button
-                >
-              {/if}
-              <div class="min-w-0 flex-1">
-                <div class="text-sm">{r.title}</div>
-                <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-                  {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name && ' · ' + r.person_name} ·
-                  {new Date(r.due_at).toLocaleDateString()}
-                  {#if g.key === 'overdue'}· 已逾期 {overdueDays(r)} 天{/if}
+            {g.label}
+            <span class="q-badge !text-[10px]">{g.items.length}</span>
+          </h2>
+          <div class="q-stack--tight flex flex-col">
+            {#each g.items as r (r.id)}
+              <div class="q-row">
+                {#if r.status === 'pending'}
+                  <button
+                    class="q-iconbtn q-iconbtn--border !h-6 !w-7 shrink-0 rounded-md"
+                    onclick={() => done(r)}
+                    title="标记完成"
+                  >
+                    <Check size={14} />
+                  </button>
+                {:else if isDerived(r)}
+                  <!-- 派生待办完成了就是来源记录定了论，这里点不回，按钮留着只会报错 -->
+                  <span
+                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-md"
+                    style="color: var(--q-ok);"><Check size={15} /></span
+                  >
+                {:else}
+                  <button
+                    class="q-iconbtn q-iconbtn--border !h-6 !w-7 shrink-0 rounded-md"
+                    onclick={() => undo(r)}
+                    title="撤销完成"
+                  >
+                    <Undo2 size={13} />
+                  </button>
+                {/if}
+                <div class="min-w-0 flex-1">
+                  <div
+                    class="text-sm"
+                    class:line-through={r.status !== 'pending'}
+                    class:opacity-60={r.status !== 'pending'}
+                  >
+                    {r.title}
+                  </div>
+                  <div class="q-num mt-0.5 text-xs" style="color: var(--q-muted);">
+                    {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
+                      ' · ' + r.person_name}
+                    · {new Date(r.due_at).toLocaleDateString()}
+                    {#if g.key === 'overdue'}<span style="color: var(--q-danger);">
+                        · 已逾期 {overdueDays(r)} 天</span
+                      >{/if}
+                  </div>
                 </div>
+                <button class="q-btn q-btn--ghost q-btn--sm shrink-0" onclick={() => openEdit(r)}
+                  >编辑</button
+                >
+                <button class="q-btn q-btn--subtle q-btn--sm shrink-0" onclick={() => remove(r)}
+                  >删除</button
+                >
               </div>
-              <button
-                class="rounded px-2 py-1 text-xs"
-                style="background: var(--q-bg); border: 1px solid var(--q-border);"
-                onclick={() => openEdit(r)}>编辑</button
-              >
-              <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(r)}
-                >删</button
-              >
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/each}
-  {/if}
+            {/each}
+          </div>
+        </section>
+      {/each}
+    {/if}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => {
-        showForm = false;
-        editId = '';
-      }}
-    ></button>
-    <div
-      class="relative w-full max-w-lg rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{editId ? '编辑待办' : '新建待办'}</h2>
-        <button
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}><X size={18} /></button
-        >
-      </div>
-      <div class="space-y-3">
-        <input
-          bind:value={form.title}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="待办内容"
-        />
-        <input
-          type="date"
-          bind:value={form.due_at}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        />
-        <PersonPicker
-          bind:value={form.person_id}
-          selectedName={pickedName}
-          placeholder="关联联系人（可选）"
-        />
-      </div>
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}>取消</button
-        >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={submit}>保存</button
-        >
-      </div>
+  <Modal wide onclose={closeForm} title={editId ? '编辑待办' : '新建待办'}>
+    <div class="q-stack--tight flex flex-col">
+      <input bind:value={form.title} class="q-input" placeholder="待办内容" />
+      <input type="date" bind:value={form.due_at} class="q-input" />
+      <PersonPicker
+        bind:value={form.person_id}
+        selectedName={pickedName}
+        placeholder="关联联系人（可选）"
+      />
     </div>
-  </div>
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
+      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+    {/snippet}
+  </Modal>
 {/if}

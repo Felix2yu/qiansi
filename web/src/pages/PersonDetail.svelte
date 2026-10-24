@@ -19,6 +19,7 @@
   import PersonForm from '../lib/PersonForm.svelte';
   import PersonRelEditor from '../lib/PersonRelEditor.svelte';
   import EventForm from '../lib/EventForm.svelte';
+  import Modal from '../lib/ui/Modal.svelte';
   import { navigate } from '../lib/router';
   import { self, setSelf, loadSelf, personLabel } from '../lib/self.svelte';
   import { dict, ensure, refresh } from '../lib/dict.svelte';
@@ -36,7 +37,10 @@
     ImageOff,
     Pencil,
     Check,
-    Route
+    Route,
+    Phone,
+    MessageCircle,
+    MapPin
   } from '@lucide/svelte';
 
   let { id = '' }: { id?: string } = $props();
@@ -379,525 +383,411 @@
       .join(' ');
   });
 
+  // 时间线类型 → 统一语义色
+  const TL_COLOR: Record<string, string> = {
+    event: 'var(--q-c-event)',
+    memo: 'var(--q-c-memo)',
+    transaction: 'var(--q-c-money)'
+  };
+
   // 认识路径由后端沿 introduced_by 往回追（「我 —同学→ A —对象→ B → 此人」），
   // 直达关系一并带回：经人认识后又成为挚友，就是另一条「我 —挚友→ 此人」。
 </script>
 
 {#if loading}
-  <div class="py-16 text-center" style="color: var(--q-muted);">加载中…</div>
+  <div class="q-page py-16 text-center" style="color: var(--q-muted);">加载中…</div>
 {:else if person}
-  <div class="space-y-6">
-    <button
-      class="flex items-center gap-1 text-sm"
-      style="color: var(--q-muted);"
-      onclick={() => navigate('/people')}
-    >
-      <ArrowLeft size={14} /> 返回
+  <div class="q-page">
+    <button class="q-btn q-btn--subtle q-btn--sm mb-3" onclick={() => navigate('/people')}>
+      <ArrowLeft size={14} /> 返回人物
     </button>
-    <div
-      class="flex items-start gap-5 p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); border-radius: 16px;"
-    >
-      <div class="shrink-0">
-        <input
-          type="file"
-          accept="image/*"
-          class="hidden"
-          bind:this={avatarInput}
-          onchange={uploadAvatar}
-        />
-        <button
-          class="flex h-16 w-16 items-center justify-center overflow-hidden rounded-full text-2xl font-semibold text-white disabled:opacity-60"
-          style={`background: ${avatarBg(person.gender)};`}
-          disabled={uploadingAvatar}
-          onclick={() => avatarInput?.click()}
-          title="点击更换头像"
-        >
-          {#if person.avatar_attachment_id}
-            <img
-              src={avatarSrc(person.avatar_attachment_id)}
-              alt=""
-              class="h-full w-full object-cover"
-            />
-          {:else}
-            {person.name.slice(0, 1)}
-          {/if}
-        </button>
-      </div>
-      <div class="min-w-0 flex-1">
-        <div class="flex items-center gap-2">
-          <h1 class="text-xl font-semibold">{person.name}</h1>
-          {#if self.id === person.id}<span
-              class="rounded-full px-2 py-0.5 text-xs text-white"
-              style="background: var(--q-theme);">本人</span
-            >{/if}
-          {#if person.archived}<span
-              class="rounded-full px-2 py-0.5 text-xs"
-              style="background: var(--q-bg); color: var(--q-muted);">已归档</span
-            >{/if}
-        </div>
-        {#if metaLine}
-          <div class="mt-1 text-sm" style="color: var(--q-muted);">{metaLine}</div>
-        {/if}
-        {#if person.phone}<div class="mt-0.5 text-sm" style="color: var(--q-muted);">
-            📱 {person.phone}
-          </div>{/if}
-        {#if person.wechat}<div class="text-sm" style="color: var(--q-muted);">
-            💬 {person.wechat}
-          </div>{/if}
-        {#if person.location}<div class="text-sm" style="color: var(--q-muted);">
-            📍 {person.location}
-          </div>{/if}
-        {#if ownedTags.length > 0}
-          <div class="mt-2 flex flex-wrap gap-1">
-            {#each ownedTags as t (t.id)}
-              <span
-                class="rounded-full px-2 py-0.5 text-xs"
-                style="background: color-mix(in srgb, {t.color} 18%, transparent); color: {t.color};"
-                >{t.name}</span
-              >
-            {/each}
-          </div>
-        {/if}
-        {#if person.notes}<div class="mt-3 text-sm leading-relaxed whitespace-pre-wrap">
-            {person.notes}
-          </div>{/if}
-      </div>
-      <div class="flex flex-col gap-1">
-        <button
-          class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
-          title="编辑"
-          onclick={() => (showEdit = true)}><Edit3 size={16} /></button
-        >
-        <button
-          class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
-          title={person.archived ? '取消归档' : '归档'}
-          onclick={toggleArchive}><Archive size={16} /></button
-        >
-        {#if person.avatar_attachment_id}
-          <button
-            class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
-            title="移除头像"
-            onclick={removeAvatar}><ImageOff size={16} /></button
-          >
-        {/if}
-        <button
-          class="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs hover:bg-black/5 dark:hover:bg-white/10"
-          style={self.id === id ? 'color: var(--q-theme);' : 'color: var(--q-muted);'}
-          title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'}
-          onclick={toggleSelf}
-        >
-          <UserCheck size={16} />{self.id === id ? '取消本人' : '设为本人'}
-        </button>
-        <button
-          class="rounded-lg p-2 hover:bg-black/5 dark:hover:bg-white/10"
-          title="删除"
-          onclick={remove}><Trash2 size={16} /></button
-        >
-      </div>
-    </div>
 
-    {#if person.stats}
-      <!-- 回礼对照：先给「我随出去 vs 收到」，再看净额，回答这次该回多少 -->
-      <section
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="grid grid-cols-2 gap-3 text-center sm:grid-cols-4">
-          <div>
-            <div class="text-xs" style="color: var(--q-muted);">我随出去</div>
-            <div class="text-lg font-semibold">¥{yuan(person.stats.gift_out_fen)}</div>
+    <div class="q-stack">
+      <!-- 档案卡 -->
+      <div class="q-card flex items-start gap-5">
+        <div class="shrink-0">
+          <input
+            type="file"
+            accept="image/*"
+            class="hidden"
+            bind:this={avatarInput}
+            onchange={uploadAvatar}
+          />
+          <button
+            class="q-avatar h-16 w-16 !rounded-2xl text-2xl disabled:opacity-60"
+            style={`background: ${avatarBg(person.gender)};`}
+            disabled={uploadingAvatar}
+            onclick={() => avatarInput?.click()}
+            title="点击更换头像"
+          >
+            {#if person.avatar_attachment_id}
+              <img src={avatarSrc(person.avatar_attachment_id)} alt="" />
+            {:else}
+              {person.name.slice(0, 1)}
+            {/if}
+          </button>
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <h1 class="q-title !text-[1.35rem]">{person.name}</h1>
+            {#if self.id === person.id}<span class="q-badge q-badge--theme">本人</span>{/if}
+            {#if person.archived}<span class="q-badge">已归档</span>{/if}
           </div>
-          <div>
-            <div class="text-xs" style="color: var(--q-muted);">收到</div>
-            <div class="text-lg font-semibold">¥{yuan(person.stats.gift_in_fen)}</div>
+          {#if metaLine}
+            <div class="mt-1 text-sm" style="color: var(--q-muted);">{metaLine}</div>
+          {/if}
+          <div class="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm" style="color: var(--q-muted);">
+            {#if person.phone}<span class="q-num inline-flex items-center gap-1"
+                ><Phone size={13} /> {person.phone}</span
+              >{/if}
+            {#if person.wechat}<span class="inline-flex items-center gap-1"
+                ><MessageCircle size={13} /> {person.wechat}</span
+              >{/if}
+            {#if person.location}<span class="inline-flex items-center gap-1"
+                ><MapPin size={13} /> {person.location}</span
+              >{/if}
           </div>
-          <div>
-            <div class="text-xs" style="color: var(--q-muted);">净额</div>
+          {#if ownedTags.length > 0}
+            <div class="mt-2.5 flex flex-wrap gap-1.5">
+              {#each ownedTags as t (t.id)}
+                <span class="q-tag" style="--c: {t.color};">{t.name}</span>
+              {/each}
+            </div>
+          {/if}
+          {#if person.notes}
+            <div class="mt-3 text-sm leading-relaxed whitespace-pre-wrap">{person.notes}</div>
+          {/if}
+        </div>
+        <div class="flex shrink-0 flex-col items-center gap-0.5">
+          <button class="q-iconbtn" title="编辑" onclick={() => (showEdit = true)}
+            ><Edit3 size={16} /></button
+          >
+          <button
+            class="q-iconbtn"
+            title={person.archived ? '取消归档' : '归档'}
+            onclick={toggleArchive}><Archive size={16} /></button
+          >
+          {#if person.avatar_attachment_id}
+            <button class="q-iconbtn" title="移除头像" onclick={removeAvatar}
+              ><ImageOff size={16} /></button
+            >
+          {/if}
+          <button
+            class="q-btn q-btn--sm q-btn--ghost mt-1"
+            class:q-btn--primary={self.id === id}
+            title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'}
+            onclick={toggleSelf}
+          >
+            <UserCheck size={14} />{self.id === id ? '取消本人' : '设为本人'}
+          </button>
+          <button class="q-iconbtn" title="删除" onclick={remove}><Trash2 size={16} /></button>
+        </div>
+      </div>
+
+      {#if person.stats}
+        <!-- 回礼对照：先给「我随出去 vs 收到」，再看净额，回答这次该回多少 -->
+        <section class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div class="q-stat !py-3">
+            <div class="q-stat__label">我随出去</div>
+            <div class="q-num text-base font-semibold">¥{yuan(person.stats.gift_out_fen)}</div>
+          </div>
+          <div class="q-stat !py-3">
+            <div class="q-stat__label">收到</div>
+            <div class="q-num text-base font-semibold">¥{yuan(person.stats.gift_in_fen)}</div>
+          </div>
+          <div class="q-stat !py-3">
+            <div class="q-stat__label">净额</div>
             <div
-              class="text-lg font-semibold"
+              class="q-num text-base font-semibold"
               style={person.stats.net_fen !== 0 ? 'color: var(--q-theme);' : ''}
             >
               {netLabel(person.stats.net_fen)}
             </div>
           </div>
-          <div>
-            <div class="text-xs" style="color: var(--q-muted);">最近一次接触</div>
-            <div class="text-lg font-semibold">
+          <div class="q-stat !py-3">
+            <div class="q-stat__label">最近一次接触</div>
+            <div class="q-num text-base font-semibold">
               {person.stats.last_contact ? contactAgo(person.stats.last_contact) : '—'}
             </div>
           </div>
-        </div>
-        <p class="mt-3 text-center text-xs" style="color: var(--q-muted);">
+        </section>
+        <p class="-mt-2 text-center text-xs" style="color: var(--q-muted);">
           金额只计礼金（随礼、礼物）的往来，不含借还与日常花销{#if person.stats.last_contact}；最近一次接触取自往来、对话与记账里最晚的一天{/if}。
         </p>
-      </section>
-    {/if}
-
-    {#if intro && intro.chain.length > 1}
-      <!-- 认识路径：我 —关系→ 引荐人 … → 此人；深链到关系图聚焦同一条链 -->
-      <section
-        class="rounded-xl p-5"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="flex items-center gap-1 text-sm font-medium"><Route size={14} /> 认识路径</h2>
-          <button
-            class="flex items-center gap-1 rounded-md px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-            onclick={() => navigate(`/graph?focus=${id}`)}
-          >
-            <Route size={12} /> 在关系图中查看
-          </button>
-        </div>
-        <div class="flex flex-wrap items-center gap-y-2 text-sm">
-          {#each intro.chain as hop, i (i)}
-            {#if i > 0}
-              <span class="mx-1.5 text-xs whitespace-nowrap" style="color: var(--q-muted);">
-                —{hop.edge_types.join('、') || '认识'}→
-              </span>
-            {/if}
-            {#if hop.id === id}
-              <span
-                class="rounded-full px-2 py-0.5 font-medium whitespace-nowrap"
-                style="background: color-mix(in srgb, var(--q-theme) 14%, transparent); color: var(--q-theme);"
-              >
-                {personLabel(hop)}
-              </span>
-            {:else}
-              <button
-                class="whitespace-nowrap underline"
-                style="color: var(--q-text);"
-                onclick={() => navigate(`/people/${hop.id}`)}
-              >
-                {personLabel(hop)}
-              </button>
-            {/if}
-          {/each}
-        </div>
-        {#if intro.direct_types.length > 0}
-          <p class="mt-2 text-xs" style="color: var(--q-muted);">
-            现在你们也是：{intro.direct_types.join('、')}
-          </p>
-        {/if}
-        {#if intro.broken}
-          <p class="mt-2 text-xs" style="color: #b45309;">
-            引荐人记录指向了已删除的人，可在编辑资料里重新选择。
-          </p>
-        {:else if intro.cyclic}
-          <p class="mt-2 text-xs" style="color: #b45309;">
-            引荐人记录出现了环，请在编辑资料里修正。
-          </p>
-        {:else if !intro.reaches_self}
-          <p class="mt-2 text-xs" style="color: var(--q-muted);">
-            这条引荐链还没连到你本人，可在编辑资料里继续补全引荐人。
-          </p>
-        {/if}
-      </section>
-    {/if}
-
-    <!-- 快捷记录：不离开详情页就能补一条记录 -->
-    <section
-      class="rounded-xl p-4"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="flex flex-wrap items-center gap-2">
-        <span class="text-xs" style="color: var(--q-muted);">快捷记录</span>
-        <button
-          class="rounded-md px-2 py-1 text-xs"
-          style="background: var(--q-theme); color: white; border: 1px solid var(--q-theme);"
-          onclick={() => openEventForm()}>记一次往来（完整）</button
-        >
-        <button
-          class="rounded-md px-2 py-1 text-xs"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => (quick = quick === 'money' ? '' : 'money')}>记一笔钱</button
-        >
-        <button
-          class="rounded-md px-2 py-1 text-xs"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => (quick = quick === 'memo' ? '' : 'memo')}>记一句话</button
-        >
-      </div>
-      {#if quick}
-        <div class="mt-3 flex gap-2">
-          <input
-            bind:value={quickText}
-            class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-            placeholder={quick === 'memo' ? 'TA 说了什么' : '用途，如 借款'}
-          />
-          {#if quick === 'money'}
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              bind:value={quickAmount}
-              class="w-28 rounded-lg px-3 py-2 text-sm outline-none"
-              style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-              placeholder="金额（元）"
-            />
-          {/if}
-          <button
-            class="rounded-lg px-3 py-2 text-sm text-white"
-            style="background: var(--q-theme);"
-            onclick={submitQuick}>保存</button
-          >
-        </div>
       {/if}
-    </section>
 
-    {#if intimacy}
-      <section
-        class="rounded-xl p-5"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-sm font-medium">亲密度</h2>
-          <div class="text-2xl font-semibold" style="color: var(--q-theme);">
-            {intimacy.current_score}
+      {#if intro && intro.chain.length > 1}
+        <!-- 认识路径：我 —关系→ 引荐人 … → 此人；深链到关系图聚焦同一条链 -->
+        <section class="q-card">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="q-section-title !mb-0"><Route size={15} /> 认识路径</h2>
+            <button
+              class="q-btn q-btn--ghost q-btn--sm"
+              onclick={() => navigate(`/graph?focus=${id}`)}
+            >
+              <Route size={12} /> 在关系图中查看
+            </button>
           </div>
+          <div class="flex flex-wrap items-center gap-y-2 text-sm">
+            {#each intro.chain as hop, i (i)}
+              {#if i > 0}
+                <span class="mx-1.5 text-xs whitespace-nowrap" style="color: var(--q-muted);">
+                  —{hop.edge_types.join('、') || '认识'}→
+                </span>
+              {/if}
+              {#if hop.id === id}
+                <span class="q-tag" style="--c: var(--q-theme);">{personLabel(hop)}</span>
+              {:else}
+                <button
+                  class="link-quiet whitespace-nowrap"
+                  onclick={() => navigate(`/people/${hop.id}`)}
+                >
+                  {personLabel(hop)}
+                </button>
+              {/if}
+            {/each}
+          </div>
+          {#if intro.direct_types.length > 0}
+            <p class="q-hint">现在你们也是：{intro.direct_types.join('、')}</p>
+          {/if}
+          {#if intro.broken}
+            <p class="q-hint" style="color: var(--q-warn);">
+              引荐人记录指向了已删除的人，可在编辑资料里重新选择。
+            </p>
+          {:else if intro.cyclic}
+            <p class="q-hint" style="color: var(--q-warn);">
+              引荐人记录出现了环，请在编辑资料里修正。
+            </p>
+          {:else if !intro.reaches_self}
+            <p class="q-hint">这条引荐链还没连到你本人，可在编辑资料里继续补全引荐人。</p>
+          {/if}
+        </section>
+      {/if}
+
+      <!-- 快捷记录：不离开详情页就能补一条记录 -->
+      <section class="q-card">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs" style="color: var(--q-muted);">快捷记录</span>
+          <button class="q-btn q-btn--primary q-btn--sm" onclick={() => openEventForm()}>
+            记一次往来（完整）
+          </button>
+          <button
+            class="q-btn q-btn--sm"
+            class:q-btn--primary={quick === 'money'}
+            class:q-btn--ghost={quick !== 'money'}
+            onclick={() => (quick = quick === 'money' ? '' : 'money')}>记一笔钱</button
+          >
+          <button
+            class="q-btn q-btn--sm"
+            class:q-btn--primary={quick === 'memo'}
+            class:q-btn--ghost={quick !== 'memo'}
+            onclick={() => (quick = quick === 'memo' ? '' : 'memo')}>记一句话</button
+          >
         </div>
-        {#if trendPath}
-          <svg width="100%" height="80" viewBox="0 0 200 80" preserveAspectRatio="none">
-            <polyline fill="none" stroke="var(--q-theme)" stroke-width="2" points={trendPath} />
-          </svg>
-        {:else}
-          <div class="text-xs" style="color: var(--q-muted);">
-            暂无历史趋势，系统每日会自动记录一次快照
+        {#if quick}
+          <div class="mt-3 flex flex-wrap gap-2">
+            <input
+              bind:value={quickText}
+              class="q-input min-w-[200px] flex-1"
+              placeholder={quick === 'memo' ? 'TA 说了什么' : '用途，如 借款'}
+            />
+            {#if quick === 'money'}
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                bind:value={quickAmount}
+                class="q-input w-32"
+                placeholder="金额（元）"
+              />
+            {/if}
+            <button class="q-btn q-btn--primary" onclick={submitQuick}>保存</button>
           </div>
         {/if}
       </section>
-    {/if}
 
-    <section
-      class="rounded-xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <h2 class="mb-3 text-sm font-medium">自定义字段</h2>
-      <ul class="mb-3 space-y-1">
-        {#each fields as f (f.id)}
-          <li class="rounded-md px-2 py-1 text-sm" style="background: var(--q-bg);">
-            {#if editingFieldId === f.id}
-              <div class="flex flex-wrap items-center gap-2">
-                <input
-                  bind:value={fieldForm.label}
-                  placeholder="字段名"
-                  class="w-24 rounded-lg px-2 py-1 text-xs outline-none"
-                  style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-                />
-                <input
-                  bind:value={fieldForm.value}
-                  placeholder="值"
-                  class="min-w-24 flex-1 rounded-lg px-2 py-1 text-xs outline-none"
-                  style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-                />
-                <button
-                  class="rounded p-1 disabled:opacity-60"
-                  style="color: var(--q-theme);"
-                  title="保存"
-                  disabled={busyField}
-                  onclick={() => saveField(f)}><Check size={14} /></button
-                >
-                <button
-                  class="rounded p-1"
-                  style="color: var(--q-muted);"
-                  title="取消"
-                  onclick={() => (editingFieldId = '')}><X size={14} /></button
-                >
-              </div>
-            {:else}
-              <div class="flex items-center gap-2">
-                <span style="color: var(--q-muted);">{f.label}</span>
-                <span class="truncate">{f.value || '—'}</span>
-                <span class="ml-auto flex shrink-0 items-center gap-1">
+      {#if intimacy}
+        <section class="q-card">
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="q-section-title !mb-0">亲密度</h2>
+            <div class="q-stat__value" style="color: var(--q-theme);">
+              {intimacy.current_score}
+            </div>
+          </div>
+          {#if trendPath}
+            <svg width="100%" height="80" viewBox="0 0 200 80" preserveAspectRatio="none">
+              <polyline
+                fill="none"
+                stroke="var(--q-theme)"
+                stroke-width="2"
+                stroke-linecap="round"
+                points={trendPath}
+              />
+            </svg>
+          {:else}
+            <div class="q-hint !mt-0">暂无历史趋势，系统每日会自动记录一次快照</div>
+          {/if}
+        </section>
+      {/if}
+
+      <section class="q-card">
+        <h2 class="q-section-title">自定义字段</h2>
+        <ul class="q-stack--tight mb-3 flex flex-col">
+          {#each fields as f (f.id)}
+            <li class="q-well !py-1.5 text-sm">
+              {#if editingFieldId === f.id}
+                <div class="flex flex-wrap items-center gap-2">
+                  <input
+                    bind:value={fieldForm.label}
+                    placeholder="字段名"
+                    class="q-input w-28 !py-1.5 text-xs"
+                  />
+                  <input
+                    bind:value={fieldForm.value}
+                    placeholder="值"
+                    class="q-input min-w-24 flex-1 !py-1.5 text-xs"
+                  />
                   <button
-                    class="p-0.5"
-                    style="color: var(--q-muted);"
-                    title="编辑"
-                    onclick={() => startEditField(f)}><Pencil size={14} /></button
+                    class="q-iconbtn !h-8 !w-8"
+                    style="color: var(--q-theme);"
+                    title="保存"
+                    disabled={busyField}
+                    onclick={() => saveField(f)}><Check size={14} /></button
                   >
                   <button
-                    class="p-0.5"
-                    style="color: var(--q-muted);"
-                    title="删除"
-                    onclick={() => removeField(f.id)}><Trash2 size={14} /></button
+                    class="q-iconbtn !h-8 !w-8"
+                    title="取消"
+                    onclick={() => (editingFieldId = '')}><X size={14} /></button
                   >
-                </span>
-              </div>
-            {/if}
-          </li>
-        {:else}
-          <li class="text-sm" style="color: var(--q-muted);">还没有自定义字段</li>
-        {/each}
-      </ul>
-      <div class="flex gap-2">
-        <input
-          bind:value={newField.label}
-          placeholder="字段名（如 口味）"
-          class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onkeydown={(e) => e.key === 'Enter' && addField()}
-        />
-        <input
-          bind:value={newField.value}
-          placeholder="值"
-          class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onkeydown={(e) => e.key === 'Enter' && addField()}
-        />
-        <button
-          class="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={addField}><Plus size={14} /> 添加</button
-        >
-      </div>
-    </section>
-
-    <section
-      class="rounded-xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <h2 class="mb-3 text-sm font-medium">关系</h2>
-      <PersonRelEditor personId={id} />
-    </section>
-
-    {#if words.length > 0}
-      <section
-        class="rounded-xl p-5"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <h2 class="mb-3 text-sm font-medium">对话词云</h2>
-        <div class="flex flex-wrap items-baseline gap-2">
-          {#each words.slice(0, 20) as w, i (i)}
-            <span style="color: var(--q-theme); font-size: {12 + Math.min(w.count, 6) * 2}px;"
-              >{w.word}</span
-            >
-          {/each}
-        </div>
-      </section>
-    {/if}
-
-    <section>
-      <div class="mb-3 flex items-center justify-between">
-        <h2 class="text-sm font-medium">时间线</h2>
-        <button
-          class="flex items-center gap-1 rounded-md px-2 py-1 text-xs"
-          style="background: var(--q-theme); color: white;"
-          onclick={() => openEventForm()}><Plus size={13} /> 新建往来</button
-        >
-      </div>
-      {#if timeline.length === 0}
-        <div
-          class="rounded-lg p-6 text-center text-sm"
-          style="color: var(--q-muted); background: var(--q-surface); border: 1px dashed var(--q-border);"
-        >
-          暂无记录
-        </div>
-      {:else}
-        <ul class="space-y-2">
-          {#each timeline as t (t.id)}
-            <li
-              class="flex items-start gap-3 rounded-lg p-3"
-              style="background: var(--q-surface); border: 1px solid var(--q-border);"
-            >
-              {#if t.type === 'event'}<div
-                  class="mt-2 h-2 w-2 shrink-0 rounded-full"
-                  style="background: #10b981;"
-                ></div>
-              {:else if t.type === 'memo'}<div
-                  class="mt-2 h-2 w-2 shrink-0 rounded-full"
-                  style="background: #f59e0b;"
-                ></div>
-              {:else if t.type === 'transaction'}<div
-                  class="mt-2 h-2 w-2 shrink-0 rounded-full"
-                  style="background: #ef4444;"
-                ></div>
-              {:else}<div
-                  class="mt-2 h-2 w-2 shrink-0 rounded-full"
-                  style="background: #9E2A2B;"
-                ></div>{/if}
-              <div class="min-w-0 flex-1">
-                <div class="flex items-start justify-between gap-2">
-                  <div class="text-sm">{t.title}</div>
-                  {#if t.type === 'event'}
+                </div>
+              {:else}
+                <div class="flex items-center gap-2">
+                  <span style="color: var(--q-muted);">{f.label}</span>
+                  <span class="truncate">{f.value || '—'}</span>
+                  <span class="ml-auto flex shrink-0 items-center">
                     <button
-                      class="shrink-0 rounded px-2 py-0.5 text-xs"
-                      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-                      onclick={() => openEventForm(t.id)}>编辑</button
+                      class="q-iconbtn !h-7 !w-7"
+                      title="编辑"
+                      onclick={() => startEditField(f)}
                     >
-                  {/if}
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      class="q-iconbtn !h-7 !w-7"
+                      title="删除"
+                      onclick={() => removeField(f.id)}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </span>
                 </div>
-                <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-                  {TIMELINE_LABEL[t.type] || t.type} · {new Date(t.date).toLocaleDateString()}
-                </div>
-              </div>
+              {/if}
             </li>
+          {:else}
+            <li class="text-sm" style="color: var(--q-muted);">还没有自定义字段</li>
           {/each}
         </ul>
+        <div class="flex flex-wrap gap-2">
+          <input
+            bind:value={newField.label}
+            placeholder="字段名（如 口味）"
+            class="q-input min-w-[140px] flex-1"
+            onkeydown={(e) => e.key === 'Enter' && addField()}
+          />
+          <input
+            bind:value={newField.value}
+            placeholder="值"
+            class="q-input min-w-[140px] flex-1"
+            onkeydown={(e) => e.key === 'Enter' && addField()}
+          />
+          <button class="q-btn q-btn--primary" onclick={addField}>
+            <Plus size={14} /> 添加
+          </button>
+        </div>
+      </section>
+
+      <section class="q-card">
+        <h2 class="q-section-title">关系</h2>
+        <PersonRelEditor personId={id} />
+      </section>
+
+      {#if words.length > 0}
+        <section class="q-card">
+          <h2 class="q-section-title">对话词云</h2>
+          <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            {#each words.slice(0, 20) as w, i (i)}
+              <span style="color: var(--q-theme); font-size: {12 + Math.min(w.count, 6) * 2}px;"
+                >{w.word}</span
+              >
+            {/each}
+          </div>
+        </section>
       {/if}
-    </section>
+
+      <section>
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="q-section-title !mb-0">时间线</h2>
+          <button class="q-btn q-btn--primary q-btn--sm" onclick={() => openEventForm()}>
+            <Plus size={13} /> 新建往来
+          </button>
+        </div>
+        {#if timeline.length === 0}
+          <div class="q-empty">暂无记录</div>
+        {:else}
+          <div class="q-stack--tight flex flex-col">
+            {#each timeline as t (t.id)}
+              <div class="q-row items-start">
+                <span class="q-dot mt-2" style="--c: {TL_COLOR[t.type] || 'var(--q-c-other)'};"
+                ></span>
+                <div class="min-w-0 flex-1">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="text-sm">{t.title}</div>
+                    {#if t.type === 'event'}
+                      <button
+                        class="q-btn q-btn--ghost q-btn--sm shrink-0"
+                        onclick={() => openEventForm(t.id)}>编辑</button
+                      >
+                    {/if}
+                  </div>
+                  <div class="q-num mt-0.5 text-xs" style="color: var(--q-muted);">
+                    {TIMELINE_LABEL[t.type] || t.type} · {new Date(t.date).toLocaleDateString()}
+                  </div>
+                </div>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </section>
+    </div>
   </div>
 {:else}
-  <div class="py-16 text-center" style="color: var(--q-muted);">人物不存在</div>
+  <div class="q-page py-16 text-center" style="color: var(--q-muted);">人物不存在</div>
 {/if}
 
 {#if showEdit && person}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => (showEdit = false)}
-    ></button>
-    <div
-      class="relative max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">编辑联系人</h2>
-        <button onclick={() => (showEdit = false)}><X size={18} /></button>
-      </div>
-      <PersonForm
-        {person}
-        {categories}
-        {tags}
-        onsave={() => {
-          showEdit = false;
-          load();
-        }}
-        onrelchange={() => load()}
-        oncancel={() => (showEdit = false)}
-      />
-    </div>
-  </div>
+  <Modal wide onclose={() => (showEdit = false)} title="编辑联系人">
+    <PersonForm
+      {person}
+      {categories}
+      {tags}
+      onsave={() => {
+        showEdit = false;
+        load();
+      }}
+      onrelchange={() => load()}
+      oncancel={() => (showEdit = false)}
+    />
+  </Modal>
 {/if}
 
 {#if showEventForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={closeEventForm}
-    ></button>
-    <div
-      class="relative max-h-[90vh] w-full max-w-lg overflow-auto rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{eventEditId ? '编辑往来' : '新建往来'}</h2>
-        <button onclick={closeEventForm}><X size={18} /></button>
-      </div>
-      <EventForm
-        editId={eventEditId}
-        preset={eventPreset}
-        onsave={afterEventForm}
-        oncancel={closeEventForm}
-        onremove={removeEvent}
-      />
-    </div>
-  </div>
+  <Modal wide onclose={closeEventForm} title={eventEditId ? '编辑往来' : '新建往来'}>
+    <EventForm
+      editId={eventEditId}
+      preset={eventPreset}
+      onsave={afterEventForm}
+      oncancel={closeEventForm}
+      onremove={removeEvent}
+    />
+  </Modal>
 {/if}

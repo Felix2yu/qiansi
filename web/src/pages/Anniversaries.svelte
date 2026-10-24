@@ -3,10 +3,13 @@
   import { API, todayLocal, type Anniversary } from '../lib/api';
   import { loadSelf } from '../lib/self.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { toast } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
-  import { Plus, X } from '@lucide/svelte';
+  import { Plus, Cake } from '@lucide/svelte';
 
   let list = $state<Anniversary[]>([]);
   let showForm = $state(false);
@@ -60,6 +63,11 @@
     showForm = true;
   }
 
+  function closeForm() {
+    showForm = false;
+    editId = '';
+  }
+
   async function submit() {
     if (!form.title.trim() || !form.date) {
       toast.error('标题和日期必填');
@@ -77,8 +85,7 @@
       toast.fail('保存失败', err);
       return;
     }
-    showForm = false;
-    editId = '';
+    closeForm();
     toast.ok(isEdit ? '已更新' : '已保存');
     await load();
   }
@@ -117,136 +124,85 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">纪念日</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">生日、周年、倒数日</p>
-    </div>
-    <button
-      class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-      style="background: var(--q-theme);"
-      onclick={openCreate}
-    >
-      <Plus size={14} /> 新建
-    </button>
-  </header>
-  <ul class="space-y-2">
+<div class="q-page">
+  <PageHeader title="纪念日" subtitle="生日、周年、倒数日">
+    {#snippet actions()}
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
+        <Plus size={14} /> 新建
+      </button>
+    {/snippet}
+  </PageHeader>
+
+  <div class="q-stack--tight flex flex-col">
     {#each list as a (a.id)}
       {@const bd = badgeDate(a)}
       {@const cd = countdownLabel(a)}
-      <li
-        class="flex items-center gap-3 rounded-lg p-3"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
+      {@const soon = a.days_until != null && a.days_until <= 7}
+      <div class="q-row">
         <div
-          class="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-white"
-          style="background: var(--q-theme);"
+          class="q-num flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-[10px]"
+          style="background: var(--q-theme); color: var(--q-on-theme);"
         >
-          <div class="text-[10px] leading-none">{bd.m}月</div>
-          <div class="mt-0.5 text-base leading-none font-semibold">{bd.d}</div>
+          <div class="text-[10px] leading-none opacity-85">{bd.m}月</div>
+          <div class="q-num mt-0.5 text-base leading-none font-bold">{bd.d}</div>
         </div>
         <div class="min-w-0 flex-1">
           <div class="truncate text-sm font-medium">{a.title}</div>
-          <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
+          <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
             {a.person_name && `${a.person_name} · `}
             {a.is_lunar ? '农历 ' : ''}{displayDate(a)}
             {a.repeat_yearly ? ' · 每年循环' : ''}
           </div>
         </div>
         {#if cd}
-          <span
-            class="shrink-0 rounded-full px-2 py-0.5 text-xs"
-            style={a.days_until != null && a.days_until <= 7
-              ? 'background: var(--q-theme); color: #fff;'
-              : 'background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);'}
-            >{cd}</span
-          >
+          <span class="q-badge shrink-0" class:q-badge--theme={soon}>{cd}</span>
         {/if}
-        <button
-          class="rounded px-2 py-1 text-xs"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => openEdit(a)}>编辑</button
+        <button class="q-btn q-btn--ghost q-btn--sm shrink-0" onclick={() => openEdit(a)}
+          >编辑</button
         >
-        <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(a)}>删</button>
-      </li>
-    {:else}<li class="py-8 text-center text-sm" style="color: var(--q-muted);">暂无</li>{/each}
-  </ul>
+        <button class="q-btn q-btn--subtle q-btn--sm shrink-0" onclick={() => remove(a)}
+          >删除</button
+        >
+      </div>
+    {:else}
+      <Empty icon={Cake} text="还没有纪念日，把生日和重要日子记下来" />
+    {/each}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => {
-        showForm = false;
-        editId = '';
-      }}
-    ></button>
-    <div
-      class="relative w-full max-w-lg rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{editId ? '编辑纪念日' : '新建纪念日'}</h2>
-        <button
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}><X size={18} /></button
+  <Modal wide onclose={closeForm} title={editId ? '编辑纪念日' : '新建纪念日'}>
+    <div class="q-stack--tight flex flex-col">
+      <PersonPicker
+        bind:value={form.person_id}
+        selectedName={pickedName}
+        placeholder="自属（倒数日）"
+      />
+      <input bind:value={form.title} class="q-input" placeholder="标题（如：妈妈生日）" />
+      <input type="date" bind:value={form.date} class="q-input" />
+      <div class="flex items-center gap-5">
+        <label
+          class="flex cursor-pointer items-center gap-2 text-sm select-none"
+          style="color: var(--q-muted);"
         >
-      </div>
-      <div class="space-y-3">
-        <PersonPicker
-          bind:value={form.person_id}
-          selectedName={pickedName}
-          placeholder="自属（倒数日）"
-        />
-        <input
-          bind:value={form.title}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="标题（如：妈妈生日）"
-        />
-        <input
-          type="date"
-          bind:value={form.date}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        />
-        <div class="flex items-center gap-4">
-          <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);"
-            ><input type="checkbox" bind:checked={form.is_lunar} /> 农历</label
-          >
-          <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);"
-            ><input type="checkbox" bind:checked={form.repeat_yearly} /> 每年循环</label
-          >
-        </div>
-        <input
-          bind:value={form.remind_days}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="提醒天数（逗号分隔，如 7,3,1,0）"
-        />
-      </div>
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}>取消</button
+          <input type="checkbox" bind:checked={form.is_lunar} /> 农历
+        </label>
+        <label
+          class="flex cursor-pointer items-center gap-2 text-sm select-none"
+          style="color: var(--q-muted);"
         >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={submit}>保存</button
-        >
+          <input type="checkbox" bind:checked={form.repeat_yearly} /> 每年循环
+        </label>
       </div>
+      <input
+        bind:value={form.remind_days}
+        class="q-input"
+        placeholder="提醒天数（逗号分隔，如 7,3,1,0）"
+      />
     </div>
-  </div>
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
+      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+    {/snippet}
+  </Modal>
 {/if}

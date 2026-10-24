@@ -12,6 +12,8 @@
   import { toast } from '../lib/toast.svelte';
   import { completeReminder } from '../lib/reminderActions';
   import { self, loadSelf } from '../lib/self.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import {
     CalendarDays,
     Users,
@@ -21,7 +23,8 @@
     CheckCircle2,
     ArrowRight,
     Check,
-    X
+    X,
+    CalendarCheck
   } from '@lucide/svelte';
 
   const today = todayLocal();
@@ -90,217 +93,183 @@
   }
 </script>
 
-<div class="space-y-6">
-  <header>
-    <h1 class="text-2xl font-semibold">今日</h1>
-    <p class="mt-1 text-sm" style="color: var(--q-muted);">牵丝 · 人际关系一目了然</p>
-  </header>
+<div class="q-page">
+  <PageHeader title="今日" subtitle="牵丝 · 人际关系一目了然" />
+
   {#if loading}
     <div class="py-16 text-center" style="color: var(--q-muted);">加载中…</div>
   {:else if dashboard}
-    {#if showOnboard}
-      <section
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="mb-2 flex items-start justify-between gap-2">
-          <h2 class="flex items-center gap-2 text-sm font-medium">
-            <Sparkles size={14} /> 三步开始用牵丝
-          </h2>
-          <button
-            class="rounded p-1 hover:bg-black/5 dark:hover:bg-white/10"
-            style="color: var(--q-muted);"
-            title="不用了"
-            onclick={hideOnboard}><X size={14} /></button
-          >
-        </div>
-        <ol class="space-y-1.5">
-          {#each onboardSteps as s, i (i)}
-            <li
-              class="flex items-center gap-3 rounded-lg px-2 py-1.5"
-              style="background: var(--q-bg);"
-            >
-              <span
-                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs"
-                style={s.done
-                  ? 'background: var(--q-theme); color: #fff;'
-                  : 'border: 1px solid var(--q-border); color: var(--q-muted);'}
-              >
-                {#if s.done}<Check size={12} />{:else}{i + 1}{/if}
-              </span>
-              <div class="min-w-0 flex-1">
-                <div
-                  class="text-sm"
-                  style={s.done ? 'color: var(--q-muted); text-decoration: line-through;' : ''}
-                >
-                  {s.label}
+    <div class="q-stack">
+      {#if showOnboard}
+        <section class="q-card">
+          <div class="mb-3 flex items-start justify-between gap-2">
+            <h2 class="q-section-title !mb-0">
+              <Sparkles size={15} /> 三步开始用牵丝
+            </h2>
+            <button class="q-iconbtn !h-7 !w-7" title="不用了" onclick={hideOnboard}>
+              <X size={14} />
+            </button>
+          </div>
+          <ol class="q-stack--tight flex flex-col">
+            {#each onboardSteps as s, i (i)}
+              <li class="q-well flex items-center gap-3 !py-2.5">
+                {#if s.done}
+                  <span
+                    class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full"
+                    style="background: var(--q-ok); color: #f4faf5;"
+                  >
+                    <Check size={12} />
+                  </span>
+                {:else}
+                  <span
+                    class="q-num flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs"
+                    style="border: 1px solid var(--q-border-strong); color: var(--q-muted);"
+                  >
+                    {i + 1}
+                  </span>
+                {/if}
+                <div class="min-w-0 flex-1">
+                  <div
+                    class="text-sm"
+                    class:line-through={s.done}
+                    style={s.done ? 'color: var(--q-muted);' : ''}
+                  >
+                    {s.label}
+                  </div>
+                  <div class="text-xs" style="color: var(--q-muted);">{s.hint}</div>
                 </div>
-                <div class="text-xs" style="color: var(--q-muted);">{s.hint}</div>
-              </div>
-              {#if !s.done}
-                <button
-                  class="inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1 text-xs text-white"
-                  style="background: var(--q-theme);"
-                  onclick={() => navigate(s.to)}>{s.cta} <ArrowRight size={11} /></button
-                >
-              {/if}
-            </li>
-          {/each}
-        </ol>
+                {#if !s.done}
+                  <button
+                    class="q-btn q-btn--primary q-btn--sm shrink-0"
+                    onclick={() => navigate(s.to)}
+                  >
+                    {s.cta}
+                    <ArrowRight size={11} />
+                  </button>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+        </section>
+      {/if}
+
+      <section class="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <Users size={13} /> 联系人
+          </div>
+          <div class="q-stat__value q-num">{dashboard.total_people}</div>
+        </div>
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <CalendarDays size={13} /> 往来事件
+          </div>
+          <div class="q-stat__value q-num">{dashboard.total_events}</div>
+        </div>
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <Bell size={13} /> 待办 (7 天)
+          </div>
+          <div class="q-stat__value q-num">{dashboard.upcoming_days7}</div>
+        </div>
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <CheckCircle2 size={13} /> 未兑现承诺
+          </div>
+          <div class="q-stat__value q-num">{dashboard.pending_promises}</div>
+        </div>
       </section>
-    {/if}
-    <section class="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <Users size={16} /> 联系人
+
+      <section class="grid grid-cols-2 gap-3">
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <Wallet size={13} /> 我借出（未还）
+          </div>
+          <div class="q-stat__value q-num" style="color: var(--q-ok);">
+            ¥ {(dashboard.lend_fen / 100).toFixed(2)}
+          </div>
         </div>
-        <div class="mt-1 text-2xl font-semibold">{dashboard.total_people}</div>
-      </div>
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <CalendarDays size={16} /> 往来事件
+        <div class="q-stat">
+          <div class="q-stat__label flex items-center gap-1.5">
+            <Wallet size={13} /> 我待还
+          </div>
+          <div class="q-stat__value q-num" style="color: var(--q-warn);">
+            ¥ {(dashboard.borrow_fen / 100).toFixed(2)}
+          </div>
         </div>
-        <div class="mt-1 text-2xl font-semibold">{dashboard.total_events}</div>
-      </div>
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <Bell size={16} /> 7 天内待办
-        </div>
-        <div class="mt-1 text-2xl font-semibold">{dashboard.upcoming_days7}</div>
-      </div>
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <CheckCircle2 size={16} /> 未兑现承诺
-        </div>
-        <div class="mt-1 text-2xl font-semibold">{dashboard.pending_promises}</div>
-      </div>
-    </section>
-    <section class="grid grid-cols-2 gap-3">
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <Wallet size={14} /> 我借出（未还）
-        </div>
-        <div class="mt-1 text-2xl font-semibold">¥ {(dashboard.lend_fen / 100).toFixed(2)}</div>
-      </div>
-      <div
-        class="rounded-xl p-4"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
-      >
-        <div class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
-          <Wallet size={14} /> 我待还
-        </div>
-        <div class="mt-1 text-2xl font-semibold">¥ {(dashboard.borrow_fen / 100).toFixed(2)}</div>
-      </div>
-    </section>
-    {#if suggestions.length > 0}
-      <section>
-        <h2 class="mb-3 flex items-center gap-2 text-sm font-medium">
-          <Sparkles size={14} /> 智能建议
-        </h2>
-        <ul class="space-y-2">
-          {#each suggestions.slice(0, 6) as s, i (i)}
-            <li>
+      </section>
+
+      {#if suggestions.length > 0}
+        <section>
+          <h2 class="q-section-title"><Sparkles size={15} /> 智能建议</h2>
+          <div class="q-stack--tight flex flex-col">
+            {#each suggestions.slice(0, 6) as s, i (i)}
               <button
-                class="flex w-full items-start gap-3 rounded-lg p-3 text-left transition-colors disabled:cursor-default"
-                style="background: var(--q-surface); border: 1px solid var(--q-border);"
+                class="q-card q-card--tight flex w-full items-start gap-3 text-left"
                 disabled={!s.person_id}
                 onclick={() => s.person_id && navigate(`/people/${s.person_id}`)}
               >
-                <div
-                  class="mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-xs"
-                  style="background: var(--q-theme); color: white;"
-                >
-                  {s.type}
-                </div>
+                <span class="q-badge q-badge--theme mt-0.5 shrink-0">{s.type}</span>
                 <div class="min-w-0 flex-1 text-sm">
                   <div class="truncate font-medium">{s.person_name || '系统'}</div>
                   <div style="color: var(--q-muted);">{s.message}</div>
                 </div>
               </button>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/if}
-    <section>
-      <div class="mb-3 flex items-center justify-between">
-        <h2 class="flex items-center gap-2 text-sm font-medium"><Bell size={14} /> 近期待办</h2>
-        <button
-          class="flex items-center gap-1 text-xs hover:opacity-80"
-          style="color: var(--q-muted);"
-          onclick={() => navigate('/reminders')}
-        >
-          查看全部 <ArrowRight size={12} />
-        </button>
-      </div>
-      {#if upcoming.length === 0}
-        <div
-          class="rounded-lg p-6 text-center text-sm"
-          style="color: var(--q-muted); background: var(--q-surface); border: 1px dashed var(--q-border);"
-        >
-          近期没有待办 🎉
-        </div>
-      {:else}
-        {#if imminent.length > 0}
-          <div class="mb-1 text-xs font-medium" style="color: #ef4444;">
-            逾期 / 今天 · {imminent.length}
-          </div>
-          <ul class="mb-3 space-y-2">
-            {#each imminent as r, i (i)}
-              <li
-                class="flex items-center gap-3 rounded-lg p-3"
-                style="background: var(--q-surface); border: 1px solid var(--q-border);"
-              >
-                <input type="checkbox" onchange={() => done(r)} />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm">{r.title}</div>
-                  <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-                    {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
-                      ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
-                  </div>
-                </div>
-              </li>
             {/each}
-          </ul>
-        {/if}
-        {#if later.length > 0}
-          <div class="mb-1 text-xs font-medium" style="color: var(--q-muted);">
-            之后 · {later.length}
           </div>
-          <ul class="space-y-2">
-            {#each later.slice(0, 6) as r, i (i)}
-              <li
-                class="flex items-center gap-3 rounded-lg p-3"
-                style="background: var(--q-surface); border: 1px solid var(--q-border);"
-              >
-                <input type="checkbox" onchange={() => done(r)} />
-                <div class="min-w-0 flex-1">
-                  <div class="truncate text-sm">{r.title}</div>
-                  <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-                    {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
-                      ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
-                  </div>
-                </div>
-              </li>
-            {/each}
-          </ul>
-        {/if}
+        </section>
       {/if}
-    </section>
+
+      <section>
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="q-section-title !mb-0"><CalendarCheck size={15} /> 近期待办</h2>
+          <button class="q-btn q-btn--subtle q-btn--sm" onclick={() => navigate('/reminders')}>
+            查看全部 <ArrowRight size={12} />
+          </button>
+        </div>
+        {#if upcoming.length === 0}
+          <Empty icon={Bell} text="近期没有待办，正好去见见想见的人" />
+        {:else}
+          {#if imminent.length > 0}
+            <div class="mt-1 mb-2 flex items-center gap-2">
+              <span class="q-badge q-badge--danger">逾期 / 今天 · {imminent.length}</span>
+            </div>
+            <div class="q-stack--tight mb-4 flex flex-col">
+              {#each imminent as r, i (i)}
+                <label class="q-row cursor-pointer">
+                  <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm">{r.title}</div>
+                    <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+                      {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
+                        ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                </label>
+              {/each}
+            </div>
+          {/if}
+          {#if later.length > 0}
+            <div class="mb-2 flex items-center gap-2">
+              <span class="q-badge">之后 · {later.length}</span>
+            </div>
+            <div class="q-stack--tight flex flex-col">
+              {#each later.slice(0, 6) as r, i (i)}
+                <label class="q-row cursor-pointer">
+                  <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
+                  <div class="min-w-0 flex-1">
+                    <div class="truncate text-sm">{r.title}</div>
+                    <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+                      {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
+                        ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+                    </div>
+                  </div>
+                </label>
+              {/each}
+            </div>
+          {/if}
+        {/if}
+      </section>
+    </div>
   {/if}
 </div>

@@ -10,6 +10,7 @@
     type HuozhiStatus
   } from '../lib/api';
   import TermList from '../lib/TermList.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
   import {
     Download,
     Upload,
@@ -464,59 +465,41 @@
   }
 </script>
 
-<div class="space-y-6">
-  <header>
-    <h1 class="text-2xl font-semibold">设置</h1>
-    <p class="mt-1 text-sm" style="color: var(--q-muted);">偏好、名单、联系提醒、数据与访问</p>
-  </header>
+<div class="q-page">
+  <PageHeader title="设置" subtitle="偏好、名单、联系提醒、数据与访问" />
 
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold">
-      <SlidersHorizontal size={14} /> 偏好
-    </h2>
-    <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">我是谁</h3>
-    <p class="mb-3 text-xs leading-relaxed" style="color: var(--q-muted);">
-      牵丝以你为中心：设好本人之后，关系图按「离我几步」拼色，选人下拉把「我」置顶，认识路径才算得出来。
-    </p>
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="w-56 max-w-full">
-        <PersonPicker bind:value={selfId} placeholder="选出哪一条记录是你自己" />
+  <div class="q-stack">
+    <section class="q-card">
+      <h2 class="q-section-title">
+        <SlidersHorizontal size={15} /> 偏好
+      </h2>
+      <h3 class="q-label">我是谁</h3>
+      <p class="q-hint mb-3">
+        牵丝以你为中心：设好本人之后，关系图按「离我几步」拼色，选人下拉把「我」置顶，认识路径才算得出来。
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <div class="w-56 max-w-full">
+          <PersonPicker bind:value={selfId} placeholder="选出哪一条记录是你自己" />
+        </div>
+        <button class="q-btn q-btn--primary" disabled={!selfDirty || selfSaving} onclick={saveSelf}>
+          {selfSaving ? '保存中…' : '保存'}
+        </button>
+        {#if selfSaved}
+          <span class="text-xs" style="color: var(--q-muted);"
+            >清除左边那个人后保存，就是不设本人</span
+          >
+        {/if}
       </div>
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
-        style="background: var(--q-theme);"
-        disabled={!selfDirty || selfSaving}
-        onclick={saveSelf}
-      >
-        {selfSaving ? '保存中…' : '保存'}
-      </button>
-      {#if selfSaved}
-        <span class="text-xs" style="color: var(--q-muted);"
-          >清除左边那个人后保存，就是不设本人</span
-        >
-      {/if}
-    </div>
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">主题</h3>
+      <div class="q-divider"></div>
+      <h3 class="q-label">主题</h3>
       <div class="flex flex-wrap items-center gap-4">
         <!-- 外观三档：跟随系统 / 浅色 / 深色 -->
-        <div
-          class="flex items-center gap-0.5 rounded-lg p-0.5"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        >
+        <div class="q-seg q-seg--fill">
           {#each THEME_TABS as t, i (i)}
             <button
               onclick={() => setThemeMode(t.mode)}
               aria-pressed={theme.mode === t.mode}
-              class="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors"
-              style="color: {theme.mode === t.mode
-                ? '#fff'
-                : 'var(--q-muted)'}; background: {theme.mode === t.mode
-                ? 'var(--q-theme)'
-                : 'transparent'};"
+              class="q-seg__btn"
             >
               <t.icon size={13} />
               {THEME_LABEL[t.mode]}
@@ -551,32 +534,28 @@
           class="h-9 w-9 shrink-0 cursor-pointer rounded-lg border"
           style="border-color: var(--q-border);"
         />
-        <span class="shrink-0 font-mono text-xs" style="color: var(--q-muted);">{theme.color}</span>
+        <span class="q-num shrink-0 text-xs" style="color: var(--q-muted);">{theme.color}</span>
         {#if !isPreset(theme.color)}
           <span class="shrink-0 text-xs" style="color: var(--q-muted);">当前是自定义色</span>
         {/if}
       </div>
-    </div>
-  </section>
+    </section>
 
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold">
-      <Users size={14} /> 名单与口径
-    </h2>
-    <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">圈子（分组）</h3>
-    <TermList
-      items={categories}
-      endpoint="/api/v1/categories"
-      noun="圈子"
-      placeholder="圈子名"
-      defaults={{ icon: 'circle', sort_order: 0 }}
-      onchange={() => refresh('categories')}
-    />
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">标签</h3>
+    <section class="q-card">
+      <h2 class="q-section-title">
+        <Users size={15} /> 名单与口径
+      </h2>
+      <h3 class="q-label">圈子（分组）</h3>
+      <TermList
+        items={categories}
+        endpoint="/api/v1/categories"
+        noun="圈子"
+        placeholder="圈子名"
+        defaults={{ icon: 'circle', sort_order: 0 }}
+        onchange={() => refresh('categories')}
+      />
+      <div class="q-divider"></div>
+      <h3 class="q-label">标签</h3>
       <TermList
         items={tags}
         endpoint="/api/v1/tags"
@@ -585,9 +564,8 @@
         pill
         onchange={() => refresh('tags')}
       />
-    </div>
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">往来事件类型</h3>
+      <div class="q-divider"></div>
+      <h3 class="q-label">往来事件类型</h3>
       <TermList
         items={eventTypes}
         endpoint="/api/v1/event-types"
@@ -596,96 +574,77 @@
         defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }}
         onchange={() => refresh('eventTypes')}
       />
-    </div>
-  </section>
+    </section>
 
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold">
-      <Bell size={14} /> 联系与提醒
-    </h2>
-    <div class="mb-2.5 flex items-center justify-between gap-3">
-      <h3 class="text-xs font-medium" style="color: var(--q-muted);">联系节奏</h3>
-      <label class="flex shrink-0 cursor-pointer items-center gap-2 text-xs">
-        <input
-          type="checkbox"
-          bind:checked={rhythmOn}
-          disabled={rhythmToggling}
-          onchange={() => toggleRhythm(rhythmOn)}
-          aria-label="按联系节奏派生待办与推送"
-          class="h-4 w-4 accent-[var(--q-theme)]"
-        />
-        {rhythmOn ? '按节奏提醒' : '已关闭提醒'}
-      </label>
-    </div>
-    <p class="mb-4 text-xs leading-relaxed" style="color: var(--q-muted);">
-      按亲密度设定「多久该联系一次」。距最近一次往来、对话或「联系过了」打卡超过这个天数，就自动派生一条待办并随每日推送发出；
-      勾掉待办就等于打过招呼，下一次到期日自动推后。
-    </p>
-    {#if rhythm.length > 0}
-      {@const off = !rhythmOn}
-      <!-- 五颗心那档实测要 173px：手机一列、中屏两列，三列要到 lg 才放得下，
+    <section class="q-card">
+      <h2 class="q-section-title">
+        <Bell size={15} /> 联系与提醒
+      </h2>
+      <div class="mb-2.5 flex items-center justify-between gap-3">
+        <h3 class="q-label !mb-0">联系节奏</h3>
+        <label class="flex shrink-0 cursor-pointer items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            bind:checked={rhythmOn}
+            disabled={rhythmToggling}
+            onchange={() => toggleRhythm(rhythmOn)}
+            aria-label="按联系节奏派生待办与推送"
+          />
+          {rhythmOn ? '按节奏提醒' : '已关闭提醒'}
+        </label>
+      </div>
+      <p class="q-hint mb-4">
+        按亲密度设定「多久该联系一次」。距最近一次往来、对话或「联系过了」打卡超过这个天数，就自动派生一条待办并随每日推送发出；
+        勾掉待办就等于打过招呼，下一次到期日自动推后。
+      </p>
+      {#if rhythm.length > 0}
+        {@const off = !rhythmOn}
+        <!-- 五颗心那档实测要 173px：手机一列、中屏两列，三列要到 lg 才放得下，
            否则「天」会压到下一档的亲密度上 -->
-      <div
-        class="grid max-w-60 grid-cols-1 gap-x-6 gap-y-2 transition-opacity sm:max-w-2xl sm:grid-cols-2 lg:grid-cols-3"
-        style="opacity: {off ? 0.45 : 1};"
-      >
-        {#each rhythm as t (t.grade)}
-          <label class="flex items-center justify-between gap-2 text-sm">
-            <span class="shrink-0" style="color: var(--q-muted);">{gradeLabel(t.grade)}</span>
-            <span class="flex items-center gap-1.5">
-              <input
-                type="number"
-                min={1}
-                max={RHYTHM_MAX}
-                bind:value={t.days}
-                disabled={off}
-                aria-label={`${gradeLabel(t.grade)}的联系天数`}
-                class="w-20 rounded-lg px-2 py-1 text-right text-sm outline-none"
-                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-              />
-              <span class="text-xs" style="color: var(--q-muted);">天</span>
-            </span>
-          </label>
-        {/each}
-      </div>
-      <div class="mt-4 flex items-center gap-2">
-        <button
-          class="rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
-          style="background: var(--q-theme);"
-          disabled={rhythmSaving || off}
-          onclick={saveRhythm}
+        <div
+          class="grid max-w-60 grid-cols-1 gap-x-6 gap-y-2 transition-opacity sm:max-w-2xl sm:grid-cols-2 lg:grid-cols-3"
+          style="opacity: {off ? 0.45 : 1};"
         >
-          {rhythmSaving ? '保存中…' : '保存'}
-        </button>
-        <button
-          class="rounded-lg px-3 py-1.5 text-sm disabled:opacity-50"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          disabled={rhythmSaving || off}
-          onclick={resetRhythm}>恢复默认</button
-        >
-        <button
-          class="ml-auto text-xs"
-          style="color: var(--q-theme);"
-          onclick={() => navigate('/drift')}>看渐远名单</button
-        >
-      </div>
-      {#if off}
-        <p class="mt-3 text-xs leading-relaxed" style="color: var(--q-muted);">
-          关闭只是不再派生待办、不再进每日推送：天数原样留着，重新开启就按这份节奏继续催。渐远名单和「联系过了」打卡不受影响。
-        </p>
+          {#each rhythm as t (t.grade)}
+            <label class="flex items-center justify-between gap-2 text-sm">
+              <span class="shrink-0" style="color: var(--q-muted);">{gradeLabel(t.grade)}</span>
+              <span class="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={1}
+                  max={RHYTHM_MAX}
+                  bind:value={t.days}
+                  disabled={off}
+                  aria-label={`${gradeLabel(t.grade)}的联系天数`}
+                  class="q-input w-20 !py-1 text-right"
+                />
+                <span class="text-xs" style="color: var(--q-muted);">天</span>
+              </span>
+            </label>
+          {/each}
+        </div>
+        <div class="mt-4 flex items-center gap-2">
+          <button class="q-btn q-btn--primary" disabled={rhythmSaving || off} onclick={saveRhythm}>
+            {rhythmSaving ? '保存中…' : '保存'}
+          </button>
+          <button class="q-btn q-btn--ghost" disabled={rhythmSaving || off} onclick={resetRhythm}
+            >恢复默认</button
+          >
+          <button class="q-btn q-btn--subtle q-btn--sm ml-auto" onclick={() => navigate('/drift')}
+            >看渐远名单</button
+          >
+        </div>
+        {#if off}
+          <p class="q-hint mt-3">
+            关闭只是不再派生待办、不再进每日推送：天数原样留着，重新开启就按这份节奏继续催。渐远名单和「联系过了」打卡不受影响。
+          </p>
+        {/if}
       {/if}
-    {/if}
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">
-        多渠道通知（apprise URL）
-      </h3>
+      <div class="q-divider"></div>
+      <h3 class="q-label">多渠道通知（apprise URL）</h3>
       <textarea
         bind:value={appriseUrls}
-        class="h-28 w-full rounded-lg px-3 py-2 font-mono text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
+        class="q-textarea h-28 font-mono"
         placeholder="每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat"
       ></textarea>
       <!-- 窄屏放不下整行时宁可让按钮整块换行，也不能压进按钮里把「测试推送」拆成两行 -->
@@ -699,145 +658,111 @@
           max={23}
           bind:value={pushHour}
           aria-label="每日推送时间（0-23 时）"
-          class="w-16 shrink-0 rounded-lg px-3 py-1.5 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
+          class="q-input w-16 shrink-0"
         />
-        <button
-          class="shrink-0 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap text-white"
-          style="background: var(--q-theme);"
-          onclick={saveNotify}>保存</button
-        >
-        <button
-          class="shrink-0 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={testNotify}>测试推送</button
-        >
+        <button class="q-btn q-btn--primary shrink-0" onclick={saveNotify}>保存</button>
+        <button class="q-btn q-btn--ghost shrink-0" onclick={testNotify}>测试推送</button>
       </div>
-      <p class="mt-2 text-xs" style="color: var(--q-muted);">
+      <p class="q-hint">
         支持 bark、feishu、telegram、discord、smtp 等 100+ 渠道；一行一个 URL，逗号或换行分隔。
       </p>
-    </div>
-  </section>
+    </section>
 
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold"><Link2 size={14} /> 货殖账单</h2>
-    <p class="mb-3 text-xs leading-relaxed" style="color: var(--q-muted);">
-      关联后，一次往来的开销可以来自货殖里的多张账单，往来卡片按账单汇总。
-      牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端。
-      <strong style="color: var(--q-text);">请使用货殖里的「只读」密钥</strong>——读写密钥连带 MCP
-      的删改能力，牵丝用不上，没必要把这份权限交出来。
-    </p>
-    <div class="space-y-2">
-      <div class="flex flex-wrap items-center gap-2">
-        <input
-          bind:value={hzBase}
-          placeholder="货殖地址，如 https://huozhi.example.com"
-          class="min-w-[220px] flex-1 rounded-lg px-3 py-1.5 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        />
+    <section class="q-card">
+      <h2 class="q-section-title"><Link2 size={15} /> 货殖账单</h2>
+      <p class="q-hint mb-3">
+        关联后，一次往来的开销可以来自货殖里的多张账单，往来卡片按账单汇总。
+        牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端。
+        <strong style="color: var(--q-text);">请使用货殖里的「只读」密钥</strong>——读写密钥连带 MCP
+        的删改能力，牵丝用不上，没必要把这份权限交出来。
+      </p>
+      <div class="q-stack--tight flex flex-col">
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            bind:value={hzBase}
+            placeholder="货殖地址，如 https://huozhi.example.com"
+            class="q-input min-w-[220px] flex-1"
+          />
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <input
+            bind:value={hzKey}
+            type="password"
+            autocomplete="off"
+            placeholder="API Key（货殖 → 设置 → API 密钥）"
+            class="q-input min-w-[220px] flex-1 font-mono"
+          />
+          <button
+            class="q-btn q-btn--primary shrink-0 whitespace-nowrap"
+            disabled={hzBusy}
+            onclick={saveHuozhi}>{hzBusy ? '检查中…' : '保存并测试'}</button
+          >
+        </div>
       </div>
-      <div class="flex flex-wrap items-center gap-2">
+      {#if hzStatus}
+        <p class="q-hint" style="color: {hzStatus.ok ? 'var(--q-ok)' : 'var(--q-danger)'};">
+          {#if !hzStatus.configured}
+            还没有配置。填好地址与密钥后点「保存并测试」。
+          {:else if hzStatus.ok}
+            连接正常{hzStatus.base ? ` · ${hzStatus.base}` : ''}
+          {:else}
+            连接失败：{hzStatus.error || '未知错误'}
+          {/if}
+        </p>
+      {/if}
+    </section>
+
+    <section class="q-card">
+      <h2 class="q-section-title"><Database size={15} /> 数据</h2>
+      <h3 class="q-label">数据备份</h3>
+      <div class="flex flex-wrap gap-2">
+        <button class="q-btn q-btn--primary" onclick={exportData}>
+          <Download size={14} /> 导出数据库
+        </button>
+        <button class="q-btn q-btn--ghost" onclick={snapshot}>生成归档快照</button>
         <input
-          bind:value={hzKey}
-          type="password"
-          autocomplete="off"
-          placeholder="API Key（货殖 → 设置 → API 密钥）"
-          class="min-w-[220px] flex-1 rounded-lg px-3 py-1.5 font-mono text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+          type="file"
+          accept=".db,.sqlite,.sqlite3"
+          class="hidden"
+          bind:this={restoreInput}
+          onchange={restoreData}
         />
         <button
-          class="shrink-0 rounded-lg px-3 py-1.5 text-sm whitespace-nowrap text-white disabled:opacity-50"
-          style="background: var(--q-theme);"
-          disabled={hzBusy}
-          onclick={saveHuozhi}>{hzBusy ? '检查中…' : '保存并测试'}</button
+          class="q-btn q-btn--danger-ghost"
+          disabled={restoring}
+          onclick={() => restoreInput?.click()}
         >
+          <Upload size={14} />
+          {restoring ? '恢复中…' : '从备份恢复'}
+        </button>
       </div>
-    </div>
-    {#if hzStatus}
-      <p class="mt-2 text-xs" style="color: {hzStatus.ok ? 'var(--q-ok)' : 'var(--q-danger)'};">
-        {#if !hzStatus.configured}
-          还没有配置。填好地址与密钥后点「保存并测试」。
-        {:else if hzStatus.ok}
-          连接正常{hzStatus.base ? ` · ${hzStatus.base}` : ''}
-        {:else}
-          连接失败：{hzStatus.error || '未知错误'}
-        {/if}
+      <p class="q-hint">
+        导出会生成一份一致性快照（不含未落盘的 WAL 残留）；恢复前会自动归档当前数据。
       </p>
-    {/if}
-  </section>
-
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold"><Database size={14} /> 数据</h2>
-    <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">数据备份</h3>
-    <div class="flex flex-wrap gap-2">
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-        style="background: var(--q-theme);"
-        onclick={exportData}><Download size={14} /> 导出数据库</button
-      >
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        onclick={snapshot}>生成归档快照</button
-      >
-      <input
-        type="file"
-        accept=".db,.sqlite,.sqlite3"
-        class="hidden"
-        bind:this={restoreInput}
-        onchange={restoreData}
-      />
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm disabled:opacity-50"
-        style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;"
-        disabled={restoring}
-        onclick={() => restoreInput?.click()}
-      >
-        <Upload size={14} />
-        {restoring ? '恢复中…' : '从备份恢复'}
-      </button>
-    </div>
-    <p class="mt-2 text-xs" style="color: var(--q-muted);">
-      导出会生成一份一致性快照（不含未落盘的 WAL 残留）；恢复前会自动归档当前数据。
-    </p>
-    {#if backups.length > 0}
-      <ul class="mt-3 space-y-1">
-        {#each backups as b, i (i)}
-          <li
-            class="flex items-center gap-2 rounded px-2 py-1 text-xs"
-            style="background: var(--q-bg); color: var(--q-muted);"
-          >
-            <span class="truncate">{b.name}</span>
-            <span class="ml-auto shrink-0">{(b.size / 1024).toFixed(0)} KB · {b.time}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">定时自动备份</h3>
+      {#if backups.length > 0}
+        <ul class="q-stack--tight mt-3 flex flex-col">
+          {#each backups as b, i (i)}
+            <li class="q-well q-num flex items-center gap-2 !py-1.5 text-xs">
+              <span class="truncate">{b.name}</span>
+              <span class="ml-auto shrink-0">{(b.size / 1024).toFixed(0)} KB · {b.time}</span>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <div class="q-divider"></div>
+      <h3 class="q-label">定时自动备份</h3>
       {#if auto}
         {@const status = auto}
-        <div class="space-y-3">
+        <div class="q-stack">
           <!-- 开关 + 概览 -->
           <div class="flex flex-wrap items-center gap-3">
             <label class="flex cursor-pointer items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                bind:checked={status.schedule.enabled}
-                class="h-4 w-4 accent-[var(--q-theme)]"
-              />
+              <input type="checkbox" bind:checked={status.schedule.enabled} />
               {auto.schedule.enabled ? '已开启' : '已关闭'}
             </label>
             <span class="text-xs" style="color: var(--q-muted);">{auto.label}</span>
             <button
-              class="ml-auto rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
-              style="background: var(--q-theme);"
+              class="q-btn q-btn--primary q-btn--sm ml-auto"
               disabled={autoRunning}
               onclick={runAutoNow}
             >
@@ -849,12 +774,7 @@
           <div class="flex flex-wrap items-center gap-3">
             <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
               周期
-              <select
-                bind:value={status.schedule.frequency}
-                aria-label="备份周期"
-                class="rounded-lg px-2 py-1.5 text-sm"
-                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-              >
+              <select bind:value={status.schedule.frequency} aria-label="备份周期" class="q-select">
                 <option value="daily">每日</option>
                 <option value="weekly">每周</option>
                 <option value="custom">自定义间隔</option>
@@ -864,12 +784,7 @@
             {#if auto.schedule.frequency === 'weekly'}
               <label class="flex items-center gap-1.5 text-xs" style="color: var(--q-muted);">
                 星期
-                <select
-                  bind:value={status.schedule.weekday}
-                  aria-label="星期"
-                  class="rounded-lg px-2 py-1.5 text-sm"
-                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-                >
+                <select bind:value={status.schedule.weekday} aria-label="星期" class="q-select">
                   {#each WEEKDAYS as w, i (i)}
                     <option value={w.v}>周{w.n}</option>
                   {/each}
@@ -886,8 +801,7 @@
                   max={43200}
                   bind:value={status.schedule.every_min}
                   aria-label="自定义间隔（分钟）"
-                  class="w-24 rounded-lg px-2 py-1.5 text-sm"
-                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+                  class="q-input w-24"
                 />
               </label>
             {:else}
@@ -897,8 +811,7 @@
                   type="time"
                   bind:value={status.schedule.at}
                   aria-label="执行时间"
-                  class="rounded-lg px-2 py-1.5 text-sm"
-                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+                  class="q-input"
                 />
               </label>
             {/if}
@@ -911,24 +824,18 @@
                 max={200}
                 bind:value={status.schedule.keep}
                 aria-label="保留份数"
-                class="w-20 rounded-lg px-2 py-1.5 text-sm"
-                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+                class="q-input w-20"
               />
               份
             </label>
 
-            <button
-              class="rounded-lg px-3 py-1.5 text-sm text-white disabled:opacity-50"
-              style="background: var(--q-theme);"
-              disabled={autoSaving}
-              onclick={saveAuto}
-            >
+            <button class="q-btn q-btn--primary" disabled={autoSaving} onclick={saveAuto}>
               {autoSaving ? '保存中…' : '保存'}
             </button>
           </div>
 
           <!-- 执行状态 -->
-          <div class="space-y-1 text-xs" style="color: var(--q-muted);">
+          <div class="q-stack--tight flex flex-col text-xs" style="color: var(--q-muted);">
             {#if auto.enabled && auto.next_run}
               <p>
                 下次执行：<span class="font-mono">{fmtTime(auto.next_run)}</span
@@ -939,8 +846,8 @@
             {/if}
             <p>上次执行：{auto.last_run ? fmtTime(auto.last_run) : '尚未执行'}</p>
             {#if auto.last_error}
-              <p class="flex items-start gap-1" style="color: #ef4444;">
-                <AlertTriangle size={12} class="mt-0.5 shrink-0" />
+              <p class="q-badge q-badge--danger w-fit">
+                <AlertTriangle size={12} />
                 <span>上次备份失败：{auto.last_error}</span>
               </p>
             {/if}
@@ -948,19 +855,12 @@
           </div>
         </div>
       {:else}
-        <p class="text-xs" style="color: var(--q-muted);">
-          读取自动备份配置失败，请检查服务是否运行。
-        </p>
+        <p class="q-hint !mt-0">读取自动备份配置失败，请检查服务是否运行。</p>
       {/if}
-    </div>
-    <div class="mt-5 border-t pt-5" style="border-color: var(--q-border);">
-      <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">明细导出与全量迁移</h3>
+      <div class="q-divider"></div>
+      <h3 class="q-label">明细导出与全量迁移</h3>
       <div class="flex flex-wrap items-center gap-2">
-        <select
-          bind:value={csvWhat}
-          class="rounded-lg px-3 py-1.5 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-        >
+        <select bind:value={csvWhat} class="q-select">
           <option value="events">往来明细</option>
           <option value="transactions">金钱明细</option>
           <option value="memos">对话明细</option>
@@ -971,39 +871,26 @@
           max="2200"
           bind:value={csvYear}
           placeholder="年份（全部）"
-          class="w-28 rounded-lg px-3 py-1.5 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
+          class="q-input w-28"
         />
         <div class="w-40">
           <PersonPicker bind:value={csvPerson} placeholder="全部人物" compact={true} />
         </div>
         {#if csvWhat === 'transactions'}
-          <select
-            bind:value={csvEvent}
-            class="max-w-[12rem] rounded-lg px-3 py-1.5 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          >
+          <select bind:value={csvEvent} class="q-select max-w-[12rem]">
             <option value="">全部往来</option>
             {#each eventOptions as ev (ev.id)}<option value={ev.id}>{ev.title}</option>{/each}
           </select>
         {/if}
-        <button
-          class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={exportCsv}
-        >
+        <button class="q-btn q-btn--primary" onclick={exportCsv}>
           <Download size={14} /> 导出 CSV
         </button>
       </div>
-      <p class="mt-2 text-xs" style="color: var(--q-muted);">
+      <p class="q-hint">
         CSV 带 BOM，Excel 双击打开不乱码；金额按「元」导出。选一场往来即可只导它的礼单。
       </p>
       <div class="mt-3 flex flex-wrap gap-2">
-        <button
-          class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={exportJson}
-        >
+        <button class="q-btn q-btn--ghost" onclick={exportJson}>
           <Download size={14} /> 全量导出 JSON
         </button>
         <input
@@ -1013,47 +900,35 @@
           bind:this={jsonInput}
           onchange={pickJson}
         />
-        <button
-          class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border); color: #ef4444;"
-          onclick={() => jsonInput?.click()}
-        >
+        <button class="q-btn q-btn--danger-ghost" onclick={() => jsonInput?.click()}>
           <Upload size={14} /> 从 JSON 导入（覆盖全库）
         </button>
       </div>
       {#if ioMsg}
-        <p class="mt-2 flex items-center gap-1 text-xs" style="color: var(--q-muted);">
+        <p class="q-hint flex items-center gap-1">
           <Check size={12} />
           {ioMsg}
         </p>
       {/if}
-    </div>
-  </section>
+    </section>
 
-  <section
-    class="rounded-xl p-5"
-    style="background: var(--q-surface); border: 1px solid var(--q-border);"
-  >
-    <h2 class="mb-4 flex items-center gap-2 text-sm font-semibold">
-      <KeyRound size={14} /> 访问与安全
-    </h2>
-    <h3 class="mb-2.5 text-xs font-medium" style="color: var(--q-muted);">访问令牌（可选）</h3>
-    <div class="flex gap-2">
-      <input
-        bind:value={token}
-        type="password"
-        placeholder="服务端 QIANSI_TOKEN，未设置则留空"
-        class="flex-1 rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
-      />
-      <button
-        class="rounded-lg px-3 py-1.5 text-sm text-white"
-        style="background: var(--q-theme);"
-        onclick={saveToken}>保存</button
-      >
-    </div>
-    <p class="mt-2 text-xs" style="color: var(--q-muted);">
-      服务端设置 QIANSI_TOKEN 后，所有接口都需要此令牌；跨站访问默认已被 CORS 拒绝。
-    </p>
-  </section>
+    <section class="q-card">
+      <h2 class="q-section-title">
+        <KeyRound size={15} /> 访问与安全
+      </h2>
+      <h3 class="q-label">访问令牌（可选）</h3>
+      <div class="flex gap-2">
+        <input
+          bind:value={token}
+          type="password"
+          placeholder="服务端 QIANSI_TOKEN，未设置则留空"
+          class="q-input flex-1"
+        />
+        <button class="q-btn q-btn--primary" onclick={saveToken}>保存</button>
+      </div>
+      <p class="q-hint">
+        服务端设置 QIANSI_TOKEN 后，所有接口都需要此令牌；跨站访问默认已被 CORS 拒绝。
+      </p>
+    </section>
+  </div>
 </div>

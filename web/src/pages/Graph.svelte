@@ -19,7 +19,6 @@
     egoLayout,
     outwardLabel,
     circleFill,
-    NO_CIRCLE_COLOR,
     edgePairKey,
     laneOf,
     pairKey,
@@ -28,8 +27,12 @@
     vennLayout,
     type VennCircle
   } from '../lib/graphLayout';
-  import { Plus, X, Link2, Route, Share2, Trash2 } from '@lucide/svelte';
+  import { theme } from '../lib/theme.svelte';
+  import { Plus, Link2, Route, Share2, Trash2 } from '@lucide/svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { toast, errText } from '../lib/toast.svelte';
 
   echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
@@ -47,6 +50,12 @@
   // 容器尺寸变化（侧栏折叠、手机转屏、初始化时还没布局完）时让 ECharts 跟着重排，
   // 只监听 window resize 的话，零宽时刻 init 出来的图会一直是一条缝
   let ro: ResizeObserver | null = null;
+  // 零尺寸首帧的「等尺寸」观察器：拿到宽度后立刻补画并断开
+  let awaitRO: ResizeObserver | null = null;
+  // mode=system 且系统切换外观时，theme.mode 本身不变，靠这个计数触发图表重绘
+  let schemeTick = $state(0);
+  const schemeMql =
+    typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
   // 圈层标尺只画连得上的人，剩下的人得说清楚去哪找
   let orphans = $state(0);
   let centered = $state(false);
@@ -112,7 +121,29 @@
     void focusId;
     void vennSel.length;
     void vennEdges;
-    if (chartDiv && canDraw) draw();
+    // 明/暗主题与自定义主题色变化时，画布上的墨色/朱色也要跟着换
+    void theme.mode;
+    void theme.color;
+    void schemeTick;
+
+    awaitRO?.disconnect();
+    const el = chartDiv;
+    if (!el || !canDraw) return;
+    // ECharts 在 0×0 容器上会算出不可逆（奇异）矩阵，view 的 legacyCopyOverallTrans
+    // 随即抛 “Cannot read properties of null (reading '0')”。首帧零宽时先等尺寸。
+    if (el.clientWidth > 0 && el.clientHeight > 0) {
+      renderChart();
+      return;
+    }
+    awaitRO = new ResizeObserver(() => {
+      if (el.clientWidth > 0 && el.clientHeight > 0) {
+        awaitRO?.disconnect();
+        awaitRO = null;
+        if (chartDiv === el) renderChart();
+      }
+    });
+    awaitRO.observe(el);
+    return () => awaitRO?.disconnect();
   });
 
   $effect(() => {
@@ -159,35 +190,78 @@
     return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
   }
 
-  function draw() {
-    if (!chartDiv) return;
-    chart?.dispose();
-    ro?.disconnect();
-    chart = echarts.init(chartDiv);
-    ro = new ResizeObserver(() => chart?.resize());
-    ro.observe(chartDiv);
-    if (view === 'venn') drawVenn();
-    else drawRel();
-    chart.on('click', (p: any) => {
-      if (Date.now() - dragEndedAt < 300) return;
-      if (p?.dataType !== 'node' || !p?.data?.id || p.data.guide || p.data.vennBg) return;
-      const id = p.data.id as string;
-      if (view === 'venn') {
-        navigate(`/people/${id}`);
-        return;
-      }
-      // 认识路径模式下点节点 = 聚焦此人；否则进详情维护关系
-      if (showChains) navigate(`/graph?focus=${encodeURIComponent(id)}`);
-      else navigate(`/people/${id}`);
-    });
+  // 画布上不能用 CSS 变量（canvas fillStyle 不支持），每次重绘前从计算样式取实色
+  function chartPalette() {
+    const css = (n: string) =>
+      getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+    return {
+      ink: css('--q-text'),
+      muted: css('--q-muted'),
+      faint: css('--q-faint'),
+      surface: css('--q-surface'),
+      // 本人 / 引荐链的强调色沿用赭黄语义（--q-warn），与朱砂主色拉开
+      accent: css('--q-warn')
+    };
   }
 
-  function drawRel() {
+  // 节点填色：有圈子按圈子硬边拼色；一个圈子都没有时用当前主题的暖灰实色，
+  // 不能把空数组交给 circleFill（它内部的兜底色不随明暗主题变化）
+  function nodeFill(p: Person, fallback: string) {
+    const colors = (p.categories ?? []).map((c) => c.color).filter(Boolean) as string[];
+    return circleFill(colors.length ? colors : [fallback]);
+  }
+
+  // 关系视图与圈子视图是两个不同的容器 div（同一时刻只渲染一个），
+  // 切换时旧实例必须随旧容器释放；同视图内的筛选/主题变化则复用实例，
+  // 用 notMerge 整幅重画——避免 dispose 竞态，也跳过通用过渡的坐标系拷贝。
+  function ensureChart(el: HTMLDivElement): echarts.ECharts {
+    if (chart && chart.getDom() !== el) {
+      chart.dispose();
+      ro?.disconnect();
+      chart = null;
+    }
+    if (!chart) {
+      chart = echarts.init(el);
+      chart.on('click', onChartClick);
+      ro = new ResizeObserver(() => {
+        // 抽屉展开/转屏瞬间可能给 0 尺寸，resize 到 0 同样触发奇异矩阵
+        if (el.clientWidth > 0 && el.clientHeight > 0) chart?.resize();
+      });
+      ro.observe(el);
+    }
+    return chart;
+  }
+
+  function renderChart() {
+    const el = chartDiv;
+    if (!el || el.clientWidth === 0 || el.clientHeight === 0) return;
+    const option = view === 'venn' ? buildVennOption() : buildRelOption();
+    if (!option) return;
+    ensureChart(el).setOption(option, { notMerge: true });
+  }
+
+  function onChartClick(p: any) {
+    if (Date.now() - dragEndedAt < 300) return;
+    if (p?.dataType !== 'node' || !p?.data?.id || p.data.guide || p.data.vennBg) return;
+    const id = p.data.id as string;
+    if (view === 'venn') {
+      navigate(`/people/${id}`);
+      return;
+    }
+    // 认识路径模式下点节点 = 聚焦此人；否则进详情维护关系
+    if (showChains) navigate(`/graph?focus=${encodeURIComponent(id)}`);
+    else navigate(`/people/${id}`);
+  }
+
+  function buildRelOption() {
+    const pal = chartPalette();
     // 端点被归档的人不在 nodes 里，那条边会指向不存在的节点，得先滤掉
     const ids = new Set(people.map((p) => p.id));
     const edges = rels.filter((r) => ids.has(r.from_person_id) && ids.has(r.to_person_id));
-    // 本人用琥珀色而不是主题色：跟其他节点同色就谈不上高亮了
-    const accent = '#f59e0b';
+    // 本人用赭黄而不是朱砂主色：跟其他节点同色就谈不上高亮了
+    const accent = pal.accent;
+    // 无圈子的人用暖灰实色填充（旧版冷灰 #94a3b8 在纸面上发脏）
+    const neutral = pal.muted;
     const gradeOf = new Map(people.map((p) => [p.id, p.grade]));
     // 没设本人就无所谓「离我几步」；本人被归档时也一样，退回原来的力导向
     const layout =
@@ -230,14 +304,15 @@
         symbolSize: me ? 46 : 18 + p.grade * 4,
         label: {
           position: at ? (me ? 'bottom' : outwardLabel(at.angle)) : 'bottom',
+          color: pal.ink,
           ...(me && { fontWeight: 'bold' }),
           ...(dim && { opacity: 0.15 }),
           ...(onChain && !me && { color: accent, fontWeight: 600 })
         },
         itemStyle: me
-          ? { color: accent, borderColor: '#fff', borderWidth: 2 }
+          ? { color: accent, borderColor: pal.surface, borderWidth: 2 }
           : {
-              color: circleFill((p.categories ?? []).map((c) => c.color || NO_CIRCLE_COLOR)),
+              color: nodeFill(p, neutral),
               ...(onChain && { borderColor: accent, borderWidth: 2 }),
               ...(dim && { opacity: 0.12 })
             }
@@ -254,8 +329,8 @@
           symbolSize: 5,
           draggable: false,
           guide: true,
-          itemStyle: { color: 'rgba(148,163,184,0.35)' },
-          label: { show: true, position: 'right', fontSize: 11, color: '#94a3b8' }
+          itemStyle: { color: hexA(pal.muted, 0.35) },
+          label: { show: true, position: 'right', fontSize: 11, color: pal.muted }
         });
       }
     }
@@ -277,10 +352,10 @@
       const i = pairCount.get(pk)! > 1 ? (pairUsed.get(pk) ?? 0) : -1;
       pairUsed.set(pk, i + 1);
       const curve = laneOf(i, r.from_person_id <= r.to_person_id);
-      // 链边琥珀虚线；我与聚焦人的直达边琥珀实线（可能与链边重合，重合时按链边画）
+      // 链边赭黄虚线；我与聚焦人的直达边赭黄实线（可能与链边重合，重合时按链边画）
       const chainEdge = showChains && allIntroPairs.has(pk);
-      let color = mine ? accent : '#94a3b8';
-      let opacity = mine ? 1 : 0.3;
+      let color = mine ? accent : pal.faint;
+      let opacity = mine ? 1 : 0.55;
       let type: 'solid' | 'dashed' = 'solid';
       let width = mine ? 2.5 : 1;
       if (onChain) {
@@ -293,8 +368,8 @@
         opacity = 1;
         width = 2.5;
       } else if (!focusId && chainEdge) {
-        color = '#d97706';
-        opacity = 0.85;
+        color = accent;
+        opacity = 0.8;
         type = 'dashed';
         width = 1.6;
       }
@@ -313,11 +388,11 @@
           show: !dim,
           formatter: r.type,
           fontSize: 10,
-          color: onChain || isDirectFocus || mine ? accent : '#94a3b8'
+          color: onChain || isDirectFocus || mine ? accent : pal.muted
         }
       };
     });
-    chart!.setOption({
+    return {
       tooltip: { show: false },
       series: [
         {
@@ -325,7 +400,6 @@
           layout: layout ? 'none' : 'force',
           roam: true,
           draggable: true,
-          editable: true,
           ...(layout
             ? { left: 'center', top: 'middle' }
             : {
@@ -337,19 +411,20 @@
               }),
           emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
           lineStyle: { color: 'source', curveness: 0.1, opacity: 0.7 },
-          label: { show: true, fontSize: 12, position: 'bottom' },
+          label: { show: true, fontSize: 12, position: 'bottom', color: pal.ink },
           edgeLabel: { position: 'middle' },
           data: nodes,
           links
         }
       ]
-    });
+    };
   }
 
-  function drawVenn() {
+  function buildVennOption() {
+    const pal = chartPalette();
     const selCircles = vennCircles;
     const layout = venn;
-    if (!layout || selCircles.length < 2) return;
+    if (!layout || selCircles.length < 2) return null;
     const placed = new Set(layout.pos.keys());
 
     // 背景大圆必须排在人物节点前面：同一系列按 data 顺序绘制，先画的被压在下面
@@ -391,13 +466,14 @@
           show: true,
           position: 'bottom',
           fontSize: 12,
+          color: pal.ink,
           ...(me && { fontWeight: 'bold' }),
           ...(dim && { opacity: 0.2 })
         },
         itemStyle: me
-          ? { color: '#f59e0b', borderColor: '#fff', borderWidth: 2 }
+          ? { color: pal.accent, borderColor: pal.surface, borderWidth: 2 }
           : {
-              color: circleFill((p.categories ?? []).map((c) => c.color || NO_CIRCLE_COLOR)),
+              color: nodeFill(p, pal.muted),
               ...(dim && { opacity: 0.15 })
             }
       });
@@ -410,12 +486,14 @@
         .map((r) => ({
           source: r.from_person_id,
           target: r.to_person_id,
-          lineStyle: { curveness: 0, opacity: 0.18, color: '#94a3b8' },
+          lineStyle: { curveness: 0, opacity: 0.35, color: pal.faint },
           label: { show: false }
         }));
     }
 
-    chart!.setOption({
+    orphans = 0;
+    centered = false;
+    return {
       tooltip: { show: false },
       series: [
         {
@@ -426,14 +504,12 @@
           left: 'center',
           top: 'middle',
           emphasis: { focus: 'adjacency' },
-          label: { show: false },
+          label: { show: false, color: pal.ink },
           data: nodes,
           links
         }
       ]
-    });
-    orphans = 0;
-    centered = false;
+    };
   }
 
   function toggleCat(id: number) {
@@ -590,395 +666,301 @@
 
   const outsideChips = $derived(venn ? people.filter((p) => !venn.pos.has(p.id)) : []);
 
-  function onResize() {
-    chart?.resize();
-  }
   onMount(() => {
     load();
-    window.addEventListener('resize', onResize);
+    schemeMql?.addEventListener('change', onSchemeChange);
   });
   onDestroy(() => {
     chart?.dispose();
     ro?.disconnect();
-    window.removeEventListener('resize', onResize);
+    awaitRO?.disconnect();
+    schemeMql?.removeEventListener('change', onSchemeChange);
   });
+
+  function onSchemeChange() {
+    schemeTick += 1;
+  }
 </script>
 
-<div class="space-y-4">
-  <header class="flex flex-wrap items-start justify-between gap-3">
-    <div>
-      <h1 class="text-2xl font-semibold">关系图</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">
-        {#if view === 'rel'}
-          {#if centered}圈层 = 关系上离我几步，同圈按亲密度排 · 虚线是「通过谁认识」的引荐链{:else}在人物详情里设为本人后，图会以你为中心按亲密度铺开{/if}
-        {:else}
-          圈子是集合：同时属于两个圈子的人落在交集里 · 选 2-3 个圈子对比
-        {/if}
-      </p>
-    </div>
-    <div class="flex items-center gap-2">
-      <div
-        class="flex rounded-lg p-0.5 text-sm"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
-      >
-        <button
-          class="flex items-center gap-1 rounded-md px-3 py-1.5 transition"
-          style={view === 'rel'
-            ? 'background: var(--q-surface); color: var(--q-text);'
-            : 'color: var(--q-muted);'}
-          onclick={() => (view = 'rel')}
-        >
+<div class="q-page">
+  <PageHeader
+    title="关系图"
+    subtitle={view === 'rel'
+      ? centered
+        ? '圈层 = 关系上离我几步，同圈按亲密度排 · 虚线是「通过谁认识」的引荐链'
+        : '在人物详情里设为本人后，图会以你为中心按亲密度铺开'
+      : '圈子是集合：同时属于两个圈子的人落在交集里 · 选 2-3 个圈子对比'}
+  >
+    {#snippet actions()}
+      <div class="q-seg">
+        <button class="q-seg__btn" aria-pressed={view === 'rel'} onclick={() => (view = 'rel')}>
           <Share2 size={14} /> 关系
         </button>
-        <button
-          class="flex items-center gap-1 rounded-md px-3 py-1.5 transition"
-          style={view === 'venn'
-            ? 'background: var(--q-surface); color: var(--q-text);'
-            : 'color: var(--q-muted);'}
-          onclick={() => (view = 'venn')}
-        >
+        <button class="q-seg__btn" aria-pressed={view === 'venn'} onclick={() => (view = 'venn')}>
           <Link2 size={14} /> 圈子
         </button>
       </div>
-      <button
-        class="flex items-center gap-1 rounded-lg px-3 py-2 text-sm text-white"
-        style="background: var(--q-theme);"
-        onclick={() => openForm('rel')}
-      >
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={() => openForm('rel')}>
         <Plus size={14} /> 添加关系
       </button>
-    </div>
-  </header>
+    {/snippet}
+  </PageHeader>
 
-  {#if people.length === 0}
-    <div class="py-12 text-center text-sm" style="color: var(--q-muted);">还没有人物或关系</div>
-  {:else}
-    {#if view === 'rel'}
-      <div class="flex flex-wrap items-center gap-2">
-        {#if categories.length > 0}
-          <span class="mr-1 text-xs" style="color: var(--q-muted);">按圈子筛</span>
-          {#each categories as c (c.id)}
-            <button
-              class="rounded-full px-2 py-1 text-xs transition"
-              style={catFilter.includes(c.id)
-                ? `background: color-mix(in srgb, ${c.color} 22%, transparent); color: ${c.color}; border: 1px solid ${c.color};`
-                : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
-              onclick={() => toggleCat(c.id)}>{c.name}</button
-            >
-          {/each}
-        {/if}
-        {#if allTags.length > 0}
-          <span class="mr-1 ml-2 text-xs" style="color: var(--q-muted);">标签</span>
-          {#each allTags as t (t.id)}
-            <button
-              class="rounded-full px-2 py-1 text-xs transition"
-              style={tagFilter.includes(t.id)
-                ? `background: color-mix(in srgb, ${t.color} 22%, transparent); color: ${t.color}; border: 1px solid ${t.color};`
-                : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
-              onclick={() => toggleTag(t.id)}>#{t.name}</button
-            >
-          {/each}
+  <div class="q-stack">
+    {#if people.length === 0}
+      <Empty icon={Share2} text="还没有人物或关系，先去通讯录记一个人" />
+    {:else}
+      {#if view === 'rel'}
+        <div class="q-card q-card--tight flex flex-wrap items-center gap-2">
+          {#if categories.length > 0}
+            <span class="q-hint !mt-0 mr-1">按圈子筛</span>
+            {#each categories as c (c.id)}
+              <button
+                class="q-chip q-chip-cat"
+                style="--c: {c.color};"
+                aria-pressed={catFilter.includes(c.id)}
+                onclick={() => toggleCat(c.id)}>{c.name}</button
+              >
+            {/each}
+          {/if}
+          {#if allTags.length > 0}
+            <span class="q-hint !mt-0 mr-1 ml-2">标签</span>
+            {#each allTags as t (t.id)}
+              <button
+                class="q-chip q-chip-cat"
+                style="--c: {t.color};"
+                aria-pressed={tagFilter.includes(t.id)}
+                onclick={() => toggleTag(t.id)}>#{t.name}</button
+              >
+            {/each}
+          {/if}
           {#if catFilter.length > 0 || tagFilter.length > 0}
             <button
-              class="rounded-full px-2 py-1 text-xs underline"
-              style="color: var(--q-muted);"
+              class="q-chip"
               onclick={() => {
                 catFilter = [];
                 tagFilter = [];
               }}>清除</button
             >
           {/if}
-        {/if}
-        <label
-          class="ml-auto flex cursor-pointer items-center gap-1.5 text-xs select-none"
-          style="color: var(--q-muted);"
-        >
-          <Route size={14} />
-          <input type="checkbox" bind:checked={showChains} />
-          认识路径（开启后点节点聚焦）
-        </label>
-        {#if focusId}
-          {@const fp = people.find((p) => p.id === focusId)}
-          <button
-            class="rounded-full px-2 py-1 text-xs"
-            style="background: color-mix(in srgb, #f59e0b 18%, transparent); color: #d97706; border: 1px solid #f59e0b;"
-            onclick={() => navigate('/graph')}
-          >
-            聚焦：{fp ? personLabel(fp) : '?'} ✕
-          </button>
-        {/if}
-      </div>
-
-      <div
-        bind:this={chartDiv}
-        style="width: 100%; height: 640px; border-radius: 12px; background: var(--q-surface); border: 1px solid var(--q-border);"
-      ></div>
-      {#if graphMeta.truncated}
-        <button
-          class="w-full py-2 text-center text-sm"
-          style="color: var(--q-muted);"
-          onclick={() => navigate('/people')}
-        >
-          通讯录共 {graphMeta.total} 人，图里只画前 {people.length} 人（按等级、最近更新排）
-          {#if graphMeta.droppedEdges > 0}，另有 {graphMeta.droppedEdges} 条关系因端点未进图而暂未显示{/if}
-          · 去通讯录
-        </button>
-      {/if}
-      {#if centered && orphans > 0}
-        <button
-          class="w-full py-2 text-center text-sm"
-          style="color: var(--q-muted);"
-          onclick={() => navigate('/people')}
-        >
-          另有 {orphans} 人还没有关系连线，未进图 · 去通讯录
-        </button>
-      {/if}
-    {:else}
-      {#if categories.length < 2}
-        <div class="space-y-2 py-12 text-center text-sm" style="color: var(--q-muted);">
-          <p>至少需要两个圈子才能画交叠圈。</p>
-          <button class="underline" onclick={() => navigate('/settings')}>去设置里建圈子</button>
-        </div>
-      {:else}
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="mr-1 text-xs" style="color: var(--q-muted);">选圈子（2-3 个）</span>
-          {#each categories as c (c.id)}
-            <button
-              class="rounded-full px-2 py-1 text-xs transition disabled:opacity-40"
-              disabled={!vennSel.includes(c.id) && vennSel.length >= 3}
-              style={vennSel.includes(c.id)
-                ? `background: color-mix(in srgb, ${c.color} 22%, transparent); color: ${c.color}; border: 1px solid ${c.color};`
-                : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
-              onclick={() => toggleVenn(c.id)}>{c.name}</button
-            >
-          {/each}
           <label
             class="ml-auto flex cursor-pointer items-center gap-1.5 text-xs select-none"
             style="color: var(--q-muted);"
           >
-            <input type="checkbox" bind:checked={vennEdges} />
-            叠加关系连线
+            <Route size={14} />
+            <input type="checkbox" bind:checked={showChains} />
+            认识路径（开启后点节点聚焦）
           </label>
+          {#if focusId}
+            {@const fp = people.find((p) => p.id === focusId)}
+            <button
+              class="q-chip"
+              aria-pressed="true"
+              style="background: color-mix(in srgb, var(--q-warn) 16%, var(--q-surface)); border-color: color-mix(in srgb, var(--q-warn) 55%, var(--q-border)); color: var(--q-warn);"
+              onclick={() => navigate('/graph')}
+            >
+              聚焦：{fp ? personLabel(fp) : '?'} ✕
+            </button>
+          {/if}
         </div>
 
-        {#if vennSel.length < 2}
-          <div class="py-16 text-center text-sm" style="color: var(--q-muted);">
-            请选择两个圈子查看交集
-          </div>
+        <!-- 图表容器：640px 高度沿用既有几何，画布配色随设计令牌走 -->
+        <div bind:this={chartDiv} class="q-chart-frame" style="height: 640px;"></div>
+        {#if graphMeta.truncated}
+          <button
+            class="q-btn q-btn--subtle q-btn--sm q-btn--block"
+            onclick={() => navigate('/people')}
+          >
+            通讯录共 {graphMeta.total} 人，图里只画前 {people.length} 人（按等级、最近更新排）
+            {#if graphMeta.droppedEdges > 0}，另有 {graphMeta.droppedEdges} 条关系因端点未进图而暂未显示{/if}
+            · 去通讯录
+          </button>
+        {/if}
+        {#if centered && orphans > 0}
+          <button
+            class="q-btn q-btn--subtle q-btn--sm q-btn--block"
+            onclick={() => navigate('/people')}
+          >
+            另有 {orphans} 人还没有关系连线，未进图 · 去通讯录
+          </button>
+        {/if}
+      {:else}
+        {#if categories.length < 2}
+          <Empty icon={Link2} text="至少需要两个圈子才能画交叠圈">
+            {#snippet actions()}
+              <button class="q-btn q-btn--primary q-btn--sm" onclick={() => navigate('/settings')}>
+                去设置里建圈子
+              </button>
+            {/snippet}
+          </Empty>
         {:else}
-          <div
-            bind:this={chartDiv}
-            style="width: 100%; height: 680px; border-radius: 12px; background: var(--q-surface); border: 1px solid var(--q-border);"
-          ></div>
-          {#if outsideChips.length > 0}
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span class="mr-1 text-xs" style="color: var(--q-muted);"
-                >不在所选圈子（{outsideChips.length}）</span
+          <div class="q-card q-card--tight flex flex-wrap items-center gap-2">
+            <span class="q-hint !mt-0 mr-1">选圈子（2-3 个）</span>
+            {#each categories as c (c.id)}
+              <button
+                class="q-chip q-chip-cat disabled:opacity-40"
+                style="--c: {c.color};"
+                disabled={!vennSel.includes(c.id) && vennSel.length >= 3}
+                aria-pressed={vennSel.includes(c.id)}
+                onclick={() => toggleVenn(c.id)}>{c.name}</button
               >
-              {#each outsideChips as p (p.id)}
-                <button
-                  class="rounded-full px-2 py-1 text-xs"
-                  style="background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);"
-                  onclick={() => navigate(`/people/${p.id}`)}>{personLabel(p)}</button
-                >
-              {/each}
-            </div>
+            {/each}
+            <label
+              class="ml-auto flex cursor-pointer items-center gap-1.5 text-xs select-none"
+              style="color: var(--q-muted);"
+            >
+              <input type="checkbox" bind:checked={vennEdges} />
+              叠加关系连线
+            </label>
+          </div>
+
+          {#if vennSel.length < 2}
+            <Empty icon={Link2} text="请选择两个圈子查看交集" />
+          {:else}
+            <div bind:this={chartDiv} class="q-chart-frame" style="height: 680px;"></div>
+            {#if outsideChips.length > 0}
+              <div class="q-card q-card--tight flex flex-wrap items-center gap-1.5">
+                <span class="q-hint !mt-0 mr-1">不在所选圈子（{outsideChips.length}）</span>
+                {#each outsideChips as p (p.id)}
+                  <button class="q-chip" onclick={() => navigate(`/people/${p.id}`)}
+                    >{personLabel(p)}</button
+                  >
+                {/each}
+              </div>
+            {/if}
           {/if}
         {/if}
       {/if}
     {/if}
-  {/if}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={closeForm}
-    ></button>
-    <div
-      class="relative max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="flex items-center gap-1 font-semibold">
-          <Link2 size={16} />
-          {formMode === 'chain' ? '录入引荐链' : '添加关系'}
-        </h2>
-        <button onclick={closeForm}><X size={18} /></button>
-      </div>
-
-      <div
-        class="mb-4 flex w-fit rounded-lg p-0.5 text-sm"
-        style="background: var(--q-bg); border: 1px solid var(--q-border);"
+  <Modal wide onclose={closeForm} title={formMode === 'chain' ? '录入引荐链' : '添加关系'}>
+    <div class="q-seg mb-4">
+      <button
+        class="q-seg__btn"
+        aria-pressed={formMode === 'rel'}
+        onclick={() => (formMode = 'rel')}>单条关系</button
       >
-        <button
-          class="rounded-md px-3 py-1"
-          style={formMode === 'rel' ? 'background: var(--q-surface);' : 'color: var(--q-muted);'}
-          onclick={() => (formMode = 'rel')}>单条关系</button
-        >
-        <button
-          class="flex items-center gap-1 rounded-md px-3 py-1"
-          style={formMode === 'chain' ? 'background: var(--q-surface);' : 'color: var(--q-muted);'}
-          onclick={() => openForm('chain')}
-        >
-          <Route size={13} /> 引荐链
-        </button>
-      </div>
+      <button
+        class="q-seg__btn"
+        aria-pressed={formMode === 'chain'}
+        onclick={() => openForm('chain')}
+      >
+        <Route size={13} /> 引荐链
+      </button>
+    </div>
 
-      {#if formMode === 'rel'}
-        {#if !self.id}
-          <p class="mb-3 text-xs" style="color: var(--q-muted);">
-            还没设「本人」，下面可以任选两人连线。
-          </p>
-        {/if}
-        {#if pending}
-          <div
-            class="mb-3 flex items-center gap-2 rounded-lg p-2 text-sm"
-            style="background: color-mix(in srgb, var(--q-theme) 12%, transparent);"
-          >
-            <span>{people.find((p) => p.id === pending!.from)?.name || '?'}</span>
-            <span style="color: var(--q-muted);">→</span>
-            <span>{people.find((p) => p.id === pending!.to)?.name || '?'}</span>
-            <span class="ml-auto text-xs" style="color: var(--q-muted);">来自图上连线</span>
-          </div>
-        {/if}
-        <div class="space-y-3">
-          {#if pending}
-            <p class="text-xs" style="color: var(--q-muted);">
-              这一对来自图上的连线，直接填关系类型即可。
-            </p>
-          {:else}
-            <div class="grid grid-cols-2 gap-3">
-              <PersonPicker
-                bind:value={form.from_person_id}
-                exclude={[form.to_person_id]}
-                placeholder="甲方…"
-                clearable={false}
-              />
-              <PersonPicker
-                bind:value={form.to_person_id}
-                exclude={[form.from_person_id]}
-                placeholder="乙方…"
-                clearable={false}
-              />
-            </div>
-          {/if}
-          <input
-            list="rel-type-options"
-            bind:value={form.type}
-            placeholder="关系类型（可自定义：闺蜜、对象、挚友…）"
-            class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          />
-          <datalist id="rel-type-options">
-            {#each typeOptions as t (t)}<option value={t}></option>{/each}
-          </datalist>
-          <input
-            bind:value={form.remark}
-            placeholder="备注（可选）"
-            class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-          />
-        </div>
-        <div class="mt-5 flex justify-end gap-2">
-          <button
-            class="rounded-lg px-4 py-2 text-sm"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-            onclick={closeForm}>取消</button
-          >
-          <button
-            class="rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60"
-            style="background: var(--q-theme);"
-            disabled={busy}
-            onclick={submitRel}>保存</button
-          >
-        </div>
-      {:else}
-        {#if !self.id}
-          <p class="mb-3 text-sm" style="color: #dc2626;">
-            请先在人物详情里把自己设为「本人」，再录入引荐链。
-          </p>
-        {/if}
-        <p class="mb-3 text-xs leading-relaxed" style="color: var(--q-muted);">
-          录「我 →同学→ A →对象→ B →闺蜜→ C」这样的认识经过。没有的人可以当场新建（只填名字），
-          系统会给新人物自动记好引荐人；之后再补一条「我 —挚友→ C」的直达关系即可。
-        </p>
-        <div class="space-y-2">
-          {#each chainRows as row, i (i)}
-            <div class="flex items-center gap-2">
-              <span class="w-14 shrink-0 text-right text-xs" style="color: var(--q-muted);"
-                >{i === 0 ? '我' : '再经'}</span
-              >
-              <input
-                list="rel-type-options"
-                bind:value={row.type}
-                placeholder="关系，如 同学/对象/闺蜜"
-                class="w-32 shrink-0 rounded-lg px-2 py-2 text-sm outline-none"
-                style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-              />
-              <span style="color: var(--q-muted);">→</span>
-              {#if row.isNew}
-                <input
-                  bind:value={row.newName}
-                  placeholder="新人姓名"
-                  class="min-w-0 flex-1 rounded-lg px-2 py-2 text-sm outline-none"
-                  style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-                />
-              {:else}
-                <div class="min-w-0 flex-1">
-                  <PersonPicker
-                    bind:value={row.personId}
-                    placeholder="选择已有联系人…"
-                    clearable={false}
-                  />
-                </div>
-              {/if}
-              <button
-                class="shrink-0 rounded-lg px-2 py-1.5 text-xs"
-                style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-                title={row.isNew ? '改为选择已有联系人' : '不选人，当场新建一个'}
-                onclick={() => toggleChainNew(i)}
-              >
-                {row.isNew ? '改选人' : '＋新建'}
-              </button>
-              {#if chainRows.length > 1}
-                <button
-                  class="shrink-0 p-1"
-                  style="color: var(--q-muted);"
-                  onclick={() => removeChainRow(i)}><Trash2 size={14} /></button
-                >
-              {/if}
-            </div>
-          {/each}
-          <datalist id="rel-type-options">
-            {#each typeOptions as t (t)}<option value={t}></option>{/each}
-          </datalist>
-          <button
-            class="flex items-center gap-1 rounded px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-muted);"
-            onclick={addChainRow}
-          >
-            <Plus size={12} /> 加一跳
-          </button>
-        </div>
-        <div class="mt-5 flex justify-end gap-2">
-          <button
-            class="rounded-lg px-4 py-2 text-sm"
-            style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-            onclick={closeForm}>取消</button
-          >
-          <button
-            class="rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60"
-            style="background: var(--q-theme);"
-            disabled={busy || !self.id}
-            onclick={submitChain}>保存整条链</button
-          >
+    <!-- 关系类型候选词，单条/引荐链共用，全弹窗只保留一份 -->
+    <datalist id="rel-type-options">
+      {#each typeOptions as t (t)}<option value={t}></option>{/each}
+    </datalist>
+
+    {#if formMode === 'rel'}
+      {#if !self.id}
+        <p class="q-hint mb-3">还没设「本人」，下面可以任选两人连线。</p>
+      {/if}
+      {#if pending}
+        <div class="q-well mb-3 flex items-center gap-2 !py-2.5 text-sm">
+          <span class="font-medium">{people.find((p) => p.id === pending!.from)?.name || '?'}</span>
+          <span class="q-hint !mt-0">→</span>
+          <span class="font-medium">{people.find((p) => p.id === pending!.to)?.name || '?'}</span>
+          <span class="q-hint !mt-0 ml-auto">来自图上连线</span>
         </div>
       {/if}
-    </div>
-  </div>
+      <div class="q-stack--tight flex flex-col">
+        {#if pending}
+          <p class="q-hint !mt-0">这一对来自图上的连线，直接填关系类型即可。</p>
+        {:else}
+          <div class="grid grid-cols-2 gap-2">
+            <PersonPicker
+              bind:value={form.from_person_id}
+              exclude={[form.to_person_id]}
+              placeholder="甲方…"
+              clearable={false}
+            />
+            <PersonPicker
+              bind:value={form.to_person_id}
+              exclude={[form.from_person_id]}
+              placeholder="乙方…"
+              clearable={false}
+            />
+          </div>
+        {/if}
+        <input
+          list="rel-type-options"
+          bind:value={form.type}
+          placeholder="关系类型（可自定义：闺蜜、对象、挚友…）"
+          class="q-input"
+        />
+        <input bind:value={form.remark} placeholder="备注（可选）" class="q-input" />
+      </div>
+    {:else}
+      {#if !self.id}
+        <p class="q-badge q-badge--danger mb-3">
+          请先在人物详情里把自己设为「本人」，再录入引荐链。
+        </p>
+      {/if}
+      <p class="q-hint mb-3">
+        录「我 →同学→ A →对象→ B →闺蜜→ C」这样的认识经过。没有的人可以当场新建（只填名字），
+        系统会给新人物自动记好引荐人；之后再补一条「我 —挚友→ C」的直达关系即可。
+      </p>
+      <div class="q-stack--tight mb-2 flex flex-col">
+        {#each chainRows as row, i (i)}
+          <div class="flex items-center gap-2">
+            <span class="q-hint !mt-0 w-14 shrink-0 text-right">{i === 0 ? '我' : '再经'}</span>
+            <input
+              list="rel-type-options"
+              bind:value={row.type}
+              placeholder="关系，如 同学/对象/闺蜜"
+              class="q-input w-32 shrink-0"
+            />
+            <span class="q-hint !mt-0">→</span>
+            {#if row.isNew}
+              <input
+                bind:value={row.newName}
+                placeholder="新人姓名"
+                class="q-input min-w-0 flex-1"
+              />
+            {:else}
+              <div class="min-w-0 flex-1">
+                <PersonPicker
+                  bind:value={row.personId}
+                  placeholder="选择已有联系人…"
+                  clearable={false}
+                />
+              </div>
+            {/if}
+            <button
+              class="q-btn q-btn--ghost q-btn--sm shrink-0"
+              title={row.isNew ? '改为选择已有联系人' : '不选人，当场新建一个'}
+              onclick={() => toggleChainNew(i)}
+            >
+              {row.isNew ? '改选人' : '＋新建'}
+            </button>
+            {#if chainRows.length > 1}
+              <button class="q-iconbtn !h-8 !w-8 shrink-0" onclick={() => removeChainRow(i)}
+                ><Trash2 size={14} /></button
+              >
+            {/if}
+          </div>
+        {/each}
+        <button class="q-btn q-btn--ghost q-btn--sm w-fit" onclick={addChainRow}>
+          <Plus size={12} /> 加一跳
+        </button>
+      </div>
+    {/if}
+
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
+      {#if formMode === 'rel'}
+        <button class="q-btn q-btn--primary" disabled={busy} onclick={submitRel}>保存</button>
+      {:else}
+        <button class="q-btn q-btn--primary" disabled={busy || !self.id} onclick={submitChain}>
+          保存整条链
+        </button>
+      {/if}
+    {/snippet}
+  </Modal>
 {/if}

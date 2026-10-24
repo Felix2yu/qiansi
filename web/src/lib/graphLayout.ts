@@ -97,7 +97,9 @@ export function laneOf(i: number, canonical: boolean): number | undefined {
   return canonical ? signed : -signed;
 }
 
-export const NO_CIRCLE_COLOR = '#94a3b8';
+// 防御性兜底色：调用方应显式传入「无圈子」用色（随明暗主题变化），
+// 这里只在漏传时兜底，故取明色主题的暖灰，而非旧版冷蓝灰
+export const NO_CIRCLE_COLOR = '#857b67';
 
 // 一人可属多个圈子：节点按圈子顺序画硬边分段渐变（拼色），一段一个圈子。
 // 不做颜色混合：圈子颜色是用户自定义的，混出来的第三个颜色既可能撞上某个

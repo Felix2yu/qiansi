@@ -10,7 +10,10 @@
     type Transaction,
     type Repayment
   } from '../lib/api';
-  import { Plus, X, Trash2 } from '@lucide/svelte';
+  import { Plus, Trash2, Wallet } from '@lucide/svelte';
+  import Modal from '../lib/ui/Modal.svelte';
+  import PageHeader from '../lib/ui/PageHeader.svelte';
+  import Empty from '../lib/ui/Empty.svelte';
   import { personLabel, loadSelf } from '../lib/self.svelte';
   import { dict, ensure } from '../lib/dict.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
@@ -130,6 +133,11 @@
     showForm = true;
   }
 
+  function closeForm() {
+    showForm = false;
+    editId = '';
+  }
+
   async function submit() {
     const fen = toFen(form.amount_yuan);
     if (!form.person_id || fen <= 0) {
@@ -156,8 +164,7 @@
       toast.fail('保存失败', err);
       return;
     }
-    showForm = false;
-    editId = '';
+    closeForm();
     toast.ok(isEdit ? '已更新' : '已记一笔');
     await load();
   }
@@ -270,309 +277,217 @@
   }
 </script>
 
-<div class="space-y-4">
-  <header class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-semibold">金钱往来</h1>
-      <p class="mt-1 text-sm" style="color: var(--q-muted);">借款、还款、礼物、花销</p>
-    </div>
-    <button
-      class="flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-white"
-      style="background: var(--q-theme);"
-      onclick={openCreate}
-    >
-      <Plus size={14} /> 新建
-    </button>
-  </header>
-  <div class="flex flex-wrap items-center gap-2">
-    <div class="w-48">
-      <PersonPicker
-        bind:value={filterPerson}
-        placeholder="全部联系人"
-        compact={true}
+<div class="q-page">
+  <PageHeader title="金钱往来" subtitle="借款、还款、礼物、花销">
+    {#snippet actions()}
+      <button class="q-btn q-btn--primary q-btn--sm" onclick={openCreate}>
+        <Plus size={14} /> 新建
+      </button>
+    {/snippet}
+  </PageHeader>
+
+  <div class="q-stack">
+    <!-- 筛选工具条 -->
+    <div class="q-card q-card--tight flex flex-wrap items-center gap-2">
+      <div class="w-48">
+        <PersonPicker
+          bind:value={filterPerson}
+          placeholder="全部联系人"
+          compact={true}
+          onchange={() => load()}
+        />
+      </div>
+      <select
+        bind:value={filterKind}
         onchange={() => load()}
-      />
-    </div>
-    <select
-      bind:value={filterKind}
-      onchange={() => load()}
-      aria-label="按类别筛选"
-      class="rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-    >
-      <option value="">全部类别</option>
-      <option value="loan">借还</option><option value="gift">礼物</option>
-      <option value="expense">花销</option><option value="other">其它</option>
-    </select>
-    <select
-      bind:value={filterSettled}
-      onchange={() => load()}
-      aria-label="按结清状态筛选"
-      class="rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-    >
-      <option value="">结清与否</option>
-      <option value="0">未结清</option><option value="1">已结清</option>
-    </select>
-    <div class="flex items-center gap-1">
-      <input
-        type="date"
-        bind:value={filterFrom}
-        onchange={() => load()}
-        aria-label="起始日期"
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-      />
-      <span class="text-xs" style="color: var(--q-muted);">至</span>
-      <input
-        type="date"
-        bind:value={filterTo}
-        onchange={() => load()}
-        aria-label="截止日期"
-        class="rounded-lg px-3 py-2 text-sm outline-none"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-text);"
-      />
-    </div>
-    {#if anyFilter}
-      <button
-        class="rounded-lg px-3 py-2 text-sm"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-        onclick={clearFilters}>清除筛选</button
+        aria-label="按类别筛选"
+        class="q-select !py-2"
       >
-    {/if}
-  </div>
-  <ul class="space-y-2">
-    {#each list as t (t.id)}
-      <li
-        class="flex items-center gap-3 rounded-lg p-3"
-        style="background: var(--q-surface); border: 1px solid var(--q-border);"
+        <option value="">全部类别</option>
+        <option value="loan">借还</option>
+        <option value="gift">礼物</option>
+        <option value="expense">花销</option>
+        <option value="other">其它</option>
+      </select>
+      <select
+        bind:value={filterSettled}
+        onchange={() => load()}
+        aria-label="按结清状态筛选"
+        class="q-select !py-2"
       >
-        <div
-          class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-semibold"
-          style="background: {t.direction === 'out'
-            ? 'rgba(239,68,68,0.15)'
-            : 'rgba(16,185,129,0.15)'}; color: {t.direction === 'out' ? '#ef4444' : '#10b981'};"
-        >
-          {t.direction === 'out' ? '出' : '入'}
-        </div>
-        <div class="min-w-0 flex-1">
-          <div class="truncate text-sm font-medium">{who(t)}{t.title && ` · ${t.title}`}</div>
-          <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
-            ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} · {DIRECTION_LABEL[
-              t.direction
-            ] || t.direction} · {new Date(t.occurred_at).toLocaleDateString()}
+        <option value="">结清与否</option>
+        <option value="0">未结清</option>
+        <option value="1">已结清</option>
+      </select>
+      <div class="flex items-center gap-1.5">
+        <input
+          type="date"
+          bind:value={filterFrom}
+          onchange={() => load()}
+          aria-label="起始日期"
+          class="q-input !py-2"
+        />
+        <span class="text-xs" style="color: var(--q-muted);">至</span>
+        <input
+          type="date"
+          bind:value={filterTo}
+          onchange={() => load()}
+          aria-label="截止日期"
+          class="q-input !py-2"
+        />
+      </div>
+      {#if anyFilter}
+        <button class="q-btn q-btn--ghost q-btn--sm" onclick={clearFilters}>清除筛选</button>
+      {/if}
+    </div>
+
+    <div class="q-stack--tight flex flex-col">
+      {#each list as t (t.id)}
+        {@const out = t.direction === 'out'}
+        <div class="q-row">
+          <div
+            class="q-avatar h-10 w-10 text-sm"
+            style={`background: color-mix(in srgb, ${out ? 'var(--q-c-money)' : 'var(--q-ok)'} 16%, var(--q-surface)); color: ${out ? 'var(--q-c-money)' : 'var(--q-ok)'};`}
+          >
+            {out ? '出' : '入'}
+          </div>
+          <div class="min-w-0 flex-1">
+            <div class="truncate text-sm font-medium">
+              {who(t)}{t.title && ` · ${t.title}`}
+            </div>
+            <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+              ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} ·
+              {DIRECTION_LABEL[t.direction] || t.direction} ·
+              {new Date(t.occurred_at).toLocaleDateString()}
+              {#if t.kind === 'loan'}
+                {t.settled ? ' · 已结清' : ''}
+                {#if !t.settled && (t.repaid_fen || 0) > 0}
+                  · 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(remaining(t))}
+                {/if}
+              {/if}
+              {t.event_title && ` · 关联事件：${t.event_title}`}
+            </div>
+          </div>
+          <div
+            class="q-num shrink-0 text-sm font-semibold"
+            style={`color: ${out ? 'var(--q-c-money)' : 'var(--q-ok)'};`}
+          >
+            {out ? '-' : '+'}¥{yuan(t.amount_fen)}
+          </div>
+          <div class="flex shrink-0 items-center gap-1">
             {#if t.kind === 'loan'}
-              {t.settled ? ' · 已结清' : ''}
-              {#if !t.settled && (t.repaid_fen || 0) > 0}· 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(
-                  remaining(t)
-                )}{/if}
+              <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => openRepay(t)}>还款</button
+              >
+              <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => toggleSettled(t.id)}>
+                {t.settled ? '取消结清' : '结清'}
+              </button>
             {/if}
-            {t.event_title && ` · 关联事件：${t.event_title}`}
+            <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => openEdit(t)}>编辑</button>
+            <button class="q-iconbtn !h-8 !w-8" onclick={() => remove(t.id)} title="删除">
+              <Trash2 size={14} />
+            </button>
           </div>
         </div>
-        <div
-          class="shrink-0 text-sm font-semibold"
-          style="color: {t.direction === 'out' ? '#ef4444' : '#10b981'};"
-        >
-          {t.direction === 'out' ? '-' : '+'}¥{yuan(t.amount_fen)}
-        </div>
-        <div class="flex shrink-0 gap-1">
-          {#if t.kind === 'loan'}
-            <button
-              class="rounded px-2 py-1 text-xs"
-              style="background: var(--q-bg); border: 1px solid var(--q-border);"
-              onclick={() => openRepay(t)}>还款</button
-            >
-            <button
-              class="rounded px-2 py-1 text-xs"
-              style="background: var(--q-bg); border: 1px solid var(--q-border);"
-              onclick={() => toggleSettled(t.id)}>{t.settled ? '取消结清' : '结清'}</button
-            >
-          {/if}
-          <button
-            class="rounded px-2 py-1 text-xs"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            onclick={() => openEdit(t)}>编辑</button
-          >
-          <button class="text-xs" style="color: var(--q-muted);" onclick={() => remove(t.id)}
-            >删</button
-          >
-        </div>
-      </li>
-    {:else}
-      <li class="py-8 text-center text-sm" style="color: var(--q-muted);">
-        {anyFilter ? '没有符合条件的记录' : '暂无记录'}
-      </li>
-    {/each}
-  </ul>
-  {#if hasMore}
-    <div class="text-center">
-      <button
-        class="rounded-lg px-4 py-2 text-sm"
-        style="background: var(--q-surface); border: 1px solid var(--q-border); color: var(--q-muted);"
-        onclick={loadMore}
-      >
-        加载更多（已显示 {list.length} 条）
-      </button>
+      {:else}
+        <Empty
+          icon={Wallet}
+          text={anyFilter ? '没有符合条件的记录' : '暂无记录，记一笔借还或礼物'}
+        />
+      {/each}
     </div>
-  {/if}
+
+    {#if hasMore}
+      <div class="text-center">
+        <button class="q-btn q-btn--ghost" onclick={loadMore}>
+          加载更多（已显示 {list.length} 条）
+        </button>
+      </div>
+    {/if}
+  </div>
 </div>
 
 {#if showForm}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => {
-        showForm = false;
-        editId = '';
-      }}
-    ></button>
-    <div
-      class="relative w-full max-w-lg rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">{editId ? '编辑' : '新建'}</h2>
-        <button
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}><X size={18} /></button
-        >
-      </div>
-      <div class="space-y-3">
-        <PersonPicker
-          bind:value={form.person_id}
-          selectedName={pickedName}
-          placeholder="选择联系人"
-          clearable={false}
-        />
-        <div class="grid grid-cols-2 gap-3">
-          <select
-            bind:value={form.kind}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          >
-            <option value="loan">借还</option><option value="gift">礼物</option><option
-              value="expense">花销</option
-            ><option value="other">其它</option>
-          </select>
-          <select
-            bind:value={form.direction}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          >
-            <option value="out">我支出</option><option value="in">我收入</option>
-          </select>
-        </div>
-        <input
-          type="number"
-          step="0.01"
-          min="0"
-          bind:value={form.amount_yuan}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="金额（元）"
-        />
-        <input
-          bind:value={form.title}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          placeholder="标题（如：生日礼物）"
-        />
-        <div class="grid grid-cols-2 gap-3">
-          <input
-            type="date"
-            bind:value={form.occurred_at}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          />
-          <input
-            type="date"
-            bind:value={form.due_date}
-            class="rounded-lg px-3 py-2 text-sm outline-none"
-            style="background: var(--q-bg); border: 1px solid var(--q-border);"
-            placeholder="到期（可选）"
-          />
-        </div>
-        <select
-          bind:value={form.event_id}
-          class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        >
-          <option value="">关联事件（可选）</option>
-          {#each events as e (e.id)}<option value={e.id}
-              >{new Date(e.event_date).toLocaleDateString()} · {e.title}</option
-            >{/each}
+  <Modal wide onclose={closeForm} title={editId ? '编辑账目' : '新建账目'}>
+    <div class="q-stack--tight flex flex-col">
+      <PersonPicker
+        bind:value={form.person_id}
+        selectedName={pickedName}
+        placeholder="选择联系人"
+        clearable={false}
+      />
+      <div class="grid grid-cols-2 gap-2">
+        <select bind:value={form.kind} class="q-select">
+          <option value="loan">借还</option>
+          <option value="gift">礼物</option>
+          <option value="expense">花销</option>
+          <option value="other">其它</option>
         </select>
-        {#if form.kind === 'loan'}
-          <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);"
-            ><input type="checkbox" bind:checked={form.settled} /> 已结清</label
-          >
-        {:else}
-          <p class="text-xs" style="color: var(--q-muted);">
-            礼物/花销提交即视为了结，不计入未还金额
-          </p>
-        {/if}
+        <select bind:value={form.direction} class="q-select">
+          <option value="out">我支出</option>
+          <option value="in">我收入</option>
+        </select>
       </div>
-      <div class="mt-5 flex justify-end gap-2">
-        <button
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => {
-            showForm = false;
-            editId = '';
-          }}>取消</button
-        >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={submit}>保存</button
-        >
+      <input
+        type="number"
+        step="0.01"
+        min="0"
+        bind:value={form.amount_yuan}
+        class="q-input"
+        placeholder="金额（元）"
+      />
+      <input bind:value={form.title} class="q-input" placeholder="标题（如：生日礼物）" />
+      <div class="grid grid-cols-2 gap-2">
+        <input type="date" bind:value={form.occurred_at} class="q-input" />
+        <input type="date" bind:value={form.due_date} class="q-input" placeholder="到期（可选）" />
       </div>
+      <select bind:value={form.event_id} class="q-select">
+        <option value="">关联事件（可选）</option>
+        {#each events as e (e.id)}
+          <option value={e.id}>{new Date(e.event_date).toLocaleDateString()} · {e.title}</option>
+        {/each}
+      </select>
+      {#if form.kind === 'loan'}
+        <label
+          class="flex cursor-pointer items-center gap-2 text-sm select-none"
+          style="color: var(--q-muted);"
+        >
+          <input type="checkbox" bind:checked={form.settled} /> 已结清
+        </label>
+      {:else}
+        <p class="q-hint !mt-0">礼物/花销提交即视为了结，不计入未还金额</p>
+      {/if}
     </div>
-  </div>
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
+      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+    {/snippet}
+  </Modal>
 {/if}
 
 {#if repayOf}
-  <div class="fixed inset-0 z-40 flex items-center justify-center p-4">
-    <button
-      type="button"
-      aria-label="关闭弹窗"
-      class="absolute inset-0 cursor-default"
-      style="background: rgba(0,0,0,0.3); border: 0;"
-      onclick={() => (repayOf = null)}
-    ></button>
-    <div
-      class="relative w-full max-w-lg rounded-2xl p-5"
-      style="background: var(--q-surface); border: 1px solid var(--q-border);"
-    >
-      <div class="mb-4 flex items-center justify-between">
-        <h2 class="font-semibold">还款流水 · {who(repayOf)}</h2>
-        <button onclick={() => (repayOf = null)}><X size={18} /></button>
-      </div>
-      <div class="mb-3 text-sm" style="color: var(--q-muted);">
+  <Modal wide onclose={() => (repayOf = null)} title={`还款流水 · ${who(repayOf)}`}>
+    <div class="q-stack">
+      <div class="q-well q-num text-sm" style="color: var(--q-muted);">
         本金 ¥{yuan(repayOf.amount_fen)} · 已还 ¥{yuan(repayOf.repaid_fen || 0)} · 待还
-        <span style="color: var(--q-text);">¥{yuan(remaining(repayOf))}</span>
+        <span class="font-semibold" style="color: var(--q-text);">¥{yuan(remaining(repayOf))}</span>
       </div>
-      <ul class="mb-3 max-h-48 space-y-1 overflow-auto">
+      <ul class="q-stack--tight flex max-h-48 flex-col overflow-auto">
         {#each repayList as r (r.id)}
-          <li
-            class="flex items-center gap-2 rounded px-2 py-1 text-sm"
-            style="background: var(--q-bg);"
-          >
-            <span>¥{yuan(r.amount_fen)}</span>
-            <span style="color: var(--q-muted);">{r.occurred_at}{r.note ? ` · ${r.note}` : ''}</span
+          <li class="q-row !py-2 text-sm">
+            <span class="q-num">¥{yuan(r.amount_fen)}</span>
+            <span class="q-num" style="color: var(--q-muted);">
+              {r.occurred_at}{r.note ? ` · ${r.note}` : ''}
+            </span>
+            <button
+              class="q-iconbtn ml-auto !h-7 !w-7"
+              onclick={() => removeRepay(r.id)}
+              title="删除"
             >
-            <button class="ml-auto" style="color: var(--q-muted);" onclick={() => removeRepay(r.id)}
-              ><Trash2 size={14} /></button
-            >
+              <Trash2 size={13} />
+            </button>
           </li>
         {:else}
-          <li class="px-2 py-1 text-sm" style="color: var(--q-muted);">还没有还款记录</li>
+          <li class="py-1 text-sm" style="color: var(--q-muted);">还没有还款记录</li>
         {/each}
       </ul>
       <div class="grid grid-cols-3 gap-2">
@@ -582,34 +497,15 @@
           min="0"
           bind:value={repayAmount}
           placeholder="本次还款（元）"
-          class="rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
+          class="q-input"
         />
-        <input
-          type="date"
-          bind:value={repayDate}
-          class="rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        />
-        <input
-          bind:value={repayNote}
-          placeholder="备注（可选）"
-          class="rounded-lg px-3 py-2 text-sm outline-none"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-        />
-      </div>
-      <div class="mt-4 flex justify-end gap-2">
-        <button
-          class="rounded-lg px-4 py-2 text-sm"
-          style="background: var(--q-bg); border: 1px solid var(--q-border);"
-          onclick={() => (repayOf = null)}>关闭</button
-        >
-        <button
-          class="rounded-lg px-4 py-2 text-sm text-white"
-          style="background: var(--q-theme);"
-          onclick={submitRepay}>记一笔</button
-        >
+        <input type="date" bind:value={repayDate} class="q-input" />
+        <input bind:value={repayNote} placeholder="备注（可选）" class="q-input" />
       </div>
     </div>
-  </div>
+    {#snippet foot()}
+      <button class="q-btn q-btn--ghost" onclick={() => (repayOf = null)}>关闭</button>
+      <button class="q-btn q-btn--primary" onclick={submitRepay}>记一笔</button>
+    {/snippet}
+  </Modal>
 {/if}

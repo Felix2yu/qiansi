@@ -306,27 +306,25 @@
   }
 </script>
 
-<div class="space-y-3">
-  <div class="grid grid-cols-2 gap-3">
+<div class="q-stack">
+  <div class="grid grid-cols-2 gap-2">
     <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
+      class="q-input"
       placeholder="姓"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
       bind:value={form.family_name}
       oninput={checkDuplicates}
     />
     <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
+      class="q-input"
       placeholder="名 *"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
       bind:value={form.given_name}
       oninput={checkDuplicates}
     />
   </div>
   {#if dups.length > 0}
     <div
-      class="rounded-lg p-2 text-xs"
-      style="background: color-mix(in srgb, #f59e0b 12%, transparent); color: #b45309;"
+      class="q-well text-xs"
+      style="border-color: color-mix(in srgb, var(--q-warn) 40%, var(--q-border)); background: color-mix(in srgb, var(--q-warn) 9%, var(--q-surface)); color: var(--q-warn);"
     >
       <div class="mb-1 font-medium">发现 {dups.length} 位可能重复的联系人</div>
       <ul class="space-y-1">
@@ -337,7 +335,8 @@
             >
             {#if person?.id}
               <button
-                class="ml-auto shrink-0 underline"
+                class="link-btn ml-auto shrink-0"
+                style="color: var(--q-warn);"
                 onclick={() => mergeInto(person!.id, d.id, d.name)}>合并过来</button
               >
             {/if}
@@ -346,120 +345,85 @@
       </ul>
     </div>
   {/if}
-  <div class="grid grid-cols-2 gap-3">
-    <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-      placeholder="昵称"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      bind:value={form.nickname}
-    />
-    <div
-      class="flex items-center gap-1 rounded-lg px-2 py-1"
-      style="background: var(--q-bg); border: 1px solid var(--q-border);"
-    >
-      <span class="shrink-0 pr-1 text-xs" style="color: var(--q-muted);">性别</span>
+  <div class="grid grid-cols-2 gap-2">
+    <input class="q-input" placeholder="昵称" bind:value={form.nickname} />
+    <div class="q-seg w-full">
       {#each GENDER_OPTIONS as o, i (i)}
         <button
-          class="flex-1 rounded-md py-1 text-sm transition"
+          class="q-seg__btn flex-1 justify-center"
           title={form.gender === o.code ? `取消「${o.label}」` : o.label}
+          aria-pressed={form.gender === o.code}
           style={form.gender === o.code
-            ? `background: ${o.color}; color: #fff;`
-            : 'color: var(--q-muted);'}
+            ? `background: ${o.color}; color: #fff8ee; box-shadow: none;`
+            : ''}
           onclick={() => (form.gender = form.gender === o.code ? '' : o.code)}>{o.label}</button
         >
       {/each}
     </div>
   </div>
-  <div class="grid grid-cols-2 items-center gap-3">
-    <input
-      type="date"
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      bind:value={form.birthday}
-    />
-    <label class="flex items-center gap-2 text-sm" style="color: var(--q-muted);">
+  <div class="grid grid-cols-2 items-center gap-2">
+    <input type="date" class="q-input" bind:value={form.birthday} />
+    <label class="flex cursor-pointer items-center gap-2 text-sm" style="color: var(--q-muted);">
       <input type="checkbox" bind:checked={form.birthday_is_lunar} /> 农历生日
     </label>
   </div>
   {#if form.birthday}
-    <p class="text-xs" style="color: var(--q-muted);">
+    <p class="q-hint !mt-0">
       保存后会自动生成一条「{composedName() || 'TA'}的生日」纪念日并进入提醒。
     </p>
   {/if}
-  <div class="grid grid-cols-2 gap-3">
-    <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-      placeholder="电话"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      bind:value={form.phone}
-      oninput={checkDuplicates}
-    />
-    <input
-      class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-      placeholder="微信"
-      style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-      bind:value={form.wechat}
-      oninput={checkDuplicates}
-    />
+  <div class="grid grid-cols-2 gap-2">
+    <input class="q-input" placeholder="电话" bind:value={form.phone} oninput={checkDuplicates} />
+    <input class="q-input" placeholder="微信" bind:value={form.wechat} oninput={checkDuplicates} />
   </div>
-  <input
-    class="w-full rounded-lg px-3 py-2 text-sm outline-none"
-    placeholder="位置"
-    style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-    bind:value={form.location}
-  />
+  <input class="q-input" placeholder="位置" bind:value={form.location} />
   <div>
-    <div class="mb-1 text-xs" style="color: var(--q-muted);">
+    <div class="q-label">
       亲密度 1–5{form.grade === 0 ? '（当前未设置）' : ''}
     </div>
-    <div class="flex gap-1">
+    <div class="flex gap-1.5">
       {#each [1, 2, 3, 4, 5] as g, i (i)}
         <button
-          class="h-8 w-8 rounded-md text-sm font-semibold transition"
+          class="h-8 w-8 rounded-[8px] text-sm font-semibold transition"
           style={form.grade >= g
-            ? 'background: var(--q-theme); color: white;'
-            : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
+            ? 'background: var(--q-theme); color: var(--q-on-theme);'
+            : 'background: var(--q-surface-2); color: var(--q-muted); border: 1px solid var(--q-border);'}
           onclick={() => (form.grade = g)}>{g}</button
         >
       {/each}
       <button
-        class="h-8 rounded-md px-2 text-sm transition"
+        class="q-btn q-btn--ghost q-btn--sm ml-1"
         title="清除亲密度"
-        style="background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);"
         onclick={() => (form.grade = 0)}>清除</button
       >
     </div>
   </div>
   <div>
-    <div class="mb-1 text-xs" style="color: var(--q-muted);">圈子（可多选）</div>
+    <div class="q-label">圈子（可多选）</div>
     {#if categories.length > 0}
-      <div class="flex flex-wrap gap-1">
+      <div class="flex flex-wrap gap-1.5">
         {#each categories as c (c.id)}
           <button
-            class="rounded-full px-2 py-1 text-xs transition"
-            style={selectedCats.includes(c.id)
-              ? `background: color-mix(in srgb, ${c.color} 22%, transparent); color: ${c.color}; border: 1px solid ${c.color};`
-              : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
+            class="q-chip q-chip-cat"
+            style="--c: {c.color};"
+            aria-pressed={selectedCats.includes(c.id)}
             onclick={() => toggleCat(c.id)}>{c.name}</button
           >
         {/each}
       </div>
     {:else}
-      <p class="text-xs" style="color: var(--q-muted);">
-        还没有圈子，去「设置 › 圈子（分组）」建一个。
-      </p>
+      <p class="q-hint !mt-0">还没有圈子，去「设置 › 圈子（分组）」建一个。</p>
     {/if}
   </div>
   {#if tags.length > 0}
     <div>
-      <div class="mb-1 text-xs" style="color: var(--q-muted);">标签</div>
-      <div class="flex flex-wrap gap-1">
+      <div class="q-label">标签</div>
+      <div class="flex flex-wrap gap-1.5">
         {#each tags as t (t.id)}
           <button
-            class="rounded-full px-2 py-1 text-xs transition"
-            style={selectedTags.includes(t.id)
-              ? `background: color-mix(in srgb, ${t.color} 22%, transparent); color: ${t.color}; border: 1px solid ${t.color};`
-              : 'background: var(--q-bg); color: var(--q-muted); border: 1px solid var(--q-border);'}
+            class="q-chip q-chip-cat"
+            style="--c: {t.color};"
+            aria-pressed={selectedTags.includes(t.id)}
             onclick={() => toggleTag(t.id)}>{t.name}</button
           >
         {/each}
@@ -467,46 +431,32 @@
     </div>
   {/if}
   <div>
-    <div class="mb-1 text-xs" style="color: var(--q-muted);">
-      通过谁认识（引荐人，留空 = 直接认识）
-    </div>
+    <div class="q-label">通过谁认识（引荐人，留空 = 直接认识）</div>
     <PersonPicker
       bind:value={form.introduced_by_person_id}
       selectedName={person?.introduced_by_name || ''}
       exclude={[person?.id ?? '']}
       placeholder="直接认识"
     />
-    <p class="mt-1 text-xs" style="color: var(--q-muted);">
-      多层关系（同学的对象的闺蜜…）可在关系图上用「引荐链」一次录入。
-    </p>
+    <p class="q-hint">多层关系（同学的对象的闺蜜…）可在关系图上用「引荐链」一次录入。</p>
   </div>
   <textarea
-    class="min-h-[80px] w-full rounded-lg px-3 py-2 text-sm outline-none"
+    class="q-textarea"
+    style="min-height: 80px;"
     placeholder="备注、爱好、口味…"
-    style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
     bind:value={form.notes}></textarea>
 
   <!-- 关系挂在独立的 relationships 表上，只有已存在的联系人才能配关系 -->
   {#if person?.id}
-    <div class="mt-1 pt-3" style="border-top: 1px solid var(--q-border);">
-      <h3 class="mb-2 text-sm font-medium">关系</h3>
-      <PersonRelEditor personId={person.id} onchange={() => onrelchange?.()} />
-    </div>
+    <div class="q-divider"></div>
+    <h3 class="q-section-title !mb-3 !text-[.95rem]">关系</h3>
+    <PersonRelEditor personId={person.id} onchange={() => onrelchange?.()} />
   {/if}
-</div>
 
-<div class="mt-5 flex justify-end gap-2">
-  <button
-    class="rounded-lg px-4 py-2 text-sm"
-    style="background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);"
-    onclick={() => oncancel?.()}>取消</button
-  >
-  <button
-    class="rounded-lg px-4 py-2 text-sm text-white disabled:opacity-60"
-    style="background: var(--q-theme);"
-    disabled={saving}
-    onclick={submit}
-  >
-    {saving ? '保存中…' : '保存'}
-  </button>
+  <div class="mt-1 flex justify-end gap-2">
+    <button class="q-btn q-btn--ghost" onclick={() => oncancel?.()}>取消</button>
+    <button class="q-btn q-btn--primary" disabled={saving} onclick={submit}>
+      {saving ? '保存中…' : '保存'}
+    </button>
+  </div>
 </div>
