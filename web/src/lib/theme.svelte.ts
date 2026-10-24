@@ -35,10 +35,47 @@ export function isPreset(color: string): boolean {
   return THEME_PRESETS.some((p) => p.color === c);
 }
 
+// ---------- 字号档位 ----------
+// 以根字号（html font-size）整体缩放：全站文字与间距都是 rem，
+// 等比缩放不会破坏对齐。标准档 = 16px（正文 14px），各档上下浮动。
+export type FontScale = 's' | 'm' | 'l' | 'xl';
+
+export const FONT_SCALE_LABEL: Record<FontScale, string> = {
+  s: '小',
+  m: '标准',
+  l: '大',
+  xl: '特大'
+};
+
+const FONT_SCALE_PX: Record<FontScale, string> = {
+  s: '15px',
+  m: '16px',
+  l: '17px',
+  xl: '18px'
+};
+
+const VALID_SCALE: FontScale[] = ['s', 'm', 'l', 'xl'];
+
+// ---------- 字体族 ----------
+// default = 设计默认（标题衬线 / 正文非衬线）；serif / sans 把两者统一成一种。
+// 实现走 CSS 变量重定向：衬线模式下让 --font-sans 指向衬线栈，
+// 非衬线模式下让 --font-serif 指向非衬线栈，组件代码零改动。
+export type FontFamily = 'default' | 'serif' | 'sans';
+
+export const FONT_FAMILY_LABEL: Record<FontFamily, string> = {
+  default: '默认',
+  serif: '衬线',
+  sans: '非衬线'
+};
+
+const VALID_FAMILY: FontFamily[] = ['default', 'serif', 'sans'];
+
 // localStorage 键。沿用既有的 q_dark（历史值 '1'/'0'）以兼容老用户：
 // 迁移时若没有 q_theme_mode，但有 q_dark，则按其值折算成 light/dark。
 const KEY_MODE = 'q_theme_mode';
 const KEY_COLOR = 'q_theme';
+const KEY_SCALE = 'q_font_scale';
+const KEY_FAMILY = 'q_font_family';
 
 const VALID: ThemeMode[] = ['light', 'dark', 'system'];
 
@@ -51,9 +88,21 @@ function readMode(): ThemeMode {
   return 'system';
 }
 
-export const theme = $state<{ mode: ThemeMode; color: string }>({
+function readScale(): FontScale {
+  const raw = localStorage.getItem(KEY_SCALE);
+  return raw && (VALID_SCALE as string[]).includes(raw) ? (raw as FontScale) : 'm';
+}
+
+function readFamily(): FontFamily {
+  const raw = localStorage.getItem(KEY_FAMILY);
+  return raw && (VALID_FAMILY as string[]).includes(raw) ? (raw as FontFamily) : 'default';
+}
+
+export const theme = $state<{ mode: ThemeMode; color: string; fontScale: FontScale; fontFamily: FontFamily }>({
   mode: readMode(),
-  color: localStorage.getItem(KEY_COLOR) || '#9E2A2B'
+  color: localStorage.getItem(KEY_COLOR) || '#9E2A2B',
+  fontScale: readScale(),
+  fontFamily: readFamily()
 });
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -78,6 +127,20 @@ export function applyTheme() {
   root.classList.toggle('dark', isDark());
   root.style.colorScheme = isDark() ? 'dark' : 'light';
   root.style.setProperty('--q-theme', isDark() ? darkAccent(theme.color) : theme.color);
+  // 字号：标准档清掉内联值，交给样式表的默认；其余档位整体缩放
+  if (theme.fontScale === 'm') root.style.removeProperty('font-size');
+  else root.style.fontSize = FONT_SCALE_PX[theme.fontScale];
+  // 字体族：重定向 CSS 变量，标题/正文一起换，不重复维护字体栈
+  if (theme.fontFamily === 'serif') {
+    root.style.setProperty('--font-sans', 'var(--font-serif)');
+    root.style.removeProperty('--font-serif');
+  } else if (theme.fontFamily === 'sans') {
+    root.style.setProperty('--font-serif', 'var(--font-sans)');
+    root.style.removeProperty('--font-sans');
+  } else {
+    root.style.removeProperty('--font-serif');
+    root.style.removeProperty('--font-sans');
+  }
   // 移动端浏览器地址栏/状态栏跟随页面配色
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (meta) meta.content = isDark() ? '#15120e' : theme.color;
@@ -97,8 +160,12 @@ export async function initTheme() {
     const st = await API.get<Record<string, string>>('/api/v1/settings');
     const mode = st['theme_mode'];
     const color = st['theme_color'];
+    const scale = st['font_scale'];
+    const family = st['font_family'];
     if (mode && (VALID as string[]).includes(mode)) theme.mode = mode as ThemeMode;
     if (color) theme.color = color;
+    if (scale && (VALID_SCALE as string[]).includes(scale)) theme.fontScale = scale as FontScale;
+    if (family && (VALID_FAMILY as string[]).includes(family)) theme.fontFamily = family as FontFamily;
     applyTheme();
   } catch {
     // 后端不可达时保持本地偏好，不阻塞渲染
@@ -132,6 +199,30 @@ export async function setThemeColor(color: string) {
   applyTheme();
   try {
     await API.put('/api/v1/settings/theme_color', { value: color });
+  } catch {
+    // 同上，本地已生效
+  }
+}
+
+/** 切换字号档位并持久化（本地 + 服务端）。 */
+export async function setFontScale(scale: FontScale) {
+  theme.fontScale = scale;
+  localStorage.setItem(KEY_SCALE, scale);
+  applyTheme();
+  try {
+    await API.put('/api/v1/settings/font_scale', { value: scale });
+  } catch {
+    // 本地已生效；服务端失败仅影响跨设备同步，不回滚当前选择
+  }
+}
+
+/** 切换字体族并持久化（本地 + 服务端）。 */
+export async function setFontFamily(family: FontFamily) {
+  theme.fontFamily = family;
+  localStorage.setItem(KEY_FAMILY, family);
+  applyTheme();
+  try {
+    await API.put('/api/v1/settings/font_family', { value: family });
   } catch {
     // 同上，本地已生效
   }

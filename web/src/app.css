@@ -91,7 +91,8 @@ body {
   background: var(--q-bg);
   color: var(--q-text);
   font-family: var(--font-sans);
-  font-size: 14px;
+  /* 0.875rem = 标准档 14px；随根字号档位（设置页）整体缩放 */
+  font-size: 0.875rem;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;

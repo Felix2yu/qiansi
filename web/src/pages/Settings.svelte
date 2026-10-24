@@ -30,11 +30,17 @@
     theme,
     setThemeMode,
     setThemeColor,
+    setFontScale,
+    setFontFamily,
     initTheme,
     isPreset,
     THEME_LABEL,
     THEME_PRESETS,
-    type ThemeMode
+    FONT_SCALE_LABEL,
+    FONT_FAMILY_LABEL,
+    type ThemeMode,
+    type FontScale,
+    type FontFamily
   } from '../lib/theme.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import { setSelf } from '../lib/self.svelte';
@@ -101,6 +107,10 @@
     { mode: 'light', icon: Sun },
     { mode: 'dark', icon: Moon }
   ];
+
+  // 字号四档与字体三族，顺序即展示顺序（标准/默认在第二位，贴着语义）
+  const FONT_SCALE_TABS = Object.keys(FONT_SCALE_LABEL) as FontScale[];
+  const FONT_FAMILY_TABS = Object.keys(FONT_FAMILY_LABEL) as FontFamily[];
 
   // 自动备份
   let auto = $state<BackupStatus | null>(null);
@@ -538,6 +548,46 @@
         {#if !isPreset(theme.color)}
           <span class="shrink-0 text-xs" style="color: var(--q-muted);">当前是自定义色</span>
         {/if}
+      </div>
+      <!-- 字号档位与字体族：两组分段控件同一行，右侧按当前选择给一句说明 -->
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="flex items-center gap-2">
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">字号</span>
+          <div class="q-seg q-seg--fill">
+            {#each FONT_SCALE_TABS as f (f)}
+              <button
+                onclick={() => setFontScale(f)}
+                aria-pressed={theme.fontScale === f}
+                class="q-seg__btn"
+              >
+                {FONT_SCALE_LABEL[f]}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">字体</span>
+          <div class="q-seg q-seg--fill">
+            {#each FONT_FAMILY_TABS as f (f)}
+              <button
+                onclick={() => setFontFamily(f)}
+                aria-pressed={theme.fontFamily === f}
+                class="q-seg__btn"
+              >
+                {FONT_FAMILY_LABEL[f]}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <span class="text-xs" style="color: var(--q-muted);">
+          {#if theme.fontFamily === 'serif'}
+            全界面衬线（宋体）
+          {:else if theme.fontFamily === 'sans'}
+            全界面非衬线（黑体）
+          {:else}
+            标题衬线、正文黑体
+          {/if}；字号整体缩放，跨设备同步
+        </span>
       </div>
     </section>
 
