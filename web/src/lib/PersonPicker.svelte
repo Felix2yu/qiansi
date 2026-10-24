@@ -12,6 +12,7 @@
     placeholder = '搜索联系人',
     clearable = true,
     exclude = [],
+    prefer = [],
     compact = false,
     onchange
   }: {
@@ -22,6 +23,11 @@
     /** 必选的场景（关系两端、待办归属）不给清除按钮 */
     clearable?: boolean;
     exclude?: string[];
+    /**
+     * 优先展示的人（如本往来的参与人）。不输入关键词时只列这一组，
+     * 免得「这笔钱花在谁身上」在满屏联系人里翻；真要挂给没参与的人，打字就能搜到。
+     */
+    prefer?: PersonLite[];
     /** 行内/窄栏用的小号样式 */
     compact?: boolean;
     onchange?: (picked: PersonLite | null) => void;
@@ -47,6 +53,20 @@
   );
   const fieldStyle =
     'background: var(--q-bg); border: 1px solid var(--q-border); color: var(--q-text);';
+
+  function matchText(p: PersonLite, q: string) {
+    if (!q) return true;
+    const s = q.toLowerCase();
+    return p.name.toLowerCase().includes(s) || (p.nickname || '').toLowerCase().includes(s);
+  }
+
+  const typed = $derived(query.trim());
+  // 两组：先参与人（prefer），再全局搜索结果（只在输入关键词后才出现）
+  const preferList = $derived(
+    prefer.filter((p) => p.id && !exclude.includes(p.id) && matchText(p, typed))
+  );
+  const rest = $derived(prefer.length > 0 && !typed ? [] : results);
+  const total = $derived(preferList.length + rest.length);
 
   // 外部改了 value（回填表单、清空筛选）时跟着换显示名
   $effect(() => {
@@ -81,7 +101,7 @@
     try {
       // 本人排最前是这个控件的承诺，不能指望宿主页先拉过 settings
       await loadSelf();
-      const list = await searchPeople(query.trim(), exclude);
+      const list = await searchPeople(query.trim(), [...exclude, ...prefer.map((p) => p.id)]);
       results = selfFirst(list);
       active = 0;
     } catch {
@@ -118,6 +138,10 @@
     onchange?.(null);
   }
 
+  function personAt(i: number): PersonLite | undefined {
+    return i < preferList.length ? preferList[i] : rest[i - preferList.length];
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') {
@@ -125,7 +149,7 @@
       return;
     }
     if (e.key === 'ArrowDown') {
-      active = Math.min(active + 1, results.length - 1);
+      active = Math.min(active + 1, Math.max(total - 1, 0));
       e.preventDefault();
       return;
     }
@@ -135,7 +159,7 @@
       return;
     }
     if (e.key === 'Enter') {
-      const p = results[active];
+      const p = personAt(active);
       if (p) {
         pick(p);
         e.preventDefault();
@@ -205,16 +229,9 @@
         >
       </div>
       <div class="max-h-56 overflow-y-auto" style="border-top: 1px solid var(--q-border);">
-        {#if searching && results.length === 0}
-          <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">搜索中…</p>
-        {:else if failed}
-          <p class="px-3 py-2 text-xs" style="color: var(--q-danger);">搜索失败，请重试</p>
-        {:else if results.length === 0}
-          <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">
-            没有匹配的人 · 换个关键词，或先到通讯录里新建
-          </p>
-        {:else}
-          {#each results as p, i (i)}
+        {#if preferList.length > 0}
+          <p class="px-3 pt-2 pb-0.5 text-xs" style="color: var(--q-muted);">参与人</p>
+          {#each preferList as p, i (p.id)}
             <button
               type="button"
               class="w-full px-3 py-2 text-left text-sm"
@@ -229,6 +246,46 @@
                 >{/if}
             </button>
           {/each}
+        {/if}
+        {#if rest.length > 0 && prefer.length > 0}
+          <p
+            class="px-3 pt-2 pb-0.5 text-xs"
+            style="color: var(--q-muted); border-top: 1px solid var(--q-border);"
+          >
+            其他联系人
+          </p>
+        {/if}
+        {#each rest as p, j (p.id)}
+          <button
+            type="button"
+            class="w-full px-3 py-2 text-left text-sm"
+            style={preferList.length + j === active
+              ? 'background: var(--q-bg);'
+              : 'color: var(--q-text);'}
+            onmouseenter={() => (active = preferList.length + j)}
+            onclick={() => pick(p)}
+          >
+            {personLabel(p)}
+            {#if p.nickname && p.nickname !== p.name}<span
+                class="ml-1 text-xs"
+                style="color: var(--q-muted);">{p.nickname}</span
+              >{/if}
+          </button>
+        {/each}
+        {#if total === 0}
+          {#if searching && typed}
+            <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">搜索中…</p>
+          {:else if failed}
+            <p class="px-3 py-2 text-xs" style="color: var(--q-danger);">搜索失败，请重试</p>
+          {:else if prefer.length > 0}
+            <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">
+              没有匹配的联系人 · 参与人里也没有
+            </p>
+          {:else}
+            <p class="px-3 py-2 text-xs" style="color: var(--q-muted);">
+              没有匹配的人 · 换个关键词，或先到通讯录里新建
+            </p>
+          {/if}
         {/if}
       </div>
     </div>

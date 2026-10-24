@@ -42,6 +42,10 @@
   // 已选参与人要能显示名字，详情与搜索结果都往这里存一份
   let known = $state<Record<string, PersonLite>>({});
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
+  // 必须声明在下方 untrack() 之前：初始化时就会立即 runSearch()，
+  // 而 `let` 有 TDZ，放到下面会抛 "Cannot access before initialization"，
+  // 表现是参与人候选一直空着（列表显示「没有匹配的联系人」）。
+  let searchSeq = 0;
 
   type Form = {
     title: string;
@@ -155,7 +159,6 @@
     known = { ...known, ...Object.fromEntries(list.map((p) => [p.id, p])) };
   }
 
-  let searchSeq = 0;
   async function runSearch() {
     const seq = ++searchSeq;
     searching = true;
@@ -181,6 +184,9 @@
   const pickedPeople = $derived(
     form.participant_ids.map((id) => known[id]).filter(Boolean) as PersonLite[]
   );
+  // 开销/礼金没指定归属人时，后端会取首位参与人——把这个隐含默认显式写出来，
+  // 不让用户以为「没选就是没归属」。
+  const firstParticipantName = $derived(pickedPeople[0]?.name || '');
   // 已选的人不再出现在候选里，点一下就是加人，不用去列表里找已选的那个
   const unmatched = $derived(candidates.filter((p) => !form.participant_ids.includes(p.id)));
 
@@ -358,7 +364,10 @@
       <PersonPicker
         bind:value={form.expense_person_id}
         selectedName={known[form.expense_person_id]?.name || ''}
-        placeholder="开销归属（默认首位参与人）"
+        prefer={pickedPeople}
+        placeholder={firstParticipantName
+          ? `开销归属 · 默认 ${firstParticipantName}`
+          : '开销归属（需指定）'}
       />
     </div>
 
@@ -386,9 +395,10 @@
       <PersonPicker
         bind:value={form.gift_person_id}
         selectedName={known[form.gift_person_id]?.name || ''}
-        placeholder={form.gift_direction === 'in'
-          ? '谁给的礼金（默认首位参与人）'
-          : '随给谁（默认首位参与人）'}
+        prefer={pickedPeople}
+        placeholder={firstParticipantName
+          ? `${form.gift_direction === 'in' ? '谁给的礼金' : '随给谁'} · 默认 ${firstParticipantName}`
+          : `${form.gift_direction === 'in' ? '谁给的礼金' : '随给谁'}（需指定）`}
       />
     {/if}
 
