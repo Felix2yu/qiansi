@@ -14,6 +14,7 @@
     placeholder,
     pill = false,
     defaults = null,
+    boolField = null,
     onchange
   }: {
     items: Term[];
@@ -25,15 +26,23 @@
     pill?: boolean;
     /** 后端 PUT/POST 是整体覆盖，icon 这类界面不暴露的字段从这里补 */
     defaults?: Record<string, unknown> | null;
+    /** 事件类型用：每项带一个布尔开关（算见面），列表与新建/编辑行都露出 */
+    boolField?: { key: 'is_meeting'; label: string } | null;
     onchange: () => void;
   } = $props();
 
   let draft = $state({ name: '', color: '#9E2A2B' });
+  let draftBool = $state(true);
   let editingId = $state(0);
   let editForm = $state({ name: '', color: '' });
+  let editBool = $state(true);
   let busy = $state(false);
 
   const editing = $derived(items.find((t) => t.id === editingId));
+
+  function boolOf(t: Term): boolean | undefined {
+    return boolField ? (t as EventType)[boolField.key] : undefined;
+  }
 
   function warn(err: unknown, action: string) {
     const msg = errText(err);
@@ -45,7 +54,12 @@
     if (!draft.name.trim()) return;
     busy = true;
     try {
-      await API.post(endpoint, { ...defaults, name: draft.name.trim(), color: draft.color });
+      await API.post(endpoint, {
+        ...defaults,
+        name: draft.name.trim(),
+        color: draft.color,
+        ...(boolField ? { [boolField.key]: draftBool } : {})
+      });
       draft = { name: '', color: draft.color };
       await onchange();
     } catch (err) {
@@ -58,6 +72,7 @@
   function startEdit(t: Term) {
     editingId = t.id;
     editForm = { name: t.name, color: t.color };
+    editBool = boolOf(t) !== false;
   }
 
   async function save() {
@@ -72,7 +87,8 @@
         ...defaults,
         ...editing,
         name: editForm.name.trim(),
-        color: editForm.color
+        color: editForm.color,
+        ...(boolField ? { [boolField.key]: editBool } : {})
       });
       editingId = 0;
       await onchange();
@@ -139,6 +155,9 @@
       >
         <span class="q-dot shrink-0" style={`--c: ${t.color};`}></span>
         <span class="truncate">{t.name}</span>
+        {#if boolField && boolOf(t) === false}
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">不算{boolField.label}</span>
+        {/if}
         <span class="ml-auto flex shrink-0 items-center gap-0.5">
           <button
             class="q-iconbtn !h-7 !w-7"
@@ -168,6 +187,11 @@
   {#if editing}
     <input bind:value={editForm.name} class="q-input min-w-32 flex-1" placeholder="{noun}名" />
     <input type="color" bind:value={editForm.color} class="term-color" aria-label="选择颜色" />
+    {#if boolField}
+      <label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm">
+        <input type="checkbox" bind:checked={editBool} /> {boolField.label}
+      </label>
+    {/if}
     <button class="q-btn q-btn--primary" disabled={busy} onclick={save}>保存</button>
     <button
       class="q-iconbtn q-iconbtn--border"
@@ -183,6 +207,11 @@
       onkeydown={(e) => e.key === 'Enter' && create()}
     />
     <input type="color" bind:value={draft.color} class="term-color" aria-label="选择颜色" />
+    {#if boolField}
+      <label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm">
+        <input type="checkbox" bind:checked={draftBool} /> {boolField.label}
+      </label>
+    {/if}
     <button class="q-btn q-btn--primary" disabled={busy} onclick={create}>
       <Plus size={14} /> 添加
     </button>

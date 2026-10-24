@@ -61,6 +61,7 @@ func New(s *store.Store, cfg *config.Config) *API {
 	api.registerAnniversaries(r)
 	api.registerReminders(r)
 	api.registerRhythm(r)
+	api.registerMeetings(r)
 	api.registerTrash(r)
 	api.registerAttachments(r)
 	api.registerNotify(r)

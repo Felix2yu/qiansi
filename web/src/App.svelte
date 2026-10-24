@@ -33,7 +33,8 @@
     EyeOff,
     Trash2,
     HeartPulse,
-    Cake
+    Cake,
+    Handshake
   } from '@lucide/svelte';
   import Toaster from './lib/Toaster.svelte';
   import AskHost from './lib/AskHost.svelte';
@@ -55,6 +56,7 @@
     Anniversaries: () => import('./pages/Anniversaries.svelte'),
     Reminders: () => import('./pages/Reminders.svelte'),
     Drift: () => import('./pages/Drift.svelte'),
+    Meetings: () => import('./pages/Meetings.svelte'),
     Graph: () => import('./pages/Graph.svelte'),
     Analytics: () => import('./pages/Analytics.svelte'),
     Trash: () => import('./pages/Trash.svelte'),
@@ -78,7 +80,8 @@
       items: [
         { label: '纪念日', path: '/anniversaries', icon: Cake },
         { label: '待办', path: '/reminders', icon: Bell },
-        { label: '渐远名单', path: '/drift', icon: HeartPulse }
+        { label: '渐远名单', path: '/drift', icon: HeartPulse },
+        { label: '见面总览', path: '/meetings', icon: Handshake }
       ]
     },
     {
@@ -201,7 +204,8 @@
       '/analytics': 'Analytics',
       '/trash': 'Trash',
       '/settings': 'Settings',
-      '/drift': 'Drift'
+      '/drift': 'Drift',
+      '/meetings': 'Meetings'
     };
     return map[p] || 'Today';
   }

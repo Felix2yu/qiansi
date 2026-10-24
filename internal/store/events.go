@@ -1623,24 +1623,28 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 // ===== Timeline =====
 
 type TimelineItem struct {
-	Date       string `json:"date"`
-	Type       string `json:"type"`
-	Title      string `json:"title"`
-	PersonID   string `json:"person_id,omitempty"`
+	Date string `json:"date"`
+	Type string `json:"type"`
+	Title string `json:"title"`
+	PersonID string `json:"person_id,omitempty"`
 	PersonName string `json:"person_name,omitempty"`
+	// GapDays 仅事件类型带回：距上一场「算见面」的往来隔了几天。
+	// 最早一场、不算见面的往来（电话微信等）与空日期的往来不带。
+	GapDays *int `json:"gap_days,omitempty"`
 	ID         string `json:"id"`
 }
 
 func (s *Store) PersonTimeline(ctx context.Context, personID string) ([]*TimelineItem, error) {
 	q := `SELECT event_date AS date, 'event' AS type, title, ? AS person_id,
   (SELECT GROUP_CONCAT(p2.name, ',') FROM live_people p2 JOIN event_participants ep2 ON ep2.person_id=p2.id WHERE ep2.event_id=live_events.id) AS title2,
-  id FROM live_events WHERE id IN (SELECT event_id FROM event_participants WHERE person_id=?)
+  live_events.created_at, CASE WHEN ` + meetingEventCond("live_events") + ` THEN 1 ELSE 0 END, id
+  FROM live_events WHERE id IN (SELECT event_id FROM event_participants WHERE person_id=?)
 UNION ALL
-SELECT said_at,'memo',content,?, (SELECT name FROM people WHERE id=?), id FROM live_memos WHERE person_id=?
+SELECT said_at,'memo',content,?, (SELECT name FROM people WHERE id=?), '', 0, id FROM live_memos WHERE person_id=?
 UNION ALL
-SELECT occurred_at,'transaction',title,?, (SELECT name FROM people WHERE id=?), id FROM live_transactions WHERE person_id=?
+SELECT occurred_at,'transaction',title,?, (SELECT name FROM people WHERE id=?), '', 0, id FROM live_transactions WHERE person_id=?
 UNION ALL
-SELECT date,'anniversary',title,?, (SELECT name FROM people WHERE id=?), id FROM live_anniversaries WHERE person_id=?
+SELECT date,'anniversary',title,?, (SELECT name FROM people WHERE id=?), '', 0, id FROM live_anniversaries WHERE person_id=?
 ORDER BY date DESC`
 	rows, err := s.DB.QueryContext(ctx, q, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID)
 	if err != nil {
@@ -1648,18 +1652,54 @@ ORDER BY date DESC`
 	}
 	defer rows.Close()
 	list := []*TimelineItem{}
+	// 同一场往来在时间线里只出现一次，但同一天可以有多场：用 (date, created_at)
+	// 排出先后，后见的那场与先见的那场间隔记 0 天。
+	type evt struct {
+		item      *TimelineItem
+		createdAt string
+	}
+	var events []evt
 	for rows.Next() {
 		ti := &TimelineItem{}
 		var title2 sql.NullString
-		if err := rows.Scan(&ti.Date, &ti.Type, &ti.Title, &ti.PersonID, &title2, &ti.ID); err != nil {
+		var createdAt string
+		var isMeeting int
+		if err := rows.Scan(&ti.Date, &ti.Type, &ti.Title, &ti.PersonID, &title2, &createdAt, &isMeeting, &ti.ID); err != nil {
 			return nil, err
 		}
 		if title2.Valid && ti.Type == "event" {
 			ti.PersonName = title2.String
 		}
+		if ti.Type == "event" && isMeeting == 1 && len(ti.Date) >= 10 {
+			events = append(events, evt{ti, createdAt})
+		}
 		list = append(list, ti)
 	}
-	return list, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 间隔链只串「算见面」的往来：从最早一场往后走，每场减上一场的日期。
+	// 电话微信这类不算见面的往来既不显示间隔，也不把链打断。
+	sort.SliceStable(events, func(i, j int) bool {
+		if events[i].item.Date != events[j].item.Date {
+			return events[i].item.Date < events[j].item.Date
+		}
+		return events[i].createdAt < events[j].createdAt
+	})
+	var prev string
+	for _, e := range events {
+		day := e.item.Date[:10]
+		if prev != "" {
+			if d, ok := parseLocalDay(day); ok {
+				if p, ok2 := parseLocalDay(prev); ok2 {
+					gap := int(daytrunc(d).Sub(daytrunc(p)).Hours() / 24)
+					e.item.GapDays = &gap
+				}
+			}
+		}
+		prev = day
+	}
+	return list, nil
 }
 
 func (s *Store) GlobalTimeline(ctx context.Context, limit int) ([]*TimelineItem, error) {

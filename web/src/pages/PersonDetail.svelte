@@ -469,21 +469,24 @@
               ><ImageOff size={16} /></button
             >
           {/if}
-          <button
-            class="q-btn q-btn--sm q-btn--ghost mt-1"
-            class:q-btn--primary={self.id === id}
-            title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'}
-            onclick={toggleSelf}
-          >
-            <UserCheck size={14} />{self.id === id ? '取消本人' : '设为本人'}
-          </button>
+          {#if !self.id || self.id === id}
+            <!-- 没设本人时人人可设；已设后只有本人详情页留「取消」，换人去设置页 -->
+            <button
+              class="q-btn q-btn--sm q-btn--ghost mt-1"
+              class:q-btn--primary={self.id === id}
+              title={self.id === id ? '取消本人' : '设为本人（关系图以此为中心）'}
+              onclick={toggleSelf}
+            >
+              <UserCheck size={14} />{self.id === id ? '取消本人' : '设为本人'}
+            </button>
+          {/if}
           <button class="q-iconbtn" title="删除" onclick={remove}><Trash2 size={16} /></button>
         </div>
       </div>
 
       {#if person.stats}
         <!-- 回礼对照：先给「我随出去 vs 收到」，再看净额，回答这次该回多少 -->
-        <section class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <section class="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <div class="q-stat !py-3">
             <div class="q-stat__label">我随出去</div>
             <div class="q-num q-money text-base font-semibold">
@@ -511,9 +514,23 @@
               {person.stats.last_contact ? contactAgo(person.stats.last_contact) : '—'}
             </div>
           </div>
+          <div class="q-stat !py-3">
+            <div class="q-stat__label">上次见面</div>
+            <div class="q-num text-base font-semibold">
+              {person.stats.last_meeting ? contactAgo(person.stats.last_meeting) : '—'}
+            </div>
+            <div class="mt-0.5 text-xs" style="color: var(--q-muted);">
+              {#if person.stats.meeting_count > 0}
+                {person.stats.meeting_count} 次{#if person.stats.avg_meeting_gap_days}
+                  · 平均每 {person.stats.avg_meeting_gap_days} 天{/if}
+              {:else}
+                还没记过见面
+              {/if}
+            </div>
+          </div>
         </section>
         <p class="-mt-2 text-center text-xs" style="color: var(--q-muted);">
-          金额只计礼金（随礼、礼物）的往来，不含借还与日常花销{#if person.stats.last_contact}；最近一次接触取自往来、对话与记账里最晚的一天{/if}。
+          金额只计礼金（随礼、礼物）的往来，不含借还与日常花销{#if person.stats.last_contact}；最近一次接触取自往来、对话与记账里最晚的一天{/if}{#if person.stats.last_meeting}；见面只统计「算见面」的往来类型（设置里可调）{/if}。
         </p>
       {/if}
 
@@ -753,6 +770,13 @@
                   <div class="q-num mt-0.5 text-xs" style="color: var(--q-muted);">
                     {TIMELINE_LABEL[t.type] || t.type} · {new Date(t.date).toLocaleDateString()}
                   </div>
+                  {#if t.type === 'event' && t.gap_days != null}
+                    <div class="mt-1">
+                      <span class="q-badge" title="距上一场算见面的往来"
+                        >距上次见面 {t.gap_days === 0 ? '同一天' : `${t.gap_days} 天`}</span
+                      >
+                    </div>
+                  {/if}
                 </div>
               </div>
             {/each}

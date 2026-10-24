@@ -119,6 +119,10 @@ export type PersonStats = {
   gift_in_fen: number;
   net_fen: number;
   last_contact?: string;
+  /** 见面口径只统计「算见面」的往来类型，与 last_contact（往来/对话/记账取最晚）不是一回事 */
+  meeting_count: number;
+  last_meeting?: string;
+  avg_meeting_gap_days?: number;
 };
 export type Event = {
   id: string;
@@ -264,6 +268,8 @@ export type EventType = {
   icon: string;
   is_default: boolean;
   sort_order: number;
+  /** 这类往来算不算一次「见面」；关掉后不计入见面间隔与统计（后端迁移 017） */
+  is_meeting: boolean;
 };
 export type Dashboard = {
   total_people: number;
@@ -297,7 +303,19 @@ export type TimelineItem = {
   title: string;
   person_id?: string;
   person_name?: string;
+  /** 仅 event 类型带回：距上一场「算见面」的往来隔了几天（最早一场不带） */
+  gap_days?: number;
   id: string;
+};
+/** 见面总览的一行（后端 store.MeetingOverviewRow），最久没见的排最前 */
+export type MeetingOverviewRow = {
+  person_id: string;
+  name: string;
+  grade: number;
+  meeting_count: number;
+  last_meeting: string;
+  days_since_last: number;
+  avg_gap_days?: number;
 };
 /** 认识路径的一跳，edge_types 是「上一跳 → 这一跳」之间的关系类型 */
 export type IntroHop = { id: string; name: string; edge_types: string[] };

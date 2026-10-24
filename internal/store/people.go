@@ -244,6 +244,11 @@ type PersonStats struct {
 	GiftInFen   int    `json:"gift_in_fen"`
 	NetFen      int    `json:"net_fen"`
 	LastContact string `json:"last_contact,omitempty"`
+	// 见面口径只看「算见面」的往来（事件类型可关，无类型一律算），
+	// LastContact 则是往来/对话/记账三者取最晚，两者不是一回事。
+	MeetingCount    int    `json:"meeting_count"`
+	LastMeeting     string `json:"last_meeting,omitempty"`
+	AvgMeetingGapDays int  `json:"avg_meeting_gap_days,omitempty"`
 }
 
 // PersonStatsFor 一次算出一批人的往来小结。
@@ -271,17 +276,21 @@ contact AS (
     SELECT person_id, substr(occurred_at,1,10) AS d FROM live_transactions
     UNION ALL SELECT person_id, substr(said_at,1,10) FROM live_memos
     UNION ALL SELECT ep.person_id, substr(e.event_date,1,10) FROM event_participants ep JOIN live_events e ON e.id=ep.event_id
-  ) WHERE d <> '' GROUP BY person_id)
-SELECT p.id, COALESCE(gift.out_fen,0), COALESCE(gift.in_fen,0), COALESCE(contact.d,'')
-FROM live_people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON contact.person_id=p.id`)
+  ) WHERE d <> '' GROUP BY person_id),
+`+meetingStatsCTE()+`
+SELECT p.id, COALESCE(gift.out_fen,0), COALESCE(gift.in_fen,0), COALESCE(contact.d,''),
+  COALESCE(m.cnt,0), COALESCE(m.first_d,''), COALESCE(m.last_d,'')
+FROM live_people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON contact.person_id=p.id
+  LEFT JOIN meeting m ON m.person_id=p.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, last string
+		var id, last, firstD, lastD string
 		st := &PersonStats{}
-		if err := rows.Scan(&id, &st.GiftOutFen, &st.GiftInFen, &last); err != nil {
+		if err := rows.Scan(&id, &st.GiftOutFen, &st.GiftInFen, &last,
+			&st.MeetingCount, &firstD, &lastD); err != nil {
 			return nil, err
 		}
 		if !want[id] {
@@ -289,6 +298,8 @@ FROM live_people p LEFT JOIN gift ON gift.person_id=p.id LEFT JOIN contact ON co
 		}
 		st.NetFen = st.GiftOutFen - st.GiftInFen
 		st.LastContact = last
+		st.LastMeeting = lastD
+		st.AvgMeetingGapDays = avgMeetingGapDays(firstD, lastD, st.MeetingCount)
 		out[id] = st
 	}
 	return out, rows.Err()
@@ -305,7 +316,7 @@ func (s *Store) attachStats(ctx context.Context, list []*Person) error {
 		return err
 	}
 	for _, p := range list {
-		if st := m[p.ID]; st != nil && (st.GiftOutFen != 0 || st.GiftInFen != 0 || st.LastContact != "") {
+		if st := m[p.ID]; st != nil && (st.GiftOutFen != 0 || st.GiftInFen != 0 || st.LastContact != "" || st.MeetingCount != 0) {
 			p.Stats = st
 		}
 	}
@@ -1028,10 +1039,13 @@ type EventType struct {
 	Icon      string `json:"icon"`
 	IsDefault bool   `json:"is_default"`
 	SortOrder int    `json:"sort_order"`
+	// IsMeeting：这类往来算不算一次「见面」。电话微信、纯送礼可以关掉，
+	// 见面间隔与见面统计只看算见面的类型（无类型的往来一律算见面）。
+	IsMeeting bool `json:"is_meeting"`
 }
 
 func (s *Store) EventTypeList(ctx context.Context) ([]*EventType, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,color,icon,is_default,sort_order FROM event_types ORDER BY sort_order,name")
+	rows, err := s.DB.QueryContext(ctx, "SELECT id,name,color,icon,is_default,sort_order,is_meeting FROM event_types ORDER BY sort_order,name")
 	if err != nil {
 		return nil, err
 	}
@@ -1039,7 +1053,7 @@ func (s *Store) EventTypeList(ctx context.Context) ([]*EventType, error) {
 	list := []*EventType{}
 	for rows.Next() {
 		e := &EventType{}
-		if err := rows.Scan(&e.ID, &e.Name, &e.Color, &e.Icon, &e.IsDefault, &e.SortOrder); err != nil {
+		if err := rows.Scan(&e.ID, &e.Name, &e.Color, &e.Icon, &e.IsDefault, &e.SortOrder, &e.IsMeeting); err != nil {
 			return nil, err
 		}
 		list = append(list, e)
@@ -1049,8 +1063,8 @@ func (s *Store) EventTypeList(ctx context.Context) ([]*EventType, error) {
 
 func (s *Store) EventTypeUpsert(ctx context.Context, e *EventType) error {
 	if e.ID == 0 {
-		r, err := s.DB.ExecContext(ctx, "INSERT INTO event_types(name,color,icon,is_default,sort_order) VALUES(?,?,?,?,?)",
-			e.Name, e.Color, e.Icon, e.IsDefault, e.SortOrder)
+		r, err := s.DB.ExecContext(ctx, "INSERT INTO event_types(name,color,icon,is_default,sort_order,is_meeting) VALUES(?,?,?,?,?,?)",
+			e.Name, e.Color, e.Icon, e.IsDefault, e.SortOrder, e.IsMeeting)
 		if err != nil {
 			return err
 		}
@@ -1058,8 +1072,8 @@ func (s *Store) EventTypeUpsert(ctx context.Context, e *EventType) error {
 		e.ID = int(id)
 		return nil
 	}
-	return execOne(ctx, s.DB, "UPDATE event_types SET name=?,color=?,icon=?,is_default=?,sort_order=? WHERE id=?",
-		e.Name, e.Color, e.Icon, e.IsDefault, e.SortOrder, e.ID)
+	return execOne(ctx, s.DB, "UPDATE event_types SET name=?,color=?,icon=?,is_default=?,sort_order=?,is_meeting=? WHERE id=?",
+		e.Name, e.Color, e.Icon, e.IsDefault, e.SortOrder, e.IsMeeting, e.ID)
 }
 
 // EventTypeDelete 删除事件类型，并把引用它的往来置为「未分类」。

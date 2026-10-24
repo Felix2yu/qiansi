@@ -727,8 +727,12 @@
         noun="类型"
         placeholder="类型名"
         defaults={{ icon: 'calendar', is_default: false, sort_order: 0 }}
+        boolField={{ key: 'is_meeting', label: '算见面' }}
         onchange={() => refresh('eventTypes')}
       />
+      <p class="q-hint">
+        关掉「算见面」的类型（如电话微信、纯送礼）不计入见面间隔与见面统计；没选类型的往来一律算见面。
+      </p>
     </section>
 
     <section class="q-card">

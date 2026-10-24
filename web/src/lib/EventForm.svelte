@@ -365,7 +365,9 @@
     <div class="grid grid-cols-2 gap-2">
       <select bind:value={form.type_id} class="q-select">
         <option value={0}>不选类型</option>
-        {#each typeList as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
+        {#each typeList as t (t.id)}
+          <option value={t.id}>{t.name}{t.is_meeting === false ? ' · 不算见面' : ''}</option>
+        {/each}
       </select>
       <input type="date" class="q-input" bind:value={form.event_date} />
     </div>
