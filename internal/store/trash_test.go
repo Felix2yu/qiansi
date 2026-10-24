@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 )
 
 // ===== 回收站 =====
@@ -442,5 +443,57 @@ func TestTrashIntroPathBreaksAndReconnects(t *testing.T) {
 	}
 	if !path.ReachesSelf || path.Broken || len(path.Chain) != 3 {
 		t.Fatalf("恢复引荐人后链路应自己接上: %+v", path.Chain)
+	}
+}
+
+// 自动清理（TrashEmptyBefore）只动过期行：deleted_at 早于阈值的真删除，
+// 新鲜的留在回收站里仍可恢复；零值阈值等价于全清。
+func TestTrashEmptyBeforeKeepsFreshRows(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+	expired := trashMustSeed(t, s, ctx, "老过期")
+	fresh := trashMustSeed(t, s, ctx, "小新鲜")
+
+	if err := s.PersonDelete(ctx, expired.person.ID); err != nil {
+		t.Fatalf("PersonDelete(expired): %v", err)
+	}
+	if err := s.PersonDelete(ctx, fresh.person.ID); err != nil {
+		t.Fatalf("PersonDelete(fresh): %v", err)
+	}
+	// 把「老过期」的删除时间拨回 40 天前；「小新鲜」保持刚刚删
+	pRaw(t, s, "UPDATE people SET deleted_at=? WHERE id=?",
+		time.Now().UTC().Add(-40*24*time.Hour).Format(timeFormat), expired.person.ID)
+
+	res, err := s.TrashEmptyBefore(ctx, time.Now().AddDate(0, 0, -30))
+	if err != nil {
+		t.Fatalf("TrashEmptyBefore: %v", err)
+	}
+	if res.Purged["person"] != 1 {
+		t.Fatalf("应只清掉 1 个过期的，得到 %+v", res.Purged)
+	}
+	if trashFind(t, s, ctx, "person", fresh.person.ID) == nil {
+		t.Fatal("未过期的人应留在回收站里可恢复")
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM people WHERE id=?", expired.person.ID); n != 0 {
+		t.Fatalf("过期的人应被真删除，仍剩 %d 行", n)
+	}
+	// 名下账目随级联清掉；小新鲜的名下不动
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM transactions WHERE person_id=?", expired.person.ID); n != 0 {
+		t.Fatalf("过期者的账目应随级联清掉，剩余 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM transactions WHERE person_id=?", fresh.person.ID); n != 1 {
+		t.Fatalf("未过期者的账目应原样留在回收站口径下，得到 %d", n)
+	}
+
+	// 零值阈值 = 全清，剩下的也收掉
+	res2, err := s.TrashEmptyBefore(ctx, time.Time{})
+	if err != nil {
+		t.Fatalf("TrashEmptyBefore(zero): %v", err)
+	}
+	if res2.Purged["person"] != 1 {
+		t.Fatalf("全清应再收掉 1 个，得到 %+v", res2.Purged)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM people WHERE deleted_at IS NOT NULL"); n != 0 {
+		t.Fatalf("全清后回收站仍有 %d 行", n)
 	}
 }

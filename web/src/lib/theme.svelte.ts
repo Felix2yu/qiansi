@@ -91,6 +91,25 @@ function readStartPage(): string {
   return raw && START_PATHS.includes(raw) ? raw : '/';
 }
 
+// ---------- 今日页模块 ----------
+// 首页卡片可整块收起：不是每块每人都看。键名白名单收口，防存储脏值。
+export const TODAY_MODULES = [
+  { key: 'stats', label: '数据统计' },
+  { key: 'money', label: '借出待还' },
+  { key: 'suggestions', label: '智能建议' },
+  { key: 'reminders', label: '近期待办' }
+] as const;
+
+export type TodayModuleKey = (typeof TODAY_MODULES)[number]['key'];
+
+const TODAY_KEYS: string[] = TODAY_MODULES.map((m) => m.key);
+
+/** 服务端/本地存的是逗号分隔的隐藏键，解析时丢掉不认识的 */
+export function parseTodayHidden(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  return raw.split(',').filter((k) => TODAY_KEYS.includes(k));
+}
+
 // localStorage 键。沿用既有的 q_dark（历史值 '1'/'0'）以兼容老用户：
 // 迁移时若没有 q_theme_mode，但有 q_dark，则按其值折算成 light/dark。
 const KEY_MODE = 'q_theme_mode';
@@ -99,6 +118,7 @@ const KEY_SCALE = 'q_font_scale';
 const KEY_FAMILY = 'q_font_family';
 const KEY_START = 'q_start_page';
 const KEY_MASK = 'q_money_mask';
+const KEY_TODAY = 'q_today_hidden';
 
 const VALID: ThemeMode[] = ['light', 'dark', 'system'];
 
@@ -128,13 +148,15 @@ export const theme = $state<{
   fontFamily: FontFamily;
   startPage: string;
   maskMoney: boolean;
+  todayHidden: string[];
 }>({
   mode: readMode(),
   color: localStorage.getItem(KEY_COLOR) || '#9E2A2B',
   fontScale: readScale(),
   fontFamily: readFamily(),
   startPage: readStartPage(),
-  maskMoney: localStorage.getItem(KEY_MASK) === '1'
+  maskMoney: localStorage.getItem(KEY_MASK) === '1',
+  todayHidden: parseTodayHidden(localStorage.getItem(KEY_TODAY))
 });
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -198,12 +220,14 @@ export async function initTheme() {
     const family = st['font_family'];
     const start = st['start_page'];
     const mask = st['money_mask'];
+    const todayHidden = st['today_hidden'];
     if (mode && (VALID as string[]).includes(mode)) theme.mode = mode as ThemeMode;
     if (color) theme.color = color;
     if (scale && (VALID_SCALE as string[]).includes(scale)) theme.fontScale = scale as FontScale;
     if (family && (VALID_FAMILY as string[]).includes(family)) theme.fontFamily = family as FontFamily;
     if (start && START_PATHS.includes(start)) theme.startPage = start;
     if (mask === '1' || mask === '0') theme.maskMoney = mask === '1';
+    if (todayHidden !== undefined) theme.todayHidden = parseTodayHidden(todayHidden);
     applyTheme();
     // 服务端带来的启动页若与本地不同，且用户还停在 / 没动过，补一次重定向
     applyStartPage(theme.startPage);
@@ -287,6 +311,21 @@ export async function setMoneyMask(mask: boolean) {
   applyTheme();
   try {
     await API.put('/api/v1/settings/money_mask', { value: mask ? '1' : '0' });
+  } catch {
+    // 同上，本地已生效
+  }
+}
+
+/** 收起/放回今日页的一块卡片并持久化（本地 + 服务端）。 */
+export async function setTodayModule(key: TodayModuleKey, visible: boolean) {
+  const next = theme.todayHidden.filter((k) => k !== key);
+  if (!visible) next.push(key);
+  theme.todayHidden = next;
+  const joined = next.join(',');
+  if (joined) localStorage.setItem(KEY_TODAY, joined);
+  else localStorage.removeItem(KEY_TODAY);
+  try {
+    await API.put('/api/v1/settings/today_hidden', { value: joined });
   } catch {
     // 同上，本地已生效
   }

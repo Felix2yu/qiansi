@@ -93,15 +93,21 @@ func (a *API) trashEmpty(w http.ResponseWriter, r *http.Request) {
 // removeAttachmentFiles 删掉头像/附件文件与对应记录。
 // 磁盘删不掉（权限、文件已被手工清理）不该让整件事停在半路，记录照删。
 func (a *API) removeAttachmentFiles(ctx context.Context, atts []*store.Attachment) {
+	RemoveAttachmentFiles(ctx, a.Store, a.Cfg.Uploads, atts)
+}
+
+// RemoveAttachmentFiles 是 removeAttachmentFiles 的导出版本：
+// 回收站自动清理（main 的 housekeepTrash）不在 API 结构里，也要走同一套口径。
+func RemoveAttachmentFiles(ctx context.Context, st *store.Store, uploadsDir string, atts []*store.Attachment) {
 	for _, att := range atts {
 		if att == nil {
 			continue
 		}
-		p := filepath.Join(a.Cfg.Uploads, att.StoredName)
+		p := filepath.Join(uploadsDir, att.StoredName)
 		if filepath.Clean(p) == p {
 			_ = os.Remove(p)
 		}
-		_, _ = a.Store.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
+		_, _ = st.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
 	}
 }
 

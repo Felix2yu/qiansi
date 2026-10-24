@@ -41,6 +41,8 @@
     FONT_SCALE_LABEL,
     FONT_FAMILY_LABEL,
     START_PAGES,
+    TODAY_MODULES,
+    setTodayModule,
     type ThemeMode,
     type FontScale,
     type FontFamily,
@@ -206,6 +208,7 @@
       rhythmOn = !['0', 'false', 'off', 'no'].includes(
         (s['contact_rhythm_enabled'] || '').trim().toLowerCase()
       );
+      trashDays = s['trash_retention_days'] || '0';
     }
     const b = await API.get<BackupItem[]>('/api/v1/backup/list').catch((err) => {
       toast.fail('读取备份列表失败', err);
@@ -246,6 +249,27 @@
       auto = (await API.get('/api/v1/backup/auto')) as BackupStatus;
     } catch {
       auto = null;
+    }
+  }
+
+  // ===== 回收站自动清理 =====
+  // 天数档存 settings 的 trash_retention_days，后端每小时巡一次，过期行真删除。0 = 关闭。
+  const TRASH_DAYS_TABS = [
+    { v: '0', n: '关闭' },
+    { v: '7', n: '7 天' },
+    { v: '14', n: '14 天' },
+    { v: '30', n: '30 天' },
+    { v: '90', n: '90 天' }
+  ];
+  let trashDays = $state('0');
+  async function setTrashDays(v: string) {
+    const prev = trashDays;
+    trashDays = v;
+    try {
+      await API.post('/api/v1/settings/bulk', { trash_retention_days: v });
+    } catch (err) {
+      trashDays = prev;
+      toast.fail('保存回收站清理设置失败', err);
     }
   }
 
@@ -624,6 +648,26 @@
           启动页在下次进站生效；金额打码后侧栏眼睛图标可随时切换
         </span>
       </div>
+      <!-- 今日页模块显隐：点亮的卡片显示在首页，整块收起不留空位 -->
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="flex items-center gap-2">
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">今日页</span>
+          <div class="q-seg q-seg--fill">
+            {#each TODAY_MODULES as m (m.key)}
+              <button
+                onclick={() => setTodayModule(m.key, theme.todayHidden.includes(m.key))}
+                aria-pressed={!theme.todayHidden.includes(m.key)}
+                class="q-seg__btn"
+              >
+                {m.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <span class="text-xs" style="color: var(--q-muted);">
+          点亮的显示在首页；首启引导不受这里控制
+        </span>
+      </div>
     </section>
 
     <section class="q-card">
@@ -942,6 +986,28 @@
       {:else}
         <p class="q-hint !mt-0">读取自动备份配置失败，请检查服务是否运行。</p>
       {/if}
+      <div class="q-divider"></div>
+      <h3 class="q-label">回收站自动清理</h3>
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="q-seg q-seg--fill">
+          {#each TRASH_DAYS_TABS as t (t.v)}
+            <button
+              onclick={() => setTrashDays(t.v)}
+              aria-pressed={trashDays === t.v}
+              class="q-seg__btn"
+            >
+              {t.n}
+            </button>
+          {/each}
+        </div>
+        <span class="text-xs" style="color: var(--q-muted);">
+          {#if trashDays === '0'}
+            关闭中：回收站里的记录一直留着，直到手动清空
+          {:else}
+            软删除超过 {trashDays} 天的记录每小时自动真删除，未过期的仍可恢复
+          {/if}
+        </span>
+      </div>
       <div class="q-divider"></div>
       <h3 class="q-label">明细导出与全量迁移</h3>
       <div class="flex flex-wrap items-center gap-2">

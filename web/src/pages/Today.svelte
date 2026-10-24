@@ -12,6 +12,7 @@
   import { toast } from '../lib/toast.svelte';
   import { completeReminder } from '../lib/reminderActions';
   import { self, loadSelf } from '../lib/self.svelte';
+  import { theme } from '../lib/theme.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
   import {
@@ -59,6 +60,8 @@
     }
   ]);
   const showOnboard = $derived(!onboardHidden && onboardSteps.some((s) => !s.done));
+  // 首页卡片显隐：设置页「今日页」一排开关控制，这里只读
+  const showModule = (key: string) => !theme.todayHidden.includes(key);
   function hideOnboard() {
     onboardHidden = true;
     localStorage.setItem('q_onboard_off', '1');
@@ -153,53 +156,57 @@
         </section>
       {/if}
 
-      <section class="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <Users size={13} /> 联系人
+      {#if showModule('stats')}
+        <section class="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <Users size={13} /> 联系人
+            </div>
+            <div class="q-stat__value q-num">{dashboard.total_people}</div>
           </div>
-          <div class="q-stat__value q-num">{dashboard.total_people}</div>
-        </div>
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <CalendarDays size={13} /> 往来事件
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <CalendarDays size={13} /> 往来事件
+            </div>
+            <div class="q-stat__value q-num">{dashboard.total_events}</div>
           </div>
-          <div class="q-stat__value q-num">{dashboard.total_events}</div>
-        </div>
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <Bell size={13} /> 待办 (7 天)
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <Bell size={13} /> 待办 (7 天)
+            </div>
+            <div class="q-stat__value q-num">{dashboard.upcoming_days7}</div>
           </div>
-          <div class="q-stat__value q-num">{dashboard.upcoming_days7}</div>
-        </div>
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <CheckCircle2 size={13} /> 未兑现承诺
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <CheckCircle2 size={13} /> 未兑现承诺
+            </div>
+            <div class="q-stat__value q-num">{dashboard.pending_promises}</div>
           </div>
-          <div class="q-stat__value q-num">{dashboard.pending_promises}</div>
-        </div>
-      </section>
+        </section>
+      {/if}
 
-      <section class="grid grid-cols-2 gap-3">
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <Wallet size={13} /> 我借出（未还）
+      {#if showModule('money')}
+        <section class="grid grid-cols-2 gap-3">
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <Wallet size={13} /> 我借出（未还）
+            </div>
+            <div class="q-stat__value q-num q-money" style="color: var(--q-ok);">
+              ¥ {(dashboard.lend_fen / 100).toFixed(2)}
+            </div>
           </div>
-          <div class="q-stat__value q-num q-money" style="color: var(--q-ok);">
-            ¥ {(dashboard.lend_fen / 100).toFixed(2)}
+          <div class="q-stat">
+            <div class="q-stat__label flex items-center gap-1.5">
+              <Wallet size={13} /> 我待还
+            </div>
+            <div class="q-stat__value q-num q-money" style="color: var(--q-warn);">
+              ¥ {(dashboard.borrow_fen / 100).toFixed(2)}
+            </div>
           </div>
-        </div>
-        <div class="q-stat">
-          <div class="q-stat__label flex items-center gap-1.5">
-            <Wallet size={13} /> 我待还
-          </div>
-          <div class="q-stat__value q-num q-money" style="color: var(--q-warn);">
-            ¥ {(dashboard.borrow_fen / 100).toFixed(2)}
-          </div>
-        </div>
-      </section>
+        </section>
+      {/if}
 
-      {#if suggestions.length > 0}
+      {#if showModule('suggestions') && suggestions.length > 0}
         <section>
           <h2 class="q-section-title"><Sparkles size={15} /> 智能建议</h2>
           <div class="q-stack--tight flex flex-col">
@@ -220,56 +227,58 @@
         </section>
       {/if}
 
-      <section>
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="q-section-title !mb-0"><CalendarCheck size={15} /> 近期待办</h2>
-          <button class="q-btn q-btn--subtle q-btn--sm" onclick={() => navigate('/reminders')}>
-            查看全部 <ArrowRight size={12} />
-          </button>
-        </div>
-        {#if upcoming.length === 0}
-          <Empty icon={Bell} text="近期没有待办，正好去见见想见的人" />
-        {:else}
-          {#if imminent.length > 0}
-            <div class="mt-1 mb-2 flex items-center gap-2">
-              <span class="q-badge q-badge--danger">逾期 / 今天 · {imminent.length}</span>
-            </div>
-            <div class="q-stack--tight mb-4 flex flex-col">
-              {#each imminent as r, i (i)}
-                <label class="q-row cursor-pointer">
-                  <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm">{r.title}</div>
-                    <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
-                      {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
-                        ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+      {#if showModule('reminders')}
+        <section>
+          <div class="mb-3 flex items-center justify-between">
+            <h2 class="q-section-title !mb-0"><CalendarCheck size={15} /> 近期待办</h2>
+            <button class="q-btn q-btn--subtle q-btn--sm" onclick={() => navigate('/reminders')}>
+              查看全部 <ArrowRight size={12} />
+            </button>
+          </div>
+          {#if upcoming.length === 0}
+            <Empty icon={Bell} text="近期没有待办，正好去见见想见的人" />
+          {:else}
+            {#if imminent.length > 0}
+              <div class="mt-1 mb-2 flex items-center gap-2">
+                <span class="q-badge q-badge--danger">逾期 / 今天 · {imminent.length}</span>
+              </div>
+              <div class="q-stack--tight mb-4 flex flex-col">
+                {#each imminent as r, i (i)}
+                  <label class="q-row cursor-pointer">
+                    <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-sm">{r.title}</div>
+                      <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+                        {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
+                          ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+                      </div>
                     </div>
-                  </div>
-                </label>
-              {/each}
-            </div>
-          {/if}
-          {#if later.length > 0}
-            <div class="mb-2 flex items-center gap-2">
-              <span class="q-badge">之后 · {later.length}</span>
-            </div>
-            <div class="q-stack--tight flex flex-col">
-              {#each later.slice(0, 6) as r, i (i)}
-                <label class="q-row cursor-pointer">
-                  <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
-                  <div class="min-w-0 flex-1">
-                    <div class="truncate text-sm">{r.title}</div>
-                    <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
-                      {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
-                        ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+                  </label>
+                {/each}
+              </div>
+            {/if}
+            {#if later.length > 0}
+              <div class="mb-2 flex items-center gap-2">
+                <span class="q-badge">之后 · {later.length}</span>
+              </div>
+              <div class="q-stack--tight flex flex-col">
+                {#each later.slice(0, 6) as r, i (i)}
+                  <label class="q-row cursor-pointer">
+                    <input type="checkbox" class="shrink-0" onchange={() => done(r)} />
+                    <div class="min-w-0 flex-1">
+                      <div class="truncate text-sm">{r.title}</div>
+                      <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
+                        {REF_TYPE_LABEL[r.ref_type] || r.ref_type}{r.person_name &&
+                          ` · ${r.person_name}`} · {new Date(r.due_at).toLocaleDateString()}
+                      </div>
                     </div>
-                  </div>
-                </label>
-              {/each}
-            </div>
+                  </label>
+                {/each}
+              </div>
+            {/if}
           {/if}
-        {/if}
-      </section>
+        </section>
+      {/if}
     </div>
   {/if}
 </div>

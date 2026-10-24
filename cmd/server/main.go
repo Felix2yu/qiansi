@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -71,6 +72,9 @@ func main() {
 	// 与 notify 分开跑 —— 两者的节奏（30 分钟 vs 30 秒）与配置来源都不同。
 	go backupRunner.Run(ctx)
 
+	// 回收站自动清理：保留天数由用户在设置页配置（0 = 关闭）。
+	go housekeepTrash(ctx, st, cfg)
+
 	srv := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      a,
@@ -96,6 +100,47 @@ func main() {
 		shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancelShutdown()
 		_ = srv.Shutdown(shutdownCtx)
+	}
+}
+
+// housekeepTrash 回收站自动清理：每小时看一眼 settings 的 trash_retention_days，
+// 把软删除超过 N 天的行真删除（未配置或 0 = 关闭）。启动时先跑一次，
+// 兜住停机期间过期的记录。文件清理与手动清空同一套口径（RemoveAttachmentFiles）。
+func housekeepTrash(ctx context.Context, st *store.Store, cfg *config.Config) {
+	run := func() {
+		raw, _ := st.SettingGet(ctx, "trash_retention_days")
+		days, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || days <= 0 {
+			return
+		}
+		if days > 3650 {
+			days = 3650
+		}
+		res, err := st.TrashEmptyBefore(ctx, time.Now().AddDate(0, 0, -days))
+		if err != nil {
+			log.Printf("[trash] 自动清理失败: %v", err)
+			return
+		}
+		total := 0
+		for _, n := range res.Purged {
+			total += n
+		}
+		if total == 0 {
+			return
+		}
+		api.RemoveAttachmentFiles(ctx, st, cfg.Uploads, res.Attachments)
+		log.Printf("[trash] 自动清理 %d 条过期记录（保留 %d 天）", total, days)
+	}
+	run()
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
 	}
 }
 

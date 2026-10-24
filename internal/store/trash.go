@@ -6,6 +6,7 @@ import (
 	"errors"
 	"sort"
 	"strings"
+	"time"
 )
 
 // ===== 回收站 =====
@@ -175,10 +176,28 @@ type TrashEmptyResult struct {
 // TrashEmpty 清空回收站。先取回将被删掉的联系人的头像，再按「先子后父」删：
 // 事件要先把挂着的账解绑，联系人交给外键级联收拾它剩下的关联记录。
 func (s *Store) TrashEmpty(ctx context.Context) (*TrashEmptyResult, error) {
+	return s.TrashEmptyBefore(ctx, time.Time{})
+}
+
+// TrashEmptyBefore 清理回收站里 deleted_at <= before 的行；before 为零值时清全部。
+// 回收站自动清理（settings 的 trash_retention_days）按天传阈值，只清过期行，
+// 未过期的仍可恢复。返回值带上需要从磁盘清掉的头像，调用方负责删文件。
+func (s *Store) TrashEmptyBefore(ctx context.Context, before time.Time) (*TrashEmptyResult, error) {
 	res := &TrashEmptyResult{Purged: map[string]int{}}
+	// 时间过滤：零值 = 不过滤（全清）；否则只动过期行。
+	// deleted_at 一律是 nowUTC() 的 RFC3339 UTC 串，字典序即时间序。
+	cond := " deleted_at IS NOT NULL"
+	pcond := " p.deleted_at IS NOT NULL"
+	var args []any
+	if !before.IsZero() {
+		t := before.UTC().Format(timeFormat)
+		cond += " AND deleted_at <= ?"
+		pcond += " AND p.deleted_at <= ?"
+		args = append(args, t)
+	}
 	atts, err := s.DB.QueryContext(ctx, `SELECT a.id,a.entity_type,a.entity_id,a.file_name,a.stored_name,a.mime,a.size,a.created_at
 FROM attachments a JOIN people p ON p.id=a.entity_id
-WHERE a.entity_type='person' AND p.deleted_at IS NOT NULL`)
+WHERE a.entity_type='person' AND`+pcond, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -214,23 +233,23 @@ WHERE a.entity_type='person' AND p.deleted_at IS NOT NULL`)
 		return nil
 	}
 	// 往来留着（钱确实花过），只是不再挂在被删掉的事件上——与单场删除同口径。
-	if _, err := tx.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id IN (SELECT id FROM events WHERE deleted_at IS NOT NULL)"); err != nil {
+	if _, err := tx.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id IN (SELECT id FROM events WHERE"+cond+")", args...); err != nil {
 		return nil, err
 	}
 	for _, st := range []struct{ kind, sql string }{
-		{"event", "DELETE FROM events WHERE deleted_at IS NOT NULL"},
-		{"memo", "DELETE FROM memos WHERE deleted_at IS NOT NULL"},
-		{"transaction", "DELETE FROM transactions WHERE deleted_at IS NOT NULL"},
-		{"anniversary", "DELETE FROM anniversaries WHERE deleted_at IS NOT NULL"},
-		{"reminder", "DELETE FROM reminders WHERE deleted_at IS NOT NULL"},
+		{"event", "DELETE FROM events WHERE" + cond},
+		{"memo", "DELETE FROM memos WHERE" + cond},
+		{"transaction", "DELETE FROM transactions WHERE" + cond},
+		{"anniversary", "DELETE FROM anniversaries WHERE" + cond},
+		{"reminder", "DELETE FROM reminders WHERE" + cond},
 	} {
-		if err := count(st.kind, st.sql); err != nil {
+		if err := count(st.kind, st.sql, args...); err != nil {
 			return nil, err
 		}
 	}
 	// 联系人的关联记录（含没进回收站、只是被他带着消失的那些）由外键级联收尾，
 	// 这正是「彻底删除联系人」一直以来的代价，所以前一步才要先把头像挑出来。
-	if err := count("person", "DELETE FROM people WHERE deleted_at IS NOT NULL"); err != nil {
+	if err := count("person", "DELETE FROM people WHERE"+cond, args...); err != nil {
 		return nil, err
 	}
 	// attachments 没有指向 people 的外键，级联带不掉它，按开头读出的 id 显式清行。
