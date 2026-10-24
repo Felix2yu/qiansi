@@ -487,6 +487,10 @@ FROM live_people p WHERE (` + strings.Join(conds, " OR ") + ")"
 	return out, nil
 }
 
+// ErrMergeSamePerson 是「把一个人合并进他自己」的用法错误。
+// 导出成哨兵，API 层才能把它和真正的库故障分开：前者是 400，后者走 writeStoreErr。
+var ErrMergeSamePerson = errors.New("需要两个不同的联系人")
+
 // PersonMerge 把 source 的关联数据全部迁到 target，然后删除 source。
 // 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、圈子、自定义字段、关系的两端、附件与头像指针。
 // 事件参与人用 INSERT OR IGNORE，避免同一事件里出现重复条目。
@@ -494,7 +498,19 @@ FROM live_people p WHERE (` + strings.Join(conds, " OR ") + ")"
 // 合并完成后按 target 自己的生日重新同步一次。
 func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) error {
 	if sourceID == "" || targetID == "" || sourceID == targetID {
-		return errors.New("需要两个不同的联系人")
+		return ErrMergeSamePerson
+	}
+	// target 必须真的存在。不查的话，对着一个已经不存在的 id 合并，
+	// 下面每一步都是 0 行，最后还回一句「合并成功」——
+	// 用户以为自己整理好了数据，其实什么都没发生（来源是允许 0 行的：
+	// 那本来就是「把这条并进来」的语义）。
+	// 走 live_people：回收站里的人同样不接受合并。
+	var n int
+	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM live_people WHERE id=?", targetID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
 	}
 	// 引荐人重定向要特殊处理 target 自己：target 原本若通过 source 认识，
 	// source 一删这条链就断了，提前把 source 的引荐人续给 target；
@@ -691,8 +707,8 @@ func (s *Store) queryPeople(ctx context.Context, f PeopleFilter, includeArchived
 		cond = append(cond, "p.archived=0")
 	}
 	if f.Q != "" {
-		cond = append(cond, "(p.name LIKE ? OR p.nickname LIKE ? OR p.notes LIKE ?)")
-		like := "%" + f.Q + "%"
+		cond = append(cond, "(p.name LIKE ? ESCAPE '\\' OR p.nickname LIKE ? ESCAPE '\\' OR p.notes LIKE ? ESCAPE '\\')")
+		like := likePattern(f.Q)
 		args = append(args, like, like, like)
 	}
 	if f.CategoryID > 0 {

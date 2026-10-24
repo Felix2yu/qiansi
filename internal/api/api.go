@@ -142,6 +142,13 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// writeNotFound 统一「找不到」的 404 文案。以前各处理函数随手写
+// "not found" 或直接把 err.Error()（"sql: no rows in result set"）当响应体，
+// 同一个语义在中文界面里冒出英文，还与 writeStoreErr 的中文 404 并存。
+func writeNotFound(w http.ResponseWriter, what string) {
+	writeErr(w, http.StatusNotFound, what+"不存在，可能已经在别处被删除")
+}
+
 // writeStoreErr 把 store 返回的错误翻译成状态码与中文文案。
 //
 // 三种情况分别处理：目标行不存在 → 404（以前是 500 甚至 200 假成功）；

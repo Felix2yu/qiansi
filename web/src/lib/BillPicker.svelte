@@ -24,7 +24,6 @@
   let items = $state<HuozhiBill[]>([]);
   let base = $state('');
   let total = $state(0);
-  let page = $state(1);
   let loading = $state(false);
   let failed = $state('');
   let picked = $state<string[]>([]);
@@ -32,8 +31,7 @@
 
   const linked = $derived(new Set(linkedIds));
 
-  async function run(reset = true) {
-    if (reset) page = 1;
+  async function run() {
     loading = true;
     failed = '';
     try {
@@ -41,7 +39,7 @@
       const qs = new URLSearchParams({
         q: q.trim(),
         type: 'expense',
-        page: String(page),
+        page: '1',
         page_size: '20'
       });
       if (from) qs.set('from', from);
@@ -60,7 +58,7 @@
 
   function schedule() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => void run(true), 250);
+    timer = setTimeout(() => void run(), 250);
   }
 
   function toggle(b: HuozhiBill) {
@@ -78,7 +76,7 @@
     if (timer) clearTimeout(timer);
   });
 
-  void run(true);
+  void run();
 </script>
 
 <Modal wide {onclose} title="关联货殖账单">
@@ -100,7 +98,7 @@
       <input
         type="date"
         bind:value={from}
-        onchange={() => run(true)}
+        onchange={() => run()}
         aria-label="起始日期"
         class="q-input w-auto !py-2 text-xs"
       />
@@ -108,7 +106,7 @@
       <input
         type="date"
         bind:value={to}
-        onchange={() => run(true)}
+        onchange={() => run()}
         aria-label="截止日期"
         class="q-input w-auto !py-2 text-xs"
       />
@@ -116,7 +114,7 @@
         type="button"
         class="q-iconbtn q-iconbtn--border"
         title="重新搜索"
-        onclick={() => run(true)}
+        onclick={() => run()}
       >
         <RefreshCw size={13} />
       </button>
@@ -193,8 +191,7 @@
 
   {#snippet foot()}
     <span class="q-num mr-auto self-center text-xs" style="color: var(--q-muted);">
-      共 {total} 张{#if total > page * 20}
-        · 只显示前 {page * 20} 张，用关键词缩小范围{/if}
+      共 {total} 张{#if total > 20}· 只显示前 20 张，用关键词缩小范围{/if}
     </span>
     <button type="button" class="q-btn q-btn--ghost" onclick={onclose}>取消</button>
     <button

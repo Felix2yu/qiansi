@@ -164,38 +164,5 @@ func (s *Store) EventBillRemoteIDs(ctx context.Context, eventID string) ([]strin
 	return out, rows.Err()
 }
 
-// EventBillsCounts 批量取多个往来的账单数（列表页徽标用），避免每行一次查询。
-func (s *Store) EventBillsCounts(ctx context.Context, eventIDs []string) (map[string]int, error) {
-	out := map[string]int{}
-	if len(eventIDs) == 0 {
-		return out, nil
-	}
-	args := make([]any, 0, len(eventIDs))
-	for _, id := range eventIDs {
-		args = append(args, id)
-	}
-	q := `SELECT event_id, COUNT(*) FROM event_bills WHERE event_id IN (?` + placeholders(len(eventIDs)-1) + `) GROUP BY event_id`
-	rows, err := s.DB.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var id string
-		var n int
-		if err := rows.Scan(&id, &n); err != nil {
-			return nil, err
-		}
-		out[id] = n
-	}
-	return out, rows.Err()
-}
-
-// placeholderSuffix 生成 ",?,?,?" 这样的占位符尾巴。
-func placeholders(n int) string {
-	s := ""
-	for i := 0; i < n; i++ {
-		s += ",?"
-	}
-	return s
-}
+// EventBillsCounts 已经删除：列表页徽标改由 eventColumns 里的 COUNT 子查询
+// 一次算出（见 events.go），这个批量接口没有任何调用方，只剩测试在引用。

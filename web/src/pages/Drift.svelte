@@ -107,7 +107,7 @@
     {:else}
       <div class="q-stack--tight flex flex-col">
         {#each list as d (d.person_id)}
-          <div class="q-row flex-wrap">
+          <div class="q-row">
             <div class="min-w-0 flex-1">
               <button
                 class="link-quiet truncate text-sm font-medium"

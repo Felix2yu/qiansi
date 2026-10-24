@@ -26,7 +26,7 @@
   import { dict, ensure, refresh } from '../lib/dict.svelte';
   import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
-  import { RECOVER_NOTE, trashOne } from '../lib/trash';
+  import { eventDeleteAsk, RECOVER_NOTE, trashOne } from '../lib/trash';
   import {
     Trash2,
     Edit3,
@@ -103,16 +103,7 @@
     await loadWords();
   }
   async function removeEvent(eventId: string, title: string, expenseFen?: number) {
-    const detail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : RECOVER_NOTE;
-    if (
-      !(await ask({
-        title: `确定删除「${title}」吗？`,
-        detail,
-        danger: true,
-        confirmLabel: '删除'
-      }))
-    )
-      return;
+    if (!(await ask(eventDeleteAsk(title, expenseFen)))) return;
     await trashOne('event', eventId, afterEventForm, '已删除');
   }
 

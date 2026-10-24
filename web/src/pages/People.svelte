@@ -16,7 +16,7 @@
   import Empty from '../lib/ui/Empty.svelte';
   import LoadError from '../lib/ui/LoadError.svelte';
   import { navigate } from '../lib/router';
-  import { Search, Plus, Trash2, Upload, Download, Undo2, Pencil, Users } from '@lucide/svelte';
+  import { Search, Plus, Trash2, Upload, Download, Undo2, Pencil, Users, X } from '@lucide/svelte';
   import { dict, ensure } from '../lib/dict.svelte';
   import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
@@ -372,11 +372,26 @@
           style="color: var(--q-faint);"
         />
         <input
-          class="q-input !py-2 pl-9"
+          class="q-input !py-2 pr-9 pl-9"
           placeholder="搜索姓名、备注…"
           bind:value={q}
           onkeydown={(e) => e.key === 'Enter' && load()}
         />
+        {#if q}
+          <button
+            type="button"
+            aria-label="清空搜索"
+            title="清空搜索"
+            class="absolute top-1/2 right-2 -translate-y-1/2 rounded p-1"
+            style="color: var(--q-faint);"
+            onclick={() => {
+              q = '';
+              load();
+            }}
+          >
+            <X size={14} />
+          </button>
+        {/if}
       </div>
       <select bind:value={selectedCat} onchange={() => load()} class="q-select !py-2">
         <option value={0}>全部圈子</option>

@@ -41,6 +41,23 @@ export type TrashItem = {
 /** 删除确认框统一的那句提示：写清楚去处，人才敢点 */
 export const RECOVER_NOTE = '删除后可在回收站找回。';
 
+/** 有开销的往来删起来要额外说清「账不跟着没」，否则用户不敢删 */
+export const EVENT_EXPENSE_NOTE = '该往来关联的开销账目会保留，仅解除关联。';
+
+/**
+ * 删往来的确认框文案。PersonDetail 与 Events 两处都要用，
+ * 曾经一个写「确定删除…吗？」一个写「删除…？」，有开销时一边漏掉回收站提示——
+ * 确认框是删除前唯一一次沟通，措辞必须逐字一致。
+ */
+export function eventDeleteAsk(title: string, expenseFen?: number) {
+  return {
+    title: `删除「${title}」？`,
+    detail: (expenseFen ? EVENT_EXPENSE_NOTE : '') + RECOVER_NOTE,
+    danger: true,
+    confirmLabel: '删除'
+  };
+}
+
 export async function restoreTrash(kind: TrashKind, id: string): Promise<void> {
   await API.post(`/api/v1/trash/${kind}/${id}/restore`, {});
 }

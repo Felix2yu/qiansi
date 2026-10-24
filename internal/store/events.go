@@ -433,8 +433,8 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id`
 		args = append(args, f.PersonID)
 	}
 	if f.Q != "" {
-		conds = append(conds, "(e.title LIKE ? OR e.summary LIKE ? OR e.location LIKE ?)")
-		like := "%" + f.Q + "%"
+		conds = append(conds, "(e.title LIKE ? ESCAPE '\\' OR e.summary LIKE ? ESCAPE '\\' OR e.location LIKE ? ESCAPE '\\')")
+		like := likePattern(f.Q)
 		args = append(args, like, like, like)
 	}
 	if f.TypeID > 0 {
@@ -1536,6 +1536,16 @@ type SearchResult struct {
 	Path     string `json:"path"`
 }
 
+// likePattern 把用户输入包成 LIKE 模式，并转义其中的通配符。
+// 不转义的话：搜「100%」会匹配任何「100」后接任意内容的行，搜「a_b」会把
+// 下划线当成任意单字符——结果集凭空变大，用户只会以为数据莫名其妙。
+// 配套的每条 SQL 都要带 ESCAPE '\'（本包内所有 LIKE 均已加上），
+// 少了子句反斜杠会被当普通字符，转义就失效了。
+func likePattern(s string) string {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + esc.Replace(s) + "%"
+}
+
 // Search 跨人物 / 往来 / 对话 / 金钱 / 纪念日做一次统一检索。
 // 各分支独立 LIMIT，避免某类数据过多把其它类别挤掉。
 func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchResult, error) {
@@ -1546,7 +1556,7 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 	if perType <= 0 {
 		perType = 5
 	}
-	like := "%" + q + "%"
+	like := likePattern(q)
 	out := []*SearchResult{}
 
 	// 人物
@@ -1569,10 +1579,10 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 
 	type row struct{ kind, sql string }
 	queries := []row{
-		{"event", `SELECT id,title,COALESCE(summary,''),event_date FROM live_events WHERE title LIKE ? OR summary LIKE ? OR location LIKE ? ORDER BY event_date DESC LIMIT ?`},
-		{"memo", `SELECT id,content,COALESCE(due_date,''),said_at FROM live_memos WHERE content LIKE ? ORDER BY said_at DESC LIMIT ?`},
-		{"transaction", `SELECT t.id,COALESCE(t.title,'')||' '||COALESCE(p.name,''),COALESCE(p.name,''),t.occurred_at FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.title LIKE ? OR p.name LIKE ? ORDER BY t.occurred_at DESC LIMIT ?`},
-		{"anniversary", `SELECT id,title,COALESCE(date,''),date FROM live_anniversaries WHERE title LIKE ? ORDER BY date DESC LIMIT ?`},
+		{"event", `SELECT id,title,COALESCE(summary,''),event_date FROM live_events WHERE title LIKE ? ESCAPE '\' OR summary LIKE ? ESCAPE '\' OR location LIKE ? ESCAPE '\' ORDER BY event_date DESC LIMIT ?`},
+		{"memo", `SELECT id,content,COALESCE(due_date,''),said_at FROM live_memos WHERE content LIKE ? ESCAPE '\' ORDER BY said_at DESC LIMIT ?`},
+		{"transaction", `SELECT t.id,COALESCE(t.title,'')||' '||COALESCE(p.name,''),COALESCE(p.name,''),t.occurred_at FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.title LIKE ? ESCAPE '\' OR p.name LIKE ? ESCAPE '\' ORDER BY t.occurred_at DESC LIMIT ?`},
+		{"anniversary", `SELECT id,title,COALESCE(date,''),date FROM live_anniversaries WHERE title LIKE ? ESCAPE '\' ORDER BY date DESC LIMIT ?`},
 	}
 	for _, qr := range queries {
 		var args []any

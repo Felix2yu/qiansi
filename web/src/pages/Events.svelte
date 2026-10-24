@@ -12,7 +12,7 @@
   import { dict, ensure, refresh } from '../lib/dict.svelte';
   import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
-  import { RECOVER_NOTE, trashOne } from '../lib/trash';
+  import { eventDeleteAsk, trashOne } from '../lib/trash';
   import { Plus, Search, History, CalendarDays } from '@lucide/svelte';
 
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props();
@@ -146,16 +146,7 @@
 
   // 删除只进回收站：5 秒内就地撤销，之后仍能从回收站请回来
   async function remove(id: string, title: string, expenseFen?: number) {
-    const tail = expenseFen ? '该往来关联的开销账目会保留，仅解除关联。' : '';
-    if (
-      !(await ask({
-        title: `删除「${title}」？`,
-        detail: tail + RECOVER_NOTE,
-        danger: true,
-        confirmLabel: '删除'
-      }))
-    )
-      return;
+    if (!(await ask(eventDeleteAsk(title, expenseFen)))) return;
     if (!(await trashOne('event', id, () => Promise.all([load(), refresh('events')]), '已删除')))
       return;
     showForm = false;

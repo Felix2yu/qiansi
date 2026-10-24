@@ -482,7 +482,7 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 		t.Fatalf("还款列表不符: %v", rps)
 	}
 
-	// 还完 500 → resyncSettled 自动结清
+	// 还完 500 → resyncSettled 自动结清（这笔也正好等于剩余本金，边界上放行）
 	rec = ts.do(http.MethodPost, "/api/v1/transactions/"+txID+"/repayments", map[string]any{"amount_fen": 500})
 	if rec.Code != 200 {
 		t.Fatalf("结清还款失败")
@@ -492,15 +492,18 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if !tx["settled"].(bool) || evAPIStr(tx, "settled_at") == "" {
 		t.Fatalf("还完应自动结清: %v", tx)
 	}
-	// 再还一笔 → 状态不变（settled==t.Settled 早退分支）
+	// 还超了必须拦下：以前照单全收，多还的部分不进任何合计也没有去处，
+	// 用户看到的是「明明多还了，余额却是 0」
 	overRec := ts.do(http.MethodPost, "/api/v1/transactions/"+txID+"/repayments", map[string]any{"amount_fen": 10})
-	if overRec.Code != 200 {
-		t.Fatalf("超额还款应 200")
+	if overRec.Code != 400 {
+		t.Fatalf("超额还款应 400, got %d: %s", overRec.Code, overRec.Body.String())
 	}
-	extraID := evAPIStr(decodeMap(t, overRec), "id")
+	if !strings.Contains(overRec.Body.String(), "不能超过本金") {
+		t.Fatalf("超额还款文案不符: %s", overRec.Body.String())
+	}
 
 	// 删除还款 → 回到未结清
-	for _, rid := range []string{rp1ID, evAPIStr(rp2, "id"), rp3ID, extraID} {
+	for _, rid := range []string{rp1ID, evAPIStr(rp2, "id"), rp3ID} {
 		if rec := ts.do(http.MethodDelete, "/api/v1/transactions/"+txID+"/repayments/"+rid, nil); rec.Code != 204 {
 			t.Fatalf("删除还款 %s 应 204, got %d", rid, rec.Code)
 		}
@@ -835,7 +838,9 @@ func TestAPIRecords_ClosedDB500s(t *testing.T) {
 	wantStatus("memoDelete", ts.do(http.MethodDelete, "/api/v1/memos/1", nil), 500)
 
 	wantStatus("txList", ts.do(http.MethodGet, "/api/v1/transactions/", nil), 500)
-	wantStatus("txGet(404)", ts.do(http.MethodGet, "/api/v1/transactions/1", nil), 404)
+	// 库挂了就是服务端故障：以前 txGet 把任何错误都写成 404 + err.Error()，
+	// 「sql: database is closed」被当成"这条账不存在"返回，掩盖了真实原因。
+	wantStatus("txGet", ts.do(http.MethodGet, "/api/v1/transactions/1", nil), 500)
 	wantStatus("txCreate", ts.do(http.MethodPost, "/api/v1/transactions/", map[string]any{
 		"person_id": "p", "direction": "out", "amount_fen": 1, "occurred_at": "2026-01-01",
 	}), 500)

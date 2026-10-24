@@ -167,7 +167,7 @@ func (a *API) eventBillsLink(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := a.Store.EventGet(ctx, eventID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, 404, "not found")
+			writeNotFound(w, "往来")
 			return
 		}
 		writeStoreErr(w, err)
@@ -291,7 +291,7 @@ func (a *API) eventBillsUnlink(w http.ResponseWriter, r *http.Request) {
 	billID := chi.URLParam(r, "billID")
 	if err := a.Store.EventBillUnlink(ctx, eventID, billID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, 404, "not found")
+			writeNotFound(w, "往来")
 			return
 		}
 		writeStoreErr(w, err)

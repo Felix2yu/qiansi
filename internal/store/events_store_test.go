@@ -1322,6 +1322,98 @@ func TestEventStore_Search(t *testing.T) {
 	}
 }
 
+// 通配符必须按字面处理：搜「%」「_」不该把整库捞回来。
+// 不转义时 "%" 匹配任意内容、"_" 匹配任意单字符，用户输入一个 % 就看到全部数据，
+// 既误导也会把 limit 挤满（每类只剩前几条）。
+func TestEventStore_SearchEscapesWildcards(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for _, name := range []string{"王小明", "小芳姐", "阿强"} {
+		if err := s.PersonCreate(ctx, &Person{Name: name}); err != nil {
+			t.Fatalf("PersonCreate %s: %v", name, err)
+		}
+	}
+	if err := s.EventCreate(ctx, &Event{Title: "与小明喝茶", EventDate: "2026-04-01"}, nil, nil); err != nil {
+		t.Fatalf("EventCreate: %v", err)
+	}
+	if err := s.EventCreate(ctx, &Event{Title: "100% 返现活动", EventDate: "2026-05-01"}, nil, nil); err != nil {
+		t.Fatalf("EventCreate 2: %v", err)
+	}
+
+	// 裸 % ：只有真的含 % 的那条该命中
+	res, err := s.Search(ctx, "%", 10)
+	if err != nil {
+		t.Fatalf("Search %%: %v", err)
+	}
+	for _, r := range res {
+		if !strings.Contains(r.Title, "%") {
+			t.Fatalf("搜 %% 命中了不含 %% 的结果: %+v", res)
+		}
+	}
+	if len(res) != 1 || res[0].Title != "100% 返现活动" {
+		t.Fatalf("搜 %% 应只命中那条，得到 %+v", res)
+	}
+
+	// 裸 _ ：库里没有任何一条含下划线，必须空
+	res, err = s.Search(ctx, "_", 10)
+	if err != nil {
+		t.Fatalf("Search _: %v", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("搜 _ 应空，得到 %+v", res)
+	}
+
+	// 反斜杠同理：转义符自身也要按字面找
+	res, err = s.Search(ctx, `\`, 10)
+	if err != nil {
+		t.Fatalf("Search backslash: %v", err)
+	}
+	if len(res) != 0 {
+		t.Fatalf("搜反斜杠应空，得到 %+v", res)
+	}
+
+	// 正常关键字不受影响
+	res, err = s.Search(ctx, "小明", 10)
+	if err != nil {
+		t.Fatalf("Search 小明: %v", err)
+	}
+	if len(res) == 0 {
+		t.Fatalf("正常关键字应能搜到")
+	}
+}
+
+// 人物列表的关键字同样要走转义：以前 "%" 会把所有人捞回来。
+func TestPersonListEscapesWildcards(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	for _, name := range []string{"王小明", "小芳姐", "阿强"} {
+		if err := s.PersonCreate(ctx, &Person{Name: name}); err != nil {
+			t.Fatalf("PersonCreate %s: %v", name, err)
+		}
+	}
+	list, err := s.PersonList(ctx, "%", 0, 0, true, 0, 50, 0)
+	if err != nil {
+		t.Fatalf("PersonList %%: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("搜 %% 应空，得到 %d 人", len(list))
+	}
+	list, err = s.PersonList(ctx, "_", 0, 0, true, 0, 50, 0)
+	if err != nil {
+		t.Fatalf("PersonList _: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("搜 _ 应空，得到 %d 人", len(list))
+	}
+	list, err = s.PersonList(ctx, "小", 0, 0, true, 0, 50, 0)
+	if err != nil {
+		t.Fatalf("PersonList 小: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("搜「小」应命中 2 人，得到 %d", len(list))
+	}
+}
+
 // ===== Timeline =====
 
 func TestEventStore_Timelines(t *testing.T) {

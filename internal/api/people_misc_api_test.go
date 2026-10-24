@@ -566,6 +566,8 @@ func TestAPIPeopleMerge(t *testing.T) {
 	apiWantStatus(t, http.MethodPost, "merge self", s.do(http.MethodPost, "/api/v1/people/"+target+"/merge", map[string]any{"from": target}), http.StatusBadRequest)
 	// 未知来源：SQL 各步 0 行，不报错
 	apiWantStatus(t, http.MethodPost, "merge unknown source", s.do(http.MethodPost, "/api/v1/people/"+target+"/merge", map[string]any{"from": "ghost"}), http.StatusOK)
+	// 未知目标必须 404：以前不查 target，对着空气合并也回「成功」
+	apiWantStatus(t, http.MethodPost, "merge unknown target", s.do(http.MethodPost, "/api/v1/people/ghost-target/merge", map[string]any{"from": target}), http.StatusNotFound)
 }
 
 func TestAPIPeopleFieldsCRUD(t *testing.T) {
@@ -896,7 +898,7 @@ func TestAPIPeopleDBErrors(t *testing.T) {
 		{"list", http.MethodGet, "/api/v1/people/", nil, http.StatusInternalServerError},
 		{"count", http.MethodGet, "/api/v1/people/count", nil, http.StatusInternalServerError},
 		{"create", http.MethodPost, "/api/v1/people/", map[string]any{"name": "x"}, http.StatusInternalServerError},
-		{"get", http.MethodGet, "/api/v1/people/1", nil, http.StatusNotFound},
+		{"get", http.MethodGet, "/api/v1/people/1", nil, http.StatusInternalServerError},
 		{"update", http.MethodPut, "/api/v1/people/1", map[string]any{"name": "x"}, http.StatusInternalServerError},
 		{"delete", http.MethodDelete, "/api/v1/people/1", nil, http.StatusInternalServerError},
 		{"timeline", http.MethodGet, "/api/v1/people/1/timeline", nil, http.StatusInternalServerError},
@@ -907,7 +909,7 @@ func TestAPIPeopleDBErrors(t *testing.T) {
 		{"fields delete", http.MethodDelete, "/api/v1/people/1/fields/2", nil, http.StatusInternalServerError},
 		{"archive", http.MethodPost, "/api/v1/people/1/archive", nil, http.StatusInternalServerError},
 		{"unarchive", http.MethodDelete, "/api/v1/people/1/archive", nil, http.StatusInternalServerError},
-		{"merge", http.MethodPost, "/api/v1/people/1/merge", map[string]any{"from": "2"}, http.StatusBadRequest},
+		{"merge", http.MethodPost, "/api/v1/people/1/merge", map[string]any{"from": "2"}, http.StatusInternalServerError},
 		{"duplicates", http.MethodGet, "/api/v1/people/duplicates?name=x", nil, http.StatusInternalServerError},
 		{"rels of", http.MethodGet, "/api/v1/relationships/of/1", nil, http.StatusInternalServerError},
 		{"rels create", http.MethodPost, "/api/v1/relationships/", map[string]any{"from_person_id": "1", "to_person_id": "2", "type": "t"}, http.StatusInternalServerError},
@@ -967,9 +969,12 @@ func TestAPIAttachUploadAndDelete(t *testing.T) {
 	if err := os.MkdirAll(s.Cfg.Uploads, 0o755); err != nil {
 		t.Fatalf("mkdir uploads: %v", err)
 	}
+	// 附件必须挂在一个真实存在的人身上：entity_id 是自由文本且表上无外键，
+	// 不校验就会落进没人收的孤儿行
+	personID := apiCreatePersonMap(t, s, map[string]any{"name": "附件主人"})["id"].(string)
 
 	content := apiPNGBytes()
-	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": "p-upload"}, "photo.png", content)
+	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": personID}, "photo.png", content)
 	rec := s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantStatus(t, http.MethodPost, "/api/v1/attachments/", rec, http.StatusOK)
 
@@ -979,7 +984,7 @@ func TestAPIAttachUploadAndDelete(t *testing.T) {
 	if attID == "" {
 		t.Fatalf("附件未返回 id: %v", att)
 	}
-	if att["entity_type"] != "person" || att["entity_id"] != "p-upload" || att["file_name"] != "photo.png" {
+	if att["entity_type"] != "person" || att["entity_id"] != personID || att["file_name"] != "photo.png" {
 		t.Fatalf("附件元数据不符: %v", att)
 	}
 	if att["mime"] != "image/png" {
@@ -1036,21 +1041,30 @@ func TestAPIAttachUploadValidation(t *testing.T) {
 	if err := os.MkdirAll(s.Cfg.Uploads, 0o755); err != nil {
 		t.Fatalf("mkdir uploads: %v", err)
 	}
+	personID := apiCreatePersonMap(t, s, map[string]any{"name": "附件宿主"})["id"].(string)
 	before, _ := os.ReadDir(s.Cfg.Uploads)
 
+	// 实体归属：类型不在白名单 / 缺 id / 指向不存在的人，一律 400/404
+	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "event", "entity_id": personID}, "a.png", apiPNGBytes())
+	apiWantError(t, http.MethodPost, "attach bad type", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusBadRequest, "entity_type")
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person"}, "a.png", apiPNGBytes())
+	apiWantError(t, http.MethodPost, "attach no entity", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusBadRequest, "entity_id")
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": "ghost"}, "a.png", apiPNGBytes())
+	apiWantStatus(t, http.MethodPost, "attach unknown person", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusNotFound)
+
 	// 非图片
-	body, ct := apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": "p1"}, "note.txt", []byte("纯文本内容，不是图片"))
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": personID}, "note.txt", []byte("纯文本内容，不是图片"))
 	rec := s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantError(t, http.MethodPost, "attach upload", rec, http.StatusBadRequest, "只接受")
 
 	// SVG 是图片但能带脚本，同样按「不是位图」拒
 	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"></svg>`)
-	body, ct = apiMultipartBody(t, nil, "icon.svg", svg)
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": personID}, "icon.svg", svg)
 	apiWantStatus(t, http.MethodPost, "attach svg", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusBadRequest)
 
 	// polyglot：PNG 头 + HTML 体，文件名还自称 .html —— 落盘名必须由嗅探结果决定
 	poly := append(apiPNGBytes(), []byte("<html><script>alert(1)</script></html>")...)
-	body, ct = apiMultipartBody(t, nil, "evil.html", poly)
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": personID}, "evil.html", poly)
 	rec = s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantStatus(t, http.MethodPost, "attach polyglot", rec, http.StatusOK)
 	polyURL := decodeMap(t, rec)["url"].(string)
@@ -1062,7 +1076,7 @@ func TestAPIAttachUploadValidation(t *testing.T) {
 	}
 
 	// 超过 20MB 上限
-	body, ct = apiMultipartBody(t, nil, "big.png", append(apiPNGBytes(), make([]byte, 21<<20)...))
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": personID}, "big.png", append(apiPNGBytes(), make([]byte, 21<<20)...))
 	apiWantStatus(t, http.MethodPost, "attach too big", s.raw(http.MethodPost, "/api/v1/attachments/", body, ct), http.StatusRequestEntityTooLarge)
 
 	// 只有字段，没有 file
@@ -1083,9 +1097,10 @@ func TestAPIAttachUploadValidation(t *testing.T) {
 		t.Fatalf("非法上传仍写了文件: %v -> %v", before, after)
 	}
 
-	// uploads 目录不存在 => os.Create 失败 => 500
+	// uploads 目录不存在 => os.Create 失败 => 500（实体字段合法，才能走到落盘那步）
 	missing := newTestServer(t)
-	body, ct = apiMultipartBody(t, nil, "a.png", apiPNGBytes())
+	mp := apiCreatePersonMap(t, missing, map[string]any{"name": "没目录的人"})["id"].(string)
+	body, ct = apiMultipartBody(t, map[string]string{"entity_type": "person", "entity_id": mp}, "a.png", apiPNGBytes())
 	rec = missing.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantStatus(t, http.MethodPost, "attach upload no dir", rec, http.StatusInternalServerError)
 }

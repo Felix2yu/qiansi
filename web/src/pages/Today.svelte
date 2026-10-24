@@ -12,7 +12,7 @@
   import { toast, errText } from '../lib/toast.svelte';
   import { completeReminder } from '../lib/reminderActions';
   import { self, loadSelf } from '../lib/self.svelte';
-  import { theme } from '../lib/theme.svelte';
+  import { theme, setOnboardHidden } from '../lib/theme.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
   import LoadError from '../lib/ui/LoadError.svelte';
@@ -37,8 +37,7 @@
   let suggestions = $state<Suggestion[]>([]);
   let loading = $state(true);
   // 首启引导：三步全靠已有数据判定，不做「已读」标记，走完自然就不出现了。
-  // 唯一例外是用户明确说不用教——那就在本机收起，别让它赖在首屏上。
-  let onboardHidden = $state(localStorage.getItem('q_onboard_off') === '1');
+  // 唯一例外是用户明确说不用教——那就在所有设备上收起（本地 + 服务端双写）。
   const onboardSteps = $derived([
     {
       label: '先把第一个人记进来',
@@ -62,12 +61,11 @@
       cta: '去记一笔'
     }
   ]);
-  const showOnboard = $derived(!onboardHidden && onboardSteps.some((s) => !s.done));
+  const showOnboard = $derived(!theme.onboardHidden && onboardSteps.some((s) => !s.done));
   // 首页卡片显隐：设置页「今日页」一排开关控制，这里只读
   const showModule = (key: string) => !theme.todayHidden.includes(key);
   function hideOnboard() {
-    onboardHidden = true;
-    localStorage.setItem('q_onboard_off', '1');
+    void setOnboardHidden(true);
   }
   // 首页只给「要紧的」：逾期与今天，其余留在下方或待办页
   const imminent = $derived((upcoming || []).filter((r) => (r.due_at || '').slice(0, 10) <= today));

@@ -381,7 +381,7 @@ export const KIND_LABEL: Record<string, string> = {
 };
 export const DIRECTION_LABEL: Record<string, string> = { out: '我支出', in: '我收入' };
 export const MEMO_STATUS_LABEL: Record<string, string> = {
-  open: '进行中',
+  open: '待办中',
   fulfilled: '已兑现',
   broken: '未兑现'
 };

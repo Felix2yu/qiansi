@@ -58,6 +58,25 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	// entity_type / entity_id 决定这堆字节挂到谁名下。这一对是自由文本，
+	// attachments 表又没有外键：不校验就会落进永远查不回来的孤儿行——
+	// 头像只认 person，挂到别处既不出现在任何界面，purge 时也没人收文件。
+	// 放在落盘之前，省得为一次非法请求白写一个文件。
+	entityType, entityID := r.FormValue("entity_type"), r.FormValue("entity_id")
+	if entityType != "person" {
+		writeErr(w, 400, "entity_type 只能是 person")
+		return
+	}
+	if entityID == "" {
+		writeErr(w, 400, "entity_id 必填")
+		return
+	}
+	// PersonGet 走 live_people：软删除（回收站里）的人同样挂不上，
+	// 否则恢复后头像与人物对不上。
+	if _, err := a.Store.PersonGet(r.Context(), entityID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
 	// Content-Type 由客户端提供、可伪造，改用前 512 字节嗅探真实类型
 	head := make([]byte, 512)
 	n, _ := io.ReadFull(file, head)
@@ -94,8 +113,8 @@ func (a *API) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att := &store.Attachment{
-		EntityType: r.FormValue("entity_type"),
-		EntityID:   r.FormValue("entity_id"),
+		EntityType: entityType,
+		EntityID:   entityID,
 		FileName:   header.Filename,
 		StoredName: stored,
 		Mime:       mime,

@@ -119,6 +119,7 @@ const KEY_FAMILY = 'q_font_family';
 const KEY_START = 'q_start_page';
 const KEY_MASK = 'q_money_mask';
 const KEY_TODAY = 'q_today_hidden';
+const KEY_ONBOARD = 'q_onboard_off';
 
 const VALID: ThemeMode[] = ['light', 'dark', 'system'];
 
@@ -149,6 +150,7 @@ export const theme = $state<{
   startPage: string;
   maskMoney: boolean;
   todayHidden: string[];
+  onboardHidden: boolean;
 }>({
   mode: readMode(),
   color: localStorage.getItem(KEY_COLOR) || '#9E2A2B',
@@ -156,7 +158,9 @@ export const theme = $state<{
   fontFamily: readFamily(),
   startPage: readStartPage(),
   maskMoney: localStorage.getItem(KEY_MASK) === '1',
-  todayHidden: parseTodayHidden(localStorage.getItem(KEY_TODAY))
+  todayHidden: parseTodayHidden(localStorage.getItem(KEY_TODAY)),
+  // 首启引导的「不用了」：只写本机的话，换台设备它又赖回首屏
+  onboardHidden: localStorage.getItem(KEY_ONBOARD) === '1'
 });
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -221,6 +225,7 @@ export async function initTheme() {
     const start = st['start_page'];
     const mask = st['money_mask'];
     const todayHidden = st['today_hidden'];
+    const onboardHidden = st['onboard_hidden'];
     if (mode && (VALID as string[]).includes(mode)) theme.mode = mode as ThemeMode;
     if (color) theme.color = color;
     if (scale && (VALID_SCALE as string[]).includes(scale)) theme.fontScale = scale as FontScale;
@@ -228,6 +233,10 @@ export async function initTheme() {
     if (start && START_PATHS.includes(start)) theme.startPage = start;
     if (mask === '1' || mask === '0') theme.maskMoney = mask === '1';
     if (todayHidden !== undefined) theme.todayHidden = parseTodayHidden(todayHidden);
+    if (onboardHidden === '1' || onboardHidden === '0') {
+      theme.onboardHidden = onboardHidden === '1';
+      localStorage.setItem(KEY_ONBOARD, onboardHidden);
+    }
     applyTheme();
     // 服务端带来的启动页若与本地不同，且用户还停在 / 没动过，补一次重定向
     applyStartPage(theme.startPage);
@@ -326,6 +335,18 @@ export async function setTodayModule(key: TodayModuleKey, visible: boolean) {
   else localStorage.removeItem(KEY_TODAY);
   try {
     await API.put('/api/v1/settings/today_hidden', { value: joined });
+  } catch {
+    // 同上，本地已生效
+  }
+}
+
+/** 首启引导「不用了」：本机先收，再同步服务端，换设备不再重现。 */
+export async function setOnboardHidden(hidden: boolean) {
+  theme.onboardHidden = hidden;
+  if (hidden) localStorage.setItem(KEY_ONBOARD, '1');
+  else localStorage.removeItem(KEY_ONBOARD);
+  try {
+    await API.put('/api/v1/settings/onboard_hidden', { value: hidden ? '1' : '' });
   } catch {
     // 同上，本地已生效
   }

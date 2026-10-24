@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
@@ -71,8 +72,8 @@ func (a *API) eventGet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	e, err := a.Store.EventGet(r.Context(), id)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			writeErr(w, 404, "not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			writeNotFound(w, "往来")
 			return
 		}
 		writeStoreErr(w, err)
@@ -390,7 +391,11 @@ func (a *API) txGet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	t, err := a.Store.TransactionGet(r.Context(), id)
 	if err != nil {
-		writeErr(w, 404, err.Error())
+		if errors.Is(err, sql.ErrNoRows) {
+			writeNotFound(w, "账目")
+			return
+		}
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, t)
@@ -496,6 +501,12 @@ func (a *API) repaymentCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	if t == nil || t.Kind != "loan" {
 		writeErr(w, 400, "只有借还账目可以登记还款")
+		return
+	}
+	// 还超了必须拦在外面：resyncSettled 只按「本金 - 已还 ≤ 0」打已结清标记，
+	// 超付部分既不进任何合计也没有去处，用户看到的是「明明多还了，余额却是 0」。
+	if t.RepaidFen+rp.AmountFen > t.AmountFen {
+		writeErr(w, 400, fmt.Sprintf("还款总额不能超过本金（还可还 ¥%s）", fenToYuan(t.AmountFen-t.RepaidFen)))
 		return
 	}
 	if err := a.Store.RepaymentCreate(r.Context(), &rp); err != nil {

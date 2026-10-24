@@ -181,11 +181,4 @@ func TestEventBills_UnlinkScopedToEvent(t *testing.T) {
 	if has, _ := s.EventHasBills(ctx, e1.ID); !has {
 		t.Fatal("跨往来解除把原关联也删了")
 	}
-	counts, err := s.EventBillsCounts(ctx, []string{e1.ID, e2.ID})
-	if err != nil {
-		t.Fatalf("EventBillsCounts: %v", err)
-	}
-	if counts[e1.ID] != 1 || counts[e2.ID] != 0 {
-		t.Fatalf("账单数统计不对: %+v", counts)
-	}
 }

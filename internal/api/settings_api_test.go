@@ -550,13 +550,14 @@ func TestAPISettingsTaggings(t *testing.T) {
 	}
 	// 再删一次不报错
 	apiWantStatus(t, http.MethodPost, "taggings/remove again", s.do(http.MethodPost, "/api/v1/taggings/remove", addBody), http.StatusNoContent)
-	// 未知目标
-	if got := apiArray(s, "/api/v1/taggings/of?target_type=memo&target_id=none"); len(got) != 0 {
-		t.Fatalf("未知目标 = %v", got)
-	}
-	if got := apiArray(s, "/api/v1/taggings/of"); len(got) != 0 {
-		t.Fatalf("无参数 = %v", got)
-	}
+	// 未知目标类型一律 400：白名单只有 person 与 event。
+	// 以前放行任意字符串，标签会挂到永远查不回来的类型上（界面显示"加了却没生效"）
+	apiWantStatus(t, http.MethodGet, "taggings/of unknown type", s.do(http.MethodGet, "/api/v1/taggings/of?target_type=memo&target_id=none", nil), http.StatusBadRequest)
+	apiWantStatus(t, http.MethodGet, "taggings/of no type", s.do(http.MethodGet, "/api/v1/taggings/of", nil), http.StatusBadRequest)
+	// 打标同理：类型不在白名单直接拒
+	apiWantStatus(t, http.MethodPost, "taggings/add bad type", s.do(http.MethodPost, "/api/v1/taggings/add", map[string]any{
+		"target_type": "memo", "target_id": personID, "tag_id": 1,
+	}), http.StatusBadRequest)
 
 	apiWantStatus(t, http.MethodPost, "add bad json", s.raw(http.MethodPost, "/api/v1/taggings/add", []byte("<xml"), "application/json"), http.StatusBadRequest)
 	apiWantStatus(t, http.MethodPost, "remove bad json", s.raw(http.MethodPost, "/api/v1/taggings/remove", []byte("<xml"), "application/json"), http.StatusBadRequest)

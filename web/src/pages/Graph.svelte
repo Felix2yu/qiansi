@@ -249,6 +249,14 @@
 
   function onChartClick(p: any) {
     if (Date.now() - dragEndedAt < 300) return;
+    // 点连线 = 给这对人补一种关系。以前这里只认 node，边上是死区，
+    // 而表单里那套「来自图上连线」的预填界面（pending）一直没人喂过数据。
+    if (p?.dataType === 'edge' && view !== 'venn') {
+      const from = p.data?.source as string | undefined;
+      const to = p.data?.target as string | undefined;
+      if (from && to && from !== to) openForm('rel', from, to);
+      return;
+    }
     if (p?.dataType !== 'node' || !p?.data?.id || p.data.guide || p.data.vennBg) return;
     const id = p.data.id as string;
     if (view === 'venn') {

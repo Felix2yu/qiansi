@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -94,7 +95,17 @@ func (a *API) personMerge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.PersonMerge(r.Context(), body.From, id); err != nil {
-		writeErr(w, 400, err.Error())
+		// 以前这里所有错误一律 400：拼错/漏传的 id 与服务端故障混为一谈，
+		// 前端只能显示一句「需要两个不同的联系人」。行不存在就该是 404。
+		if errors.Is(err, store.ErrMergeSamePerson) {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, sql.ErrNoRows) {
+			writeNotFound(w, "联系人")
+			return
+		}
+		writeStoreErr(w, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "merged_into": id})
@@ -191,7 +202,11 @@ func (a *API) peopleGet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	p, err := a.Store.PersonGet(r.Context(), id)
 	if err != nil {
-		writeErr(w, 404, err.Error())
+		if errors.Is(err, sql.ErrNoRows) {
+			writeNotFound(w, "联系人")
+			return
+		}
+		writeStoreErr(w, err)
 		return
 	}
 	fields, _ := a.Store.PersonFieldList(r.Context(), id)

@@ -290,6 +290,9 @@ a {
   display: flex;
   align-items: center;
   gap: 0.8rem;
+  /* 窄屏允许换行：行内元素（金额、按钮组）挤不下时应该折到下一行，
+     而不是把文字压成一条线或溢出容器。Drift 早就单独加了这条，收到基类里。 */
+  flex-wrap: wrap;
   background: var(--q-surface);
   border: 1px solid var(--q-border);
   border-radius: var(--q-radius-sm);

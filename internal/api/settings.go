@@ -245,6 +245,13 @@ func (a *API) registerTaggings(r chi.Router) {
 	})
 }
 
+// tagTargetTypes 是 taggings.target_type 的白名单。这一列是自由文本，
+// 不设限就能把标签挂到任何字符串上——包括拼错的类型，之后永远查不回来
+// （TagsOf 按同一个字符串精确匹配），界面上表现为「加了标签却看不到」。
+var tagTargetTypes = map[string]bool{"person": true, "event": true}
+
+func tagTargetTypeOK(t string) bool { return tagTargetTypes[t] }
+
 func (a *API) tagAdd(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		TargetType string `json:"target_type"`
@@ -253,6 +260,10 @@ func (a *API) tagAdd(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := decode(r, &body); err != nil {
 		writeErr(w, 400, err.Error())
+		return
+	}
+	if !tagTargetTypeOK(body.TargetType) {
+		writeErr(w, 400, "target_type 只能是 person 或 event")
 		return
 	}
 	if err := a.Store.TagAdd(r.Context(), body.TargetType, body.TargetID, body.TagID); err != nil {
@@ -282,6 +293,10 @@ func (a *API) tagRemove(w http.ResponseWriter, r *http.Request) {
 func (a *API) tagOf(w http.ResponseWriter, r *http.Request) {
 	t := r.URL.Query().Get("target_type")
 	id := r.URL.Query().Get("target_id")
+	if !tagTargetTypeOK(t) {
+		writeErr(w, 400, "target_type 只能是 person 或 event")
+		return
+	}
 	list, err := a.Store.TagsOf(r.Context(), t, id)
 	if err != nil {
 		writeStoreErr(w, err)

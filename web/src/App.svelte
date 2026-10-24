@@ -164,7 +164,7 @@
   function openResult(r: SearchResult) {
     searchOpen = false;
     mobileSearch = false;
-    navigate(r.type === 'person' ? r.path : r.path);
+    navigate(r.path);
   }
 
   function isActive(path: string) {

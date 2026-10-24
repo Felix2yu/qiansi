@@ -733,9 +733,9 @@ func TestPeopleMergeValidation(t *testing.T) {
 	if err := s.PersonMerge(ctx, "A", "A"); err == nil {
 		t.Errorf("source==target 应报错")
 	}
-	// 两侧都不存在：所有语句 0 行受影响，事务正常提交且不报错
-	if err := s.PersonMerge(ctx, "ghost1", "ghost2"); err != nil {
-		t.Errorf("合并两个不存在的 ID 不应报错: %v", err)
+	// target 不存在必须报错：以前不查，对着空气合并也「成功」，什么都没发生
+	if err := s.PersonMerge(ctx, "ghost1", "ghost2"); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("target 不存在应 ErrNoRows: %v", err)
 	}
 	if err := s.PersonMerge(pCancelledCtx(), "A", "B"); err == nil {
 		t.Errorf("已取消的 ctx 应让 BeginTx 失败")
