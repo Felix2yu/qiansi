@@ -727,6 +727,8 @@
     <p class="mb-3 text-xs leading-relaxed" style="color: var(--q-muted);">
       关联后，一次往来的开销可以来自货殖里的多张账单，往来卡片按账单汇总。
       牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端。
+      <strong style="color: var(--q-text);">请使用货殖里的「只读」密钥</strong>——读写密钥连带 MCP
+      的删改能力，牵丝用不上，没必要把这份权限交出来。
     </p>
     <div class="space-y-2">
       <div class="flex flex-wrap items-center gap-2">
