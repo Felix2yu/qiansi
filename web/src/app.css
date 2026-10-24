@@ -838,12 +838,13 @@ html.dark .q-select {
   width: 38px;
   height: 38px;
   border-radius: 10px;
-  background: var(--q-theme);
-  color: var(--q-on-theme);
-  font-family: var(--font-serif);
-  font-size: 1.15rem;
-  font-weight: 700;
   box-shadow: 0 2px 8px -2px color-mix(in srgb, var(--q-theme) 55%, transparent);
+}
+.q-brand__seal img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  display: block;
 }
 .q-brand__name {
   font-family: var(--font-serif);

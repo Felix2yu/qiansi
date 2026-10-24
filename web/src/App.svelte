@@ -217,7 +217,7 @@
   <!-- 桌面侧栏 -->
   <aside class="q-side hidden md:flex">
     <div class="q-brand">
-      <div class="q-brand__seal">牵</div>
+      <div class="q-brand__seal"><img src="/favicon.svg" alt="牵丝" /></div>
       <div>
         <div class="q-brand__name">牵丝</div>
         <div class="q-brand__sub">人情往来录</div>
