@@ -310,8 +310,39 @@ func TestAPISettingsRoundTrip(t *testing.T) {
 	apiWantStatus(t, http.MethodPut, "/api/v1/settings/x", rec, http.StatusBadRequest)
 }
 
+// TestAPISettingsSecretMasked 密钥类配置写入后只能读回哨兵值，明文不出服务端。
+func TestAPISettingsSecretMasked(t *testing.T) {
+	s := newTestServer(t)
+
+	rec := s.do(http.MethodPost, "/api/v1/settings/bulk", map[string]string{"huozhi_api_key": "sk-secret-123"})
+	apiWantStatus(t, http.MethodPost, "/api/v1/settings/bulk", rec, http.StatusOK)
+
+	all := s.get("/api/v1/settings/")
+	if got := all["huozhi_api_key"]; got != "__masked__" {
+		t.Fatalf("huozhi_api_key 应脱敏为 __masked__, got %v", got)
+	}
+	// 非密钥配置不受影响
+	rec = s.do(http.MethodPost, "/api/v1/settings/bulk", map[string]string{"huozhi_base_url": "https://hz.example.com"})
+	apiWantStatus(t, http.MethodPost, "/api/v1/settings/bulk", rec, http.StatusOK)
+	if got := s.get("/api/v1/settings/")["huozhi_base_url"]; got != "https://hz.example.com" {
+		t.Fatalf("普通配置不该被脱敏, got %v", got)
+	}
+	// 服务端存的是真值：PUT 覆盖后仍只回显哨兵
+	s.do(http.MethodPut, "/api/v1/settings/huozhi_api_key", map[string]any{"value": "sk-rotated-456"})
+	if got := s.get("/api/v1/settings/")["huozhi_api_key"]; got != "__masked__" {
+		t.Fatalf("轮换后仍应脱敏, got %v", got)
+	}
+}
+
 func TestAPISettingsCategoriesCRUD(t *testing.T) {
 	s := newTestServer(t)
+
+	// 空 name → 400（NOT NULL 列，不能等 SQLite 报 500 英文原文）
+	for _, path := range []string{"/api/v1/categories/", "/api/v1/tags/", "/api/v1/event-types/"} {
+		if rec := s.do(http.MethodPost, path, map[string]any{"name": "  "}); rec.Code != 400 {
+			t.Fatalf("POST %s 空 name 应 400, got %d: %s", path, rec.Code, rec.Body.String())
+		}
+	}
 
 	rec := s.do(http.MethodPost, "/api/v1/categories/", map[string]any{
 		"name": "家人", "color": "#ff0000", "icon": "home", "sort_order": 2,
@@ -569,8 +600,14 @@ func TestAPISettingsDBErrors(t *testing.T) {
 			if rec.Code != http.StatusInternalServerError {
 				t.Fatalf("%s %s => %d, want 500: %s", c.method, c.path, rec.Code, rec.Body.String())
 			}
-			if !strings.Contains(rec.Body.String(), "closed") {
-				t.Fatalf("body = %s", rec.Body.String())
+			// 500 的正文不再外传 SQLite 原文（"sql: database is closed" 之类）：
+			// 对用户没有可操作性，还可能带出内部结构，只回一句人话
+			body := rec.Body.String()
+			if strings.Contains(body, "closed") || strings.Contains(body, "sql:") {
+				t.Fatalf("500 正文泄漏了内部错误: %s", body)
+			}
+			if !strings.Contains(body, "服务器开小差了") {
+				t.Fatalf("body = %s", body)
 			}
 		})
 	}

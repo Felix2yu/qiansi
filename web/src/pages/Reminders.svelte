@@ -6,13 +6,16 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { Plus, Check, Undo2, Bell } from '@lucide/svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
   import { completeReminder } from '../lib/reminderActions';
 
   let list = $state<Reminder[]>([]);
+  // 加载失败与「没有待办」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   let showDone = $state(false);
   let showForm = $state(false);
   let editId = $state('');
@@ -26,13 +29,15 @@
 
   // 后端按本地时间比较 due_at，这里不能再拼 UTC 的 Z，否则会整体偏移一天
   async function load() {
-    list =
-      (await API.get<Reminder[]>(
+    try {
+      list = await API.get<Reminder[]>(
         `/api/v1/reminders?status=${showDone ? 'done' : 'pending'}&limit=200`
-      ).catch((err: any) => {
-        toast.fail('加载失败', err);
-        return [] as Reminder[];
-      })) || [];
+      );
+      loadError = '';
+    } catch (err) {
+      loadError = errText(err);
+      toast.fail('加载失败', err);
+    }
   }
   onMount(() => {
     loadSelf();
@@ -188,7 +193,11 @@
     </div>
 
     {#if groups.length === 0}
-      <Empty icon={Bell} text={showDone ? '还没有已完成的待办' : '没有待办，正好去见见想见的人'} />
+      {#if loadError}
+        <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+      {:else}
+        <Empty icon={Bell} text={showDone ? '还没有已完成的待办' : '没有待办，正好去见见想见的人'} />
+      {/if}
     {:else}
       {#each groups as g, i (i)}
         <section>

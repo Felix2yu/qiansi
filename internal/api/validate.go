@@ -168,6 +168,9 @@ func checkDateRange(from, to string) error {
 // 免得「未填」和「填错」共用一句模糊的提示。
 
 func validateMemo(m *store.Memo) error {
+	if strings.TrimSpace(m.Content) == "" {
+		return errors.New("content 必填：对话内容不能为空")
+	}
 	said, err := normStamp("said_at", m.SaidAt)
 	if err != nil {
 		return err
@@ -190,6 +193,11 @@ func validateTx(t *store.Transaction) error {
 	}
 	if err := oneOf("kind", t.Kind, "loan", "gift", "expense", "other"); err != nil {
 		return err
+	}
+	// direction 不能默认：礼物统计、未结清余额、CSV 方向列全按它分流，
+	// 空串漏算是静默的错账，宁可拦住也不能猜一个方向
+	if t.Direction == "" {
+		return errors.New("direction 必填：in（我收到）/ out（我支出）")
 	}
 	if err := oneOf("direction", t.Direction, "in", "out"); err != nil {
 		return err

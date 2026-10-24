@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
@@ -311,8 +312,9 @@ func (c *vCard) displayName() string {
 	return ""
 }
 
-// normalizeBirthday 从 BDAY 提取 YYYY-MM-DD，无法识别返回空串
-func normalizeBirthday(raw string) string {
+// birthdayShape 把 BDAY 原文收敛成 YYYY-MM-DD 形状。
+// 认不出的形状（--MM-DD、缺年份、纯文本）返回空串，调用方按「这条生日用不了」处理。
+func birthdayShape(raw string) string {
 	s := strings.TrimSpace(raw)
 	s = strings.TrimSuffix(s, "Z")
 	if i := strings.IndexAny(s, "T "); i >= 0 {
@@ -323,12 +325,38 @@ func normalizeBirthday(raw string) string {
 		s = s[:4] + "-" + s[4:6] + "-" + s[6:8]
 	}
 	if len(s) != 10 {
-		return "" // --MM-DD 或缺失年份等格式不支持
+		return ""
 	}
 	if _, err := strconv.Atoi(s[:4]); err != nil || s[4] != '-' {
 		return ""
 	}
 	return s
+}
+
+// normalizeBirthday 从 BDAY 提取 YYYY-MM-DD，无法识别返回空串。
+// 形状对但日子不存在（1990-13-01、1990-1a-01）同样返回空串——那种值进了库，
+// 纪念日的下次 occurrence 永远推不出来，提醒既到不了点也清不掉。
+func normalizeBirthday(raw string) string {
+	s := birthdayShape(raw)
+	if s == "" {
+		return ""
+	}
+	if _, err := time.Parse("2006-01-02", s); err != nil {
+		return ""
+	}
+	return s
+}
+
+// badBirthday 判断「形状像完整生日、但日子不存在」。
+// 与 normalizeBirthday 的区别在于调用方要区分两种空：不支持的形状照旧静默跳过，
+// 而这种必须拦住——导入路径绕过 validatePerson，不拦就会直达库中。
+func badBirthday(raw string) bool {
+	s := birthdayShape(raw)
+	if s == "" {
+		return false
+	}
+	_, err := time.Parse("2006-01-02", s)
+	return err != nil
 }
 
 func isAllDigits(s string) bool {
@@ -607,6 +635,17 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 预检生日：形状像 YYYY-MM-DD 但日子不存在（1990-13-01）的卡，在写任何
+	// 东西之前整份拦住。导入路径不走 validatePerson，不拦就会直达库中，
+	// 再顺着 SyncBirthdayAnniversary 生成一个永远推不出 occurrence 的纪念日。
+	for i, card := range cards {
+		if b := card.get("BDAY"); b != nil && badBirthday(b.value_()) {
+			writeErr(w, 400, fmt.Sprintf("第 %d 张名片的生日「%s」不是有效日期，已取消导入（支持 YYYY-MM-DD / YYYYMMDD）",
+				i+1, strings.TrimSpace(b.value_())))
+			return
+		}
+	}
+
 	// 已有联系人用于去重
 	existing, err := a.Store.PersonList(ctx, "", 0, 0, true, 0, 1<<30, 0)
 	if err != nil {
@@ -630,6 +669,21 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 	skipped := 0
 	updated := 0
 	created := []*store.Person{}
+	// abort 收拢所有中途失败：这一趟新建的联系人撤回回收站，不谎报成功、
+	// 也不留半份数据让人分不清哪些是刚导进来的。撤不回只能如实报出来。
+	abort := func(msg string, cause error) {
+		var rollbackErr error
+		for _, p := range created {
+			if err := a.Store.PersonDelete(ctx, p.ID); err != nil && !errors.Is(err, sql.ErrNoRows) && rollbackErr == nil {
+				rollbackErr = err
+			}
+		}
+		if rollbackErr != nil {
+			writeErr(w, 500, fmt.Sprintf("%s：%v；部分新建的联系人未能撤回，请在回收站检查", msg, cause))
+			return
+		}
+		writeErr(w, 500, fmt.Sprintf("%s：%v；本次新建的联系人已撤回回收站", msg, cause))
+	}
 	for _, card := range cards {
 		p, fields, ok := vCardToPerson(card)
 		if !ok {
@@ -641,7 +695,7 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 		if p.XAbUID != "" {
 			if id, hit := uidToID[p.XAbUID]; hit {
 				if err := a.Store.PersonUpdateNameParts(ctx, id, p.Name, p.FamilyName, p.GivenName); err != nil {
-					writeErr(w, 500, fmt.Sprintf("更新「%s」姓名失败: %v", p.Name, err))
+					abort(fmt.Sprintf("更新「%s」姓名失败", p.Name), err)
 					return
 				}
 				// 只顺着卡上的标记归档、不反向取消：外来 vcf 没有这个属性，
@@ -649,7 +703,7 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 				if p.Archived {
 					// 从开头读出列表到现在，这一条可能已被别处删掉；不影响导入，跳过
 					if err := a.Store.PersonArchive(ctx, id); err != nil && !errors.Is(err, sql.ErrNoRows) {
-						writeErr(w, 500, fmt.Sprintf("归档「%s」失败: %v", p.Name, err))
+						abort(fmt.Sprintf("归档「%s」失败", p.Name), err)
 						return
 					}
 				}
@@ -665,12 +719,12 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 			seen[k] = true
 		}
 		if err := a.Store.PersonCreate(ctx, p); err != nil {
-			writeErr(w, 500, fmt.Sprintf("导入「%s」失败: %v", p.Name, err))
+			abort(fmt.Sprintf("导入「%s」失败", p.Name), err)
 			return
 		}
 		// BDAY 也要进入纪念日与提醒：手工新建走 peopleCreate 同步，导入路径同样补齐
 		if err := a.Store.SyncBirthdayAnniversary(ctx, p); err != nil {
-			writeErr(w, 500, fmt.Sprintf("同步「%s」生日纪念日失败: %v", p.Name, err))
+			abort(fmt.Sprintf("同步「%s」生日纪念日失败", p.Name), err)
 			return
 		}
 		if p.XAbUID != "" {
@@ -680,7 +734,7 @@ func (a *API) peopleImportVCard(w http.ResponseWriter, r *http.Request) {
 		for _, f := range fields {
 			f.PersonID = p.ID
 			if err := a.Store.PersonFieldUpsert(ctx, f); err != nil {
-				writeErr(w, 500, fmt.Sprintf("写入「%s」字段失败: %v", p.Name, err))
+				abort(fmt.Sprintf("写入「%s」字段失败", p.Name), err)
 				return
 			}
 		}

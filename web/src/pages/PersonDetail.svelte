@@ -20,10 +20,11 @@
   import PersonRelEditor from '../lib/PersonRelEditor.svelte';
   import EventForm from '../lib/EventForm.svelte';
   import Modal from '../lib/ui/Modal.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { navigate } from '../lib/router';
   import { self, setSelf, loadSelf, personLabel } from '../lib/self.svelte';
   import { dict, ensure, refresh } from '../lib/dict.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
   import {
@@ -45,6 +46,8 @@
 
   let { id = '' }: { id?: string } = $props();
   let person = $state<Person | null>(null);
+  // 加载失败与「人物不存在」必须分开显示：前者是没读到，后者是真的没有
+  let detailError = $state('');
   // 没设亲密度就不排五个空心号，元信息按实际有的字段拼
   const metaLine = $derived.by(() => {
     const p = person;
@@ -249,6 +252,7 @@
     try {
       const r = (await API.get(`/api/v1/people/${id}`)) as any;
       person = r.person;
+      detailError = '';
       fields = (r.fields || []) as PersonField[];
       // 认识路径以本人为终点，得先知道「我是谁」
       await loadSelf(true);
@@ -271,6 +275,8 @@
     } catch (err) {
       // 拉不到也不能装作「人物不存在」或留着半截数据：失败要说出来
       toast.fail('加载失败', err);
+      detailError = errText(err);
+      person = null;
     } finally {
       loading = false;
     }
@@ -765,7 +771,13 @@
     </div>
   </div>
 {:else}
-  <div class="q-page py-16 text-center" style="color: var(--q-muted);">人物不存在</div>
+  {#if detailError}
+    <div class="q-page py-16 text-center">
+      <LoadError text={`加载失败：${detailError}`} onretry={() => load()} />
+    </div>
+  {:else}
+    <div class="q-page py-16 text-center" style="color: var(--q-muted);">人物不存在</div>
+  {/if}
 {/if}
 
 {#if showEdit && person}

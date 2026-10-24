@@ -52,7 +52,10 @@
   let showBillPicker = $state(false);
   let billBusy = $state(false);
 
-  const billsSum = $derived(bills.reduce((n, b) => n + (b.amount_fen || 0), 0));
+  // 只数支出账单：与后端 eventColumns 的口径一致（入账/转账不是这次往来的花费）
+  const billsSum = $derived(
+    bills.reduce((n, b) => (b.type === 'expense' ? n + (b.amount_fen || 0) : n), 0)
+  );
   const hasBills = $derived(bills.length > 0);
 
   type Form = {
@@ -119,7 +122,12 @@
     try {
       const d = (await API.get(`/api/v1/events/${id}`)) as Event;
       if (seq !== loadSeq) return;
-      const own = (d.expenses || []).find((t) => t.kind === 'expense' && t.direction === 'out');
+      // 开销只认事件自己认领的那笔（expense_transaction_id 指针）。
+      // 用户从金钱页手工挂上来的 expense 也计入 expense_fen 合计，但表单不能
+      // 把它们预填成「事件的开销」——再保存一次就等于把别人的账复制成自己的。
+      const own = d.expense_transaction_id
+        ? (d.expenses || []).find((t) => t.id === d.expense_transaction_id)
+        : undefined;
       originExpenseFen = d.expense_fen || own?.amount_fen || 0;
       bills = d.bills || [];
       form = {
@@ -131,11 +139,7 @@
         gift: d.gift || '',
         summary: d.summary || '',
         participant_ids: (d.participants || []).map((p) => p.id),
-        expense_yuan: own
-          ? (own.amount_fen / 100).toFixed(2)
-          : d.expense_fen
-            ? (d.expense_fen / 100).toFixed(2)
-            : '',
+        expense_yuan: own ? (own.amount_fen / 100).toFixed(2) : '',
         expense_person_id: own?.person_id || '',
         // 礼金三项都从事件自带那笔账上读回，编辑时不改动就不该再复制一条
         gift_yuan: d.gift_amount_fen ? (d.gift_amount_fen / 100).toFixed(2) : '',

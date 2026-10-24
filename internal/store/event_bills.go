@@ -68,6 +68,12 @@ func (s *Store) EventBillLink(ctx context.Context, b *EventBill) (*EventBill, er
 	if b.EventID == "" || b.RemoteID == "" {
 		return nil, sql.ErrNoRows
 	}
+	// type 空串按支出计：开销合计只数支出账单（见 eventColumns），
+	// 而「没带 type」和「是支出」在调用方（测试、老数据）里分不清，
+	// 归一化成支出比静默漏进合计更安全
+	if b.Type == "" {
+		b.Type = "expense"
+	}
 	now := nowUTC()
 	_, err := s.DB.ExecContext(ctx, `INSERT INTO event_bills
 (id,event_id,remote_id,remote_base,amount_fen,type,tx_date,description,category_name,account_name,book_name,created_at,synced_at)
@@ -131,7 +137,9 @@ WHERE id=? AND event_id=?`,
 // EventHasBills 是否有任何关联账单。写入路径用它决定「手填开销还作不作数」。
 func (s *Store) EventHasBills(ctx context.Context, eventID string) (bool, error) {
 	var n int
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_bills WHERE event_id=?`, eventID).Scan(&n)
+	// 只数支出账单：入账/转账账单不构成「这次往来的开销」，
+	// 拿它们当权威会把手填开销的编辑权也一起禁掉
+	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_bills WHERE event_id=? AND type='expense'`, eventID).Scan(&n)
 	if err != nil {
 		return false, err
 	}

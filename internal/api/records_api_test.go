@@ -77,6 +77,13 @@ func TestAPIRecords_EventFullLifecycle(t *testing.T) {
 		t.Fatalf("坏 JSON 应 400, got %d", rec.Code)
 	}
 	// 有开销但无参与人/归属人 → 400
+	// 缺 title/date → 400（都是 NOT NULL 列，不能等到 SQLite 报 500 英文原文）
+	if rec := ts.do(http.MethodPost, "/api/v1/events/", map[string]any{"event_date": "2026-05-01"}); rec.Code != 400 {
+		t.Fatalf("缺 title 应 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := ts.do(http.MethodPost, "/api/v1/events/", map[string]any{"title": "只有标题"}); rec.Code != 400 {
+		t.Fatalf("缺 event_date 应 400, got %d", rec.Code)
+	}
 	rec = ts.do(http.MethodPost, "/api/v1/events/", map[string]any{
 		"title": "无主开销", "event_date": "2026-05-01", "expense_fen": 100,
 	})
@@ -276,6 +283,12 @@ func TestAPIRecords_Memos(t *testing.T) {
 	if rec := ts.do(http.MethodPost, "/api/v1/memos/", map[string]any{"content": "x"}); rec.Code != 400 {
 		t.Fatalf("缺 said_at 应 400, got %d", rec.Code)
 	}
+	// 空 content → 400（NOT NULL 列，不能等 SQLite 报 500 英文原文）
+	if rec := ts.do(http.MethodPost, "/api/v1/memos/", map[string]any{
+		"content": "  ", "said_at": "2026-05-01T10:00:00",
+	}); rec.Code != 400 {
+		t.Fatalf("空 content 应 400, got %d: %s", rec.Code, rec.Body.String())
+	}
 	// 坏 JSON → 400
 	if rec := ts.raw(http.MethodPost, "/api/v1/memos/", []byte("nope"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400, got %d", rec.Code)
@@ -358,6 +371,12 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if rec := ts.do(http.MethodPost, "/api/v1/transactions/", map[string]any{"person_id": p, "amount_fen": 1}); rec.Code != 400 {
 		t.Fatalf("缺 occurred_at 应 400, got %d", rec.Code)
 	}
+	// 缺 direction → 400：空串会静默漏算礼物统计与未结清余额
+	if rec := ts.do(http.MethodPost, "/api/v1/transactions/", map[string]any{
+		"person_id": p, "kind": "loan", "amount_fen": 100, "occurred_at": "2026-05-01",
+	}); rec.Code != 400 {
+		t.Fatalf("缺 direction 应 400, got %d: %s", rec.Code, rec.Body.String())
+	}
 	// 坏 JSON → 400
 	if rec := ts.raw(http.MethodPost, "/api/v1/transactions/", []byte("{"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 应 400, got %d", rec.Code)
@@ -433,8 +452,28 @@ func TestAPIRecords_TransactionsAndRepayments(t *testing.T) {
 	if rec := ts.raw(http.MethodPost, "/api/v1/transactions/"+txID+"/repayments", []byte("bad"), "application/json"); rec.Code != 400 {
 		t.Fatalf("坏 JSON 还款应 400")
 	}
-	if rec := ts.do(http.MethodPost, "/api/v1/transactions/ghost/repayments", map[string]any{"amount_fen": 1}); rec.Code != 400 {
-		t.Fatalf("未知交易还款应 400, got %d: %s", rec.Code, rec.Body.String())
+	if rec := ts.do(http.MethodPost, "/api/v1/transactions/ghost/repayments", map[string]any{"amount_fen": 1}); rec.Code != 404 {
+		t.Fatalf("未知交易还款应 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// 非借还账目不能登记还款：礼物/花销提交即结清，还款会把它们翻成未结清
+	giftRec := ts.do(http.MethodPost, "/api/v1/transactions/", map[string]any{
+		"person_id": p, "kind": "gift", "direction": "out", "amount_fen": 800,
+		"title": "礼物", "occurred_at": "2026-05-02",
+	})
+	if giftRec.Code != 200 {
+		t.Fatalf("建礼物账失败: %d", giftRec.Code)
+	}
+	giftID := evAPIStr(decodeMap(t, giftRec), "id")
+	if rec := ts.do(http.MethodPost, "/api/v1/transactions/"+giftID+"/repayments", map[string]any{"amount_fen": 100}); rec.Code != 400 {
+		t.Fatalf("非借还账目还款应 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	gift := ts.get("/api/v1/transactions/" + giftID)
+	if !gift["settled"].(bool) {
+		t.Fatalf("礼物账应保持已结清: %v", gift)
+	}
+	if rec := ts.do(http.MethodDelete, "/api/v1/transactions/"+giftID, nil); rec.Code != 204 {
+		t.Fatalf("删除礼物账应 204")
 	}
 
 	// 还款列表

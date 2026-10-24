@@ -5,13 +5,16 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { personLabel, loadSelf } from '../lib/self.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
 
   let list = $state<Memo[]>([]);
+  // 加载失败与「暂无记录」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   let onlyPromises = $state(false);
   let showForm = $state(false);
   let editId = $state('');
@@ -37,13 +40,18 @@
 
   async function load(reset = true) {
     if (reset) page = 0;
-    const batch = await API.get<Memo[]>(
-      `/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`
-    ).catch((err: any) => {
+    let batch: Memo[] | null = null;
+    try {
+      batch = await API.get<Memo[]>(
+        `/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`
+      );
+    } catch (err) {
       // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
+      loadError = errText(err);
       toast.fail('加载失败', err);
-      return [] as Memo[];
-    });
+      return;
+    }
+    loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
@@ -223,12 +231,23 @@
           </div>
         </div>
       {:else}
-        <Empty
-          icon={MessageCircle}
-          text={onlyPromises ? '还没有承诺记录' : '暂无记录，把重要的话记下来'}
-        />
+        {#if loadError}
+          <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+        {:else}
+          <Empty
+            icon={MessageCircle}
+            text={onlyPromises ? '还没有承诺记录' : '暂无记录，把重要的话记下来'}
+          />
+        {/if}
       {/each}
     </div>
+
+    {#if loadError && list.length > 0}
+      <div class="text-center text-sm" style="color: var(--q-danger);">
+        加载失败：{loadError}
+        <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => load()}>重试</button>
+      </div>
+    {/if}
 
     {#if hasMore}
       <div class="text-center">

@@ -14,16 +14,19 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { navigate } from '../lib/router';
   import { Search, Plus, Trash2, Upload, Download, Undo2, Pencil, Users } from '@lucide/svelte';
   import { dict, ensure } from '../lib/dict.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
 
   let { mode = 'list' }: { mode?: string } = $props();
 
   let list = $state<Person[]>([]);
+  // 加载失败与「暂无联系人」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   let q = $state('');
   const categories = $derived(dict.categories);
   const tags = $derived(dict.tags);
@@ -199,10 +202,13 @@
     const batch = await API.get<Person[]>(
       `/api/v1/people?q=${encodeURIComponent(q)}${archived}${gender}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
     ).catch((err) => {
-      // 读失败也不能显示「暂无联系人」，那看起来像是数据没了
+      // 读失败不能显示「暂无联系人」，那看起来像是数据没了
+      loadError = errText(err);
       toast.fail('加载失败', err);
-      return [] as Person[];
+      return null;
     });
+    if (batch === null) return;
+    loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
@@ -550,7 +556,9 @@
         </div>
       {:else}
         <div class="col-span-full">
-          {#if onlyArchived}
+          {#if loadError}
+            <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+          {:else if onlyArchived}
             <Empty icon={Users} text="没有已归档的联系人" />
           {:else}
             <Empty icon={Users} text="暂无联系人，新建一位，或导入 vCard 通讯录文件">
@@ -567,6 +575,13 @@
         </div>
       {/each}
     </div>
+
+    {#if loadError && list.length > 0}
+      <div class="text-center text-sm" style="color: var(--q-danger);">
+        加载失败：{loadError}
+        <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => load()}>重试</button>
+      </div>
+    {/if}
 
     {#if hasMore}
       <div class="text-center">

@@ -3,10 +3,22 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/qiansi/app/internal/store"
 )
+
+// requireName 名单类字典（圈子/标签/事件类型）的 name 都是 NOT NULL 列。
+// 缺这道校验时，空名会以 500 + SQLite 英文原文（"NOT NULL constraint failed:
+// categories.name"）的形式爆出来——用户看不懂，也无从修正。
+func requireName(w http.ResponseWriter, name string) bool {
+	if strings.TrimSpace(name) == "" {
+		writeErr(w, 400, "name 必填")
+		return false
+	}
+	return true
+}
 
 // ===== settings =====
 
@@ -42,6 +54,9 @@ func (a *API) categoryCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if !requireName(w, c.Name) {
+		return
+	}
 	if err := a.Store.CategoryUpsert(r.Context(), &c); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -61,6 +76,9 @@ func (a *API) categoryUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c.ID = id
+	if !requireName(w, c.Name) {
+		return
+	}
 	if err := a.Store.CategoryUpsert(r.Context(), &c); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -105,6 +123,9 @@ func (a *API) tagCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if !requireName(w, t.Name) {
+		return
+	}
 	if err := a.Store.TagUpsert(r.Context(), &t); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -124,6 +145,9 @@ func (a *API) tagUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	t.ID = id
+	if !requireName(w, t.Name) {
+		return
+	}
 	if err := a.Store.TagUpsert(r.Context(), &t); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -168,6 +192,9 @@ func (a *API) eventTypeCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if !requireName(w, e.Name) {
+		return
+	}
 	if err := a.Store.EventTypeUpsert(r.Context(), &e); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -187,6 +214,9 @@ func (a *API) eventTypeUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e.ID = id
+	if !requireName(w, e.Name) {
+		return
+	}
 	if err := a.Store.EventTypeUpsert(r.Context(), &e); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -262,11 +292,25 @@ func (a *API) tagOf(w http.ResponseWriter, r *http.Request) {
 
 func isNoRows(err error) bool { return err == sql.ErrNoRows }
 
+// secretSettingKeys 是绝不回显明文值的配置项。GET /settings 对它们只回答
+// 「有没有」，不回答「是什么」：密钥是长期有效的，一旦进了浏览器响应，
+// 任何 XSS、代理日志、页面错误上报都能把它读走。
+var secretSettingKeys = map[string]bool{"huozhi_api_key": true}
+
+// settingMasked 是脱敏后回显的哨兵值。前端据此把输入框留空并提示「已保存」，
+// 保存时不上报该键，服务端因此保留原值——「改地址不动密钥」不必重新粘贴一遍。
+const settingMasked = "__masked__"
+
 func (a *API) settingsAll(w http.ResponseWriter, r *http.Request) {
 	m, err := a.Store.SettingAll(r.Context())
 	if err != nil {
 		writeStoreErr(w, err)
 		return
+	}
+	for k := range m {
+		if secretSettingKeys[k] && m[k] != "" {
+			m[k] = settingMasked
+		}
 	}
 	writeJSON(w, 200, m)
 }

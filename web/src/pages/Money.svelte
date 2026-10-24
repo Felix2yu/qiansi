@@ -7,6 +7,7 @@
     todayLocal,
     KIND_LABEL,
     DIRECTION_LABEL,
+    type Event,
     type Transaction,
     type Repayment
   } from '../lib/api';
@@ -14,15 +15,23 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { personLabel, loadSelf } from '../lib/self.svelte';
   import { dict, ensure } from '../lib/dict.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
 
   let list = $state<Transaction[]>([]);
+  // 加载失败与「暂无记录」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   const events = $derived(dict.events);
+  // 「关联事件」下拉只带最近 100 条往来。编辑一笔关联了更早往来的账目时，
+  // 当前关联值必须出现在选项里——否则 select 找不到匹配项会落到空值上，
+  // 用户什么都没做，保存却把关联静默改没了。这里把当前关联补进来。
+  let extraEvents = $state<Event[]>([]);
+  const eventOptions = $derived([...extraEvents, ...events]);
   let showForm = $state(false);
   let editId = $state('');
   let form = $state(emptyForm());
@@ -84,11 +93,18 @@
     if (filterSettled) qs.set('settled', filterSettled);
     if (filterFrom) qs.set('from', filterFrom);
     if (filterTo) qs.set('to', filterTo);
-    const batch = await API.get<Transaction[]>(`/api/v1/transactions?${qs}`).catch((err: any) => {
-      toast.fail('加载失败', err);
-      return [] as Transaction[];
-    });
+    let batch: Transaction[] | null = null;
+    try {
+      batch = await API.get<Transaction[]>(`/api/v1/transactions?${qs}`);
+    } catch (err) {
+      if (mine === reqId) {
+        loadError = errText(err);
+        toast.fail('加载失败', err);
+      }
+      return;
+    }
     if (mine !== reqId) return;
+    loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
@@ -119,6 +135,16 @@
     }
     editId = full.id;
     pickedName = full.person_name || '';
+    // 当前关联的往来若不在「最近 100 条」里，单独取回来补进选项，
+    // 保证保存时不会把旧关联静默清空
+    if (full.event_id && !dict.events.some((e) => e.id === full.event_id)) {
+      try {
+        const ev = (await API.get(`/api/v1/events/${full.event_id}`)) as Event;
+        extraEvents = [ev, ...extraEvents.filter((e) => e.id !== ev.id)];
+      } catch {
+        // 事件已不存在：选项里没有它，保存即解除关联，与后端口径一致
+      }
+    }
     form = {
       person_id: full.person_id,
       kind: full.kind,
@@ -390,12 +416,23 @@
           </div>
         </div>
       {:else}
-        <Empty
-          icon={Wallet}
-          text={anyFilter ? '没有符合条件的记录' : '暂无记录，记一笔借还或礼物'}
-        />
+        {#if loadError}
+          <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+        {:else}
+          <Empty
+            icon={Wallet}
+            text={anyFilter ? '没有符合条件的记录' : '暂无记录，记一笔借还或礼物'}
+          />
+        {/if}
       {/each}
     </div>
+
+    {#if loadError && list.length > 0}
+      <div class="text-center text-sm" style="color: var(--q-danger);">
+        加载失败：{loadError}
+        <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => load()}>重试</button>
+      </div>
+    {/if}
 
     {#if hasMore}
       <div class="text-center">
@@ -443,7 +480,7 @@
       </div>
       <select bind:value={form.event_id} class="q-select">
         <option value="">关联事件（可选）</option>
-        {#each events as e (e.id)}
+        {#each eventOptions as e (e.id)}
           <option value={e.id}>{new Date(e.event_date).toLocaleDateString()} · {e.title}</option>
         {/each}
       </select>

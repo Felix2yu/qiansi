@@ -34,6 +34,10 @@ type Event struct {
 	ExpenseFen      int            `json:"expense_fen,omitempty"` // 关联开销合计（分）
 	ExpensePersonID string         `json:"expense_person_id,omitempty"`
 	Expenses        []*Transaction `json:"expenses,omitempty"`
+	// ExpenseTransactionID 指向被事件认领的那笔开销（kind='expense'）。
+	// 用户从金钱页手工挂到本事件上的 expense 交易不在其列——事件表单的
+	// 开销字段只认领、只改动这一条，绝不按 event_id 批量删（同 GiftTransactionID）。
+	ExpenseTransactionID string `json:"expense_transaction_id,omitempty"`
 	// 关联的货殖账单（1:N）。有账单时 expense_fen 取账单之和，见 eventColumns。
 	Bills     []*EventBill `json:"bills,omitempty"`
 	BillCount int          `json:"bill_count,omitempty"`
@@ -84,34 +88,64 @@ type EventExpense struct {
 	OccurredAt string
 }
 
-// applyEventExpense 在事件所在的事务里把开销对齐到 ex。
+// applyEventExpense 在事件所在的事务里把「事件认领的那笔开销」对齐到 ex。
+//
+// 只认 events.expense_transaction_id 指向的那一条：用户从金钱页手工挂上来的
+// expense 交易（event_id 同样指向本事件）不在其列，保存事件既不改写它、也不删它。
+// 指针失效的两种情况都当作「没有认领」：账目被删（外键 ON DELETE SET NULL 已清列，
+// 但同一事务里读到的可能还是旧值）、被软删除进回收站，或被人改挂到了别的事件上
+// ——那种情况下它属于另一个事件。
 //
 // 这一步不能挪到 API 层事后补写：事件提交成功、开销写入失败（归属人被并发删掉、
 // 磁盘满、进程被杀）就会留下一张金额与账本对不上的事件，而且下次保存会再补一条。
-func applyEventExpense(ctx context.Context, tx *sql.Tx, eventID string, ex *EventExpense) error {
+func applyEventExpense(ctx context.Context, tx *sql.Tx, e *Event, ex *EventExpense) error {
+	owned := e.ExpenseTransactionID
+	if owned != "" {
+		var evID sql.NullString
+		err := tx.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE id=? AND deleted_at IS NULL", owned).Scan(&evID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err != nil || !evID.Valid || evID.String != e.ID {
+			owned = ""
+		}
+	}
 	if ex == nil || ex.AmountFen <= 0 {
-		_, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE event_id=? AND kind='expense'", eventID)
-		return err
+		// 只删自己认领的那笔；手工挂账留着（它可能因解除账单关联而重新生效）。
+		if owned != "" {
+			if _, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE id=?", owned); err != nil {
+				return err
+			}
+		}
+		if e.ExpenseTransactionID != "" {
+			// 指针失效（账目已不在）时也要落一个 NULL，别留永远认领不到的引用
+			if _, err := tx.ExecContext(ctx, "UPDATE events SET expense_transaction_id=NULL WHERE id=?", e.ID); err != nil {
+				return err
+			}
+			e.ExpenseTransactionID = ""
+		}
+		return nil
 	}
-	// 只保留一条：历史上重复保存可能挂出多笔
-	var keep string
-	err := tx.QueryRowContext(ctx,
-		"SELECT id FROM transactions WHERE event_id=? AND kind='expense' ORDER BY created_at, id LIMIT 1", eventID).Scan(&keep)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if keep == "" {
+	if owned == "" {
+		owned = uuid.NewString()
 		_, err := tx.ExecContext(ctx, `INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id)
 VALUES(?,?,'expense','out',?,?,?,NULL,1,?,?,?)`,
-			uuid.NewString(), ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, nowUTC(), eventID)
+			owned, ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, nowUTC(), e.ID)
+		if err != nil {
+			return err
+		}
+	} else {
+		_, err := tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,direction='out',amount_fen=?,title=?,occurred_at=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
+			ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, owned)
+		if err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE events SET expense_transaction_id=? WHERE id=?", owned, e.ID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM transactions WHERE event_id=? AND kind='expense' AND id<>?", eventID, keep); err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,direction='out',amount_fen=?,title=?,occurred_at=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
-		ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, keep)
-	return err
+	e.ExpenseTransactionID = owned // 让新建/更新事件的响应也带得上这个 id
+	return nil
 }
 
 // applyEventGift 在同一事务里对齐事件自带的那笔礼金（N2）。
@@ -175,14 +209,16 @@ VALUES(?,?,'gift',?,?,?,?,NULL,1,?,?,?)`,
 }
 
 // EventCreate 写入事件、参与人与它自带的那笔开销和礼金。
-// expense 为 nil 表示「这个事件没有开销」，会顺带清掉该事件下 kind='expense' 的往来。
+// expense 为 nil 表示「这个事件没有开销」，只会清掉事件认领的那笔，
+// 用户手工挂在事件上的交易不受影响。
 func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	if e.ID == "" {
 		e.ID = uuid.NewString()
 	}
 	e.CreatedAt = nowUTC()
 	e.UpdatedAt = e.CreatedAt
-	e.GiftTransactionID = "" // 新建没有可认领的账，客户端传什么都不认
+	e.GiftTransactionID = ""      // 新建没有可认领的账，客户端传什么都不认
+	e.ExpenseTransactionID = ""   // 同上
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -198,7 +234,7 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 			return err
 		}
 	}
-	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
+	if err := applyEventExpense(ctx, tx, e, expense); err != nil {
 		return err
 	}
 	if err := applyEventGift(ctx, tx, e); err != nil {
@@ -226,7 +262,15 @@ func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []stri
 			return err
 		}
 	}
-	if err := applyEventExpense(ctx, tx, e.ID, expense); err != nil {
+	// 开销指针同样由服务端说了算：表单回不回传、传了什么，都不能让它去认领
+	// 别的事件的账，也不能因为漏传就把用户手工挂的开销删掉。只认回收站外的那一条。
+	var storedExpense string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT t.id FROM live_transactions t
+WHERE t.id=(SELECT expense_transaction_id FROM events WHERE id=?)),'')`, e.ID).Scan(&storedExpense); err != nil {
+		return err
+	}
+	e.ExpenseTransactionID = storedExpense
+	if err := applyEventExpense(ctx, tx, e, expense); err != nil {
 		return err
 	}
 	// 礼金指针由服务端说了算：表单回不回传、传了什么，都不能让它去认领别的事件的账，
@@ -274,28 +318,30 @@ func (s *Store) EventPurge(ctx context.Context, id string) error {
 // 后面三列是事件自带那笔礼金的投影：金额/方向/归属都从 transactions 读，
 // 事件表里只留一个认领用的 id。
 //
-// 第一列开销有两套口径，按「有没有关联货殖账单」切换：
-// 有账单 → 账单金额之和（账单是权威，手填的那笔不再计入，否则同一笔钱算两次）；
+// 第一列开销有两套口径，按「有没有关联货殖支出账单」切换：
+// 有账单 → 支出账单金额之和（账单是权威，手填的那笔不再计入，否则同一笔钱算两次）；
 // 没账单 → 沿用原有 logic：挂在本往来上的支出交易之和，减去自带礼金那笔。
+// 入账/转账账单不是这次往来的花费：既不计入合计，也不触发「账单权威」切换。
 const eventColumns = `e.id,e.title,e.type_id,e.event_date,e.location,e.locations,e.has_gift,e.gift,e.summary,e.created_at,e.updated_at,et.name,et.color,
-(CASE WHEN EXISTS(SELECT 1 FROM event_bills eb WHERE eb.event_id=e.id)
-  THEN (SELECT COALESCE(SUM(eb.amount_fen),0) FROM event_bills eb WHERE eb.event_id=e.id)
+(CASE WHEN EXISTS(SELECT 1 FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
+  THEN (SELECT COALESCE(SUM(eb.amount_fen),0) FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
   ELSE (SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id)
  END),
 (SELECT COALESCE((SELECT t.id FROM live_transactions t WHERE t.id=e.gift_transaction_id),'')),
 (SELECT t.amount_fen FROM live_transactions t WHERE t.id=e.gift_transaction_id),
 (SELECT t.direction FROM live_transactions t WHERE t.id=e.gift_transaction_id),
 (SELECT t.person_id FROM live_transactions t WHERE t.id=e.gift_transaction_id),
+(SELECT COALESCE((SELECT t.id FROM live_transactions t WHERE t.id=e.expense_transaction_id),'')),
 (SELECT COUNT(*) FROM event_bills eb WHERE eb.event_id=e.id)`
 
 func scanEvent(rows *sql.Rows) (*Event, error) {
 	e := &Event{}
 	var tn, tc, locs sql.NullString
-	var giftTx, giftDir, giftPerson sql.NullString
+	var giftTx, giftDir, giftPerson, expenseTx sql.NullString
 	var giftFen sql.NullInt64
 	if err := rows.Scan(&e.ID, &e.Title, &e.TypeID, &e.EventDate, &e.Location, &locs, &e.HasGift, &e.Gift, &e.Summary,
 		&e.CreatedAt, &e.UpdatedAt, &tn, &tc, &e.ExpenseFen,
-		&giftTx, &giftFen, &giftDir, &giftPerson, &e.BillCount); err != nil {
+		&giftTx, &giftFen, &giftDir, &giftPerson, &expenseTx, &e.BillCount); err != nil {
 		return nil, err
 	}
 	if tn.Valid {
@@ -315,6 +361,9 @@ func scanEvent(rows *sql.Rows) (*Event, error) {
 	}
 	if giftPerson.Valid {
 		e.GiftPersonID = giftPerson.String
+	}
+	if expenseTx.Valid {
+		e.ExpenseTransactionID = expenseTx.String
 	}
 	e.Locations = decodeLocations(locs.String)
 	if len(e.Locations) == 0 && e.Location != "" {

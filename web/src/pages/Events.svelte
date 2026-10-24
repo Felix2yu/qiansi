@@ -5,11 +5,12 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { route, navigate } from '../lib/router';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import { selfFirst, personLabel, loadSelf } from '../lib/self.svelte';
   import { dict, ensure, refresh } from '../lib/dict.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
   import { Plus, Search, History, CalendarDays } from '@lucide/svelte';
@@ -17,6 +18,9 @@
   let { onlyTimeline = false }: { onlyTimeline?: boolean } = $props();
   let list = $state<Event[]>([]);
   let timeline = $state<TimelineItem[]>([]);
+  // 加载失败与「没有记录」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
+  let timelineError = $state('');
   // 事件类型字典走共享缓存，不再每页重拉
   const types = $derived(dict.eventTypes);
   let showForm = $state(false);
@@ -75,12 +79,14 @@
 
   // 时间线只在「全局时间线」视图里渲染，列表视图以前也照样拉一份
   async function loadTimeline() {
-    timeline =
-      (await API.get<TimelineItem[]>('/api/v1/dashboard/timeline?limit=200').catch((err: any) => {
-        // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
-        toast.fail('加载失败', err);
-        return [] as TimelineItem[];
-      })) || [];
+    try {
+      timeline = await API.get<TimelineItem[]>('/api/v1/dashboard/timeline?limit=200');
+      timelineError = '';
+    } catch (err) {
+      // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
+      timelineError = errText(err);
+      toast.fail('加载失败', err);
+    }
   }
 
   // 连点两个筛选项会并发发出两趟请求，谁后回来谁说了算，
@@ -96,11 +102,18 @@
     if (filterType) qs.set('type_id', filterType);
     if (filterFrom) qs.set('from', filterFrom);
     if (filterTo) qs.set('to', filterTo);
-    const batch = await API.get<Event[]>(`/api/v1/events?${qs}`).catch((err: any) => {
-      toast.fail('加载失败', err);
-      return [] as Event[];
-    });
+    let batch: Event[] | null = null;
+    try {
+      batch = await API.get<Event[]>(`/api/v1/events?${qs}`);
+    } catch (err) {
+      if (mine === reqId) {
+        loadError = errText(err);
+        toast.fail('加载失败', err);
+      }
+      return;
+    }
     if (mine !== reqId) return;
+    loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
@@ -171,7 +184,11 @@
   <div class="q-stack">
     {#if onlyTimeline}
       {#if timeline.length === 0}
-        <Empty icon={History} text="还没有任何记录" />
+        {#if timelineError}
+          <LoadError text={`加载失败：${timelineError}`} onretry={() => loadTimeline()} />
+        {:else}
+          <Empty icon={History} text="还没有任何记录" />
+        {/if}
       {:else}
         <div class="q-stack--tight flex flex-col">
           {#each timeline as t (t.id)}
@@ -305,9 +322,20 @@
             </div>
           </div>
         {:else}
-          <Empty icon={CalendarDays} text="没有符合条件的往来" />
+          {#if loadError}
+            <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+          {:else}
+            <Empty icon={CalendarDays} text="没有符合条件的往来" />
+          {/if}
         {/each}
       </div>
+
+      {#if loadError && list.length > 0}
+        <div class="text-center text-sm" style="color: var(--q-danger);">
+          加载失败：{loadError}
+          <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => load()}>重试</button>
+        </div>
+      {/if}
 
       {#if hasMore}
         <div class="text-center">

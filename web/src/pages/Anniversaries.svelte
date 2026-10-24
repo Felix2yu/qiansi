@@ -6,12 +6,15 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
-  import { toast } from '../lib/toast.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { RECOVER_NOTE, trashOne } from '../lib/trash';
   import { Plus, Cake } from '@lucide/svelte';
 
   let list = $state<Anniversary[]>([]);
+  // 加载失败与「还没有纪念日」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   let showForm = $state(false);
   let editId = $state('');
   let form = $state(emptyForm());
@@ -30,12 +33,14 @@
   }
 
   async function load() {
-    list =
-      (await API.get<Anniversary[]>('/api/v1/anniversaries').catch((err: any) => {
-        // 读失败也不能装作「暂无」：空列表和查不到是两件事
-        toast.fail('加载失败', err);
-        return [] as Anniversary[];
-      })) || [];
+    try {
+      list = await API.get<Anniversary[]>('/api/v1/anniversaries');
+      loadError = '';
+    } catch (err) {
+      // 读失败也不能装作「暂无」：空列表和查不到是两件事
+      loadError = errText(err);
+      toast.fail('加载失败', err);
+    }
   }
   onMount(() => {
     loadSelf();
@@ -165,7 +170,11 @@
         >
       </div>
     {:else}
-      <Empty icon={Cake} text="还没有纪念日，把生日和重要日子记下来" />
+      {#if loadError}
+        <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+      {:else}
+        <Empty icon={Cake} text="还没有纪念日，把生日和重要日子记下来" />
+      {/if}
     {/each}
   </div>
 </div>

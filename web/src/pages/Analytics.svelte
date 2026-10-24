@@ -6,13 +6,22 @@
   import { CanvasRenderer } from 'echarts/renderers';
   import { API, type GradeDist } from '../lib/api';
   import PageHeader from '../lib/ui/PageHeader.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
+  import { theme } from '../lib/theme.svelte';
 
   echarts.use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
-  let monthChartDiv: HTMLDivElement | null = null;
-  let gradeChartDiv: HTMLDivElement | null = null;
+  let monthChartDiv = $state<HTMLDivElement | null>(null);
+  let gradeChartDiv = $state<HTMLDivElement | null>(null);
   let monthChart: echarts.ECharts | null = null;
   let gradeChart: echarts.ECharts | null = null;
+  // 拉不到不能只靠全局兜底 toast：两块画布留在屏幕上像页面坏了，要有说法和重试
+  let loadError = $state('');
+  let loading = $state(true);
+  // 最近一次成功拿到的数据留着：主题切换只重绘，不再惊动网络
+  let monthRows = $state<any[]>([]);
+  let gradeRows = $state<GradeDist[]>([]);
 
   // 读取设计令牌：图表的轴/提示文字跟随明暗主题，柱色仍是手定的纯色（不用渐变）
   function v(name: string, fallback: string) {
@@ -27,12 +36,23 @@
   }
 
   async function load() {
-    const [month, grade] = (await Promise.all([
-      API.get('/api/v1/dashboard/by-month'),
-      API.get('/api/v1/dashboard/grade-distribution')
-    ])) as any;
-    drawMonth(month);
-    drawGrade(grade);
+    loading = true;
+    try {
+      const [month, grade] = (await Promise.all([
+        API.get('/api/v1/dashboard/by-month'),
+        API.get('/api/v1/dashboard/grade-distribution')
+      ])) as any;
+      monthRows = month;
+      gradeRows = grade;
+      loadError = '';
+    } catch (err) {
+      loadError = errText(err);
+      toast.fail('加载失败', err);
+    } finally {
+      loading = false;
+    }
+    drawMonth(monthRows);
+    drawGrade(gradeRows);
   }
   function drawMonth(rows: any[]) {
     if (!monthChartDiv) return;
@@ -149,6 +169,20 @@
     load();
     window.addEventListener('resize', onResize);
   });
+  // 明暗主题 / 主题色 / 字号变化时，画布上的轴色与提示框配色要跟着换：
+  // 只在 onMount 画一次的话，切换外观后图表还停在旧主题，得切页再进才恢复。
+  // 数据到手也会重绘一次（monthRows/gradeRows 是 $state，读取即建立依赖）。
+  $effect(() => {
+    void theme.mode;
+    void theme.color;
+    void theme.fontScale;
+    void monthRows;
+    void gradeRows;
+    if (!loading) {
+      drawMonth(monthRows);
+      drawGrade(gradeRows);
+    }
+  });
   onDestroy(() => {
     monthChart?.dispose();
     gradeChart?.dispose();
@@ -159,21 +193,25 @@
 <div class="q-page">
   <PageHeader title="统计" subtitle="周期性数据概览" />
   <div class="q-stack">
-    <div class="q-card">
-      <h2 class="q-section-title">月度活动</h2>
-      <div
-        bind:this={monthChartDiv}
-        class="q-chart-frame !border-0 !shadow-none"
-        style="height: 240px; background: transparent;"
-      ></div>
-    </div>
-    <div class="q-card">
-      <h2 class="q-section-title">亲密度分布</h2>
-      <div
-        bind:this={gradeChartDiv}
-        class="q-chart-frame !border-0 !shadow-none"
-        style="height: 240px; background: transparent;"
-      ></div>
-    </div>
+    {#if loadError && monthRows.length === 0 && gradeRows.length === 0}
+      <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+    {:else}
+      <div class="q-card">
+        <h2 class="q-section-title">月度活动</h2>
+        <div
+          bind:this={monthChartDiv}
+          class="q-chart-frame !border-0 !shadow-none"
+          style="height: 240px; background: transparent;"
+        ></div>
+      </div>
+      <div class="q-card">
+        <h2 class="q-section-title">亲密度分布</h2>
+        <div
+          bind:this={gradeChartDiv}
+          class="q-chart-frame !border-0 !shadow-none"
+          style="height: 240px; background: transparent;"
+        ></div>
+      </div>
+    {/if}
   </div>
 </div>

@@ -2,21 +2,26 @@
   import { onMount } from 'svelte';
   import { RefreshCcw, Trash2 } from '@lucide/svelte';
   import { API, contactAgo } from '../lib/api';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { ask } from '../lib/ask.svelte';
   import { TRASH_LABEL, restoreTrash, type TrashItem, type TrashKind } from '../lib/trash';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
 
   let list = $state<TrashItem[]>([]);
+  // 加载失败与「回收站是空的」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   let loading = $state(true);
 
   async function load() {
     loading = true;
     try {
       list = await API.get<TrashItem[]>('/api/v1/trash');
+      loadError = '';
     } catch (err) {
       toast.fail('加载回收站失败', err);
+      loadError = errText(err);
       list = [];
     } finally {
       loading = false;
@@ -108,7 +113,11 @@
   {#if loading}
     <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
   {:else if list.length === 0}
-    <Empty icon={Trash2} text="回收站是空的" />
+    {#if loadError}
+      <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+    {:else}
+      <Empty icon={Trash2} text="回收站是空的" />
+    {/if}
   {:else}
     <div class="q-stack--tight flex flex-col">
       {#each list as it (it.type + it.id)}

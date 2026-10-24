@@ -348,6 +348,19 @@ func TestVCardAPIImportErrors(t *testing.T) {
 	if res["total"] != float64(1) || res["imported"] != float64(0) || res["skipped"] != float64(1) {
 		t.Errorf("skipped 计数错误: %v", res)
 	}
+
+	// 脏生日（形状完整但日子不存在）→ 400，且整份导入不落任何数据
+	dirty := "BEGIN:VCARD\nVERSION:3.0\nFN:脏生日\nBDAY:1990-13-01\nEND:VCARD"
+	rec3 := s.do(http.MethodPost, "/api/v1/people/import/vcard", map[string]any{"text": dirty})
+	if rec3.Code != 400 {
+		t.Fatalf("脏生日应 400, got %d: %s", rec3.Code, rec3.Body.String())
+	}
+	if !strings.Contains(rec3.Body.String(), "不是有效日期") {
+		t.Errorf("脏生日文案 = %s", rec3.Body.String())
+	}
+	if n := evAPICount(t, s, "SELECT COUNT(*) FROM live_people"); n != 0 {
+		t.Fatalf("脏生日导入不应落库, got %d 人", n)
+	}
 }
 
 // 导出：空库、筛选参数

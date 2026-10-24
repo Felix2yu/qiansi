@@ -9,12 +9,13 @@
     type Suggestion
   } from '../lib/api';
   import { navigate } from '../lib/router';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
   import { completeReminder } from '../lib/reminderActions';
   import { self, loadSelf } from '../lib/self.svelte';
   import { theme } from '../lib/theme.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import {
     CalendarDays,
     Users,
@@ -30,6 +31,8 @@
 
   const today = todayLocal();
   let dashboard = $state<Dashboard | null>(null);
+  // 加载失败与「真的没有数据」必须分开显示：首页一片空白会被当成页面坏了
+  let loadError = $state('');
   let upcoming = $state<Reminder[]>([]);
   let suggestions = $state<Suggestion[]>([]);
   let loading = $state(true);
@@ -80,9 +83,11 @@
       dashboard = d as Dashboard;
       upcoming = r as Reminder[];
       suggestions = s as Suggestion[];
+      loadError = '';
     } catch (err) {
       // 拉不到要留在屏幕上：首页一片空白和真的没有数据看起来一样
       toast.fail('加载失败', err);
+      loadError = errText(err);
     } finally {
       loading = false;
     }
@@ -101,6 +106,8 @@
 
   {#if loading}
     <div class="py-16 text-center" style="color: var(--q-muted);">加载中…</div>
+  {:else if loadError && !dashboard}
+    <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
   {:else if dashboard}
     <div class="q-stack">
       {#if showOnboard}

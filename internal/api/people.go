@@ -370,6 +370,11 @@ func (a *API) personFieldUpsert(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	// label 是 NOT NULL 列，缺校验会以 500 + SQLite 英文原文爆出来
+	if strings.TrimSpace(f.Label) == "" {
+		writeErr(w, 400, "label required")
+		return
+	}
 	f.PersonID = id
 	if err := a.Store.PersonFieldUpsert(r.Context(), &f); err != nil {
 		writeStoreErr(w, err)

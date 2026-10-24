@@ -145,6 +145,7 @@ export type Event = {
   gift_amount_fen?: number;
   gift_direction?: 'out' | 'in' | string;
   gift_person_id?: string;
+  /** 事件认领的那笔开销（表单开销字段只认这一条；手工挂账不在其列） */ expense_transaction_id?: string;
 };
 
 /** 往来关联的一条货殖账单（快照）。账单本体在货殖，删除请去货殖操作。 */

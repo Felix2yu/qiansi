@@ -943,6 +943,63 @@ func TestPeopleMergeRebuildsTargetBirthday(t *testing.T) {
 	}
 }
 
+// 合并必须把 source 的附件行改挂到 target 名下，否则合并后这些行悬空
+// （attachments 表没有外键），磁盘文件也永远等不到彻底删除 target 时的那次清理。
+// 头像指针按「target 自己有的不动，没有才继承 source」处理。
+func TestPeopleMergeMovesAttachmentsAndAvatar(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+
+	ins := func(id, entity string) {
+		pRaw(t, s, `INSERT INTO attachments(id,entity_type,entity_id,file_name,stored_name,mime,size,created_at)
+VALUES(?,?,?,?,?,?,?,?)`, id, "person", entity, id+".png", id+".png", "image/png", 1, "2024-01-01T00:00:00Z")
+	}
+
+	// 场景一：target 没有头像，继承 source 的
+	src := &Person{ID: "asrc", Name: "甲"}
+	pMustCreate(t, s, src)
+	tgt := &Person{ID: "atgt", Name: "乙"}
+	pMustCreate(t, s, tgt)
+	ins("a1", src.ID)
+	ins("a2", src.ID)
+	pRaw(t, s, "UPDATE people SET avatar_attachment_id='a2' WHERE id=?", src.ID)
+
+	if err := s.PersonMerge(ctx, src.ID, tgt.ID); err != nil {
+		t.Fatalf("PersonMerge: %v", err)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM attachments WHERE entity_id=?", src.ID); n != 0 {
+		t.Fatalf("不应再有挂在 source 名下的附件，得到 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM attachments WHERE entity_id=?", tgt.ID); n != 2 {
+		t.Fatalf("两条附件都应迁到 target，得到 %d", n)
+	}
+	if got := pRawScanStr(t, s, "SELECT IFNULL(avatar_attachment_id,'') FROM people WHERE id=?", tgt.ID); got != "a2" {
+		t.Fatalf("target 无头像时应继承 source 的，得到 %q", got)
+	}
+
+	// 场景二：target 自己就有头像，不覆盖
+	src2 := &Person{ID: "bsrc", Name: "丙"}
+	pMustCreate(t, s, src2)
+	tgt2 := &Person{ID: "btgt", Name: "丁", AvatarAttachmentID: "b2"}
+	pMustCreate(t, s, tgt2)
+	ins("b1", src2.ID)
+	ins("b2", tgt2.ID)
+	pRaw(t, s, "UPDATE people SET avatar_attachment_id='b1' WHERE id=?", src2.ID)
+
+	if err := s.PersonMerge(ctx, src2.ID, tgt2.ID); err != nil {
+		t.Fatalf("PersonMerge 2: %v", err)
+	}
+	if got := pRawScanStr(t, s, "SELECT avatar_attachment_id FROM people WHERE id=?", tgt2.ID); got != "b2" {
+		t.Fatalf("target 自带头像时不应被 source 覆盖，得到 %q", got)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM attachments WHERE entity_id=?", tgt2.ID); n != 2 {
+		t.Fatalf("source 的附件仍应迁到 target，得到 %d", n)
+	}
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM attachments WHERE entity_id=?", src2.ID); n != 0 {
+		t.Fatalf("source 名下不应残留附件，得到 %d", n)
+	}
+}
+
 // ===== SyncBirthdayAnniversary =====
 
 func TestPeopleSyncBirthdayAnniversary(t *testing.T) {
@@ -1625,6 +1682,10 @@ func TestPeopleTagCrudAndTagging(t *testing.T) {
 	}
 	if err := s.TagAdd(ctx, "person", p.ID, t2.ID); err != nil {
 		t.Fatalf("TagAdd 2: %v", err)
+	}
+	// 不存在的标签必须显式报错（ErrRefMissing），而不是被静默吞掉
+	if err := s.TagAdd(ctx, "person", p.ID, 999999); !errors.Is(err, ErrRefMissing) {
+		t.Fatalf("TagAdd 不存在的标签应报 ErrRefMissing，得到 %v", err)
 	}
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM taggings WHERE target_id='tagged'"); n != 2 {
 		t.Fatalf("taggings 应为 2 条，得到 %d", n)

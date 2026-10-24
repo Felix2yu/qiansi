@@ -90,6 +90,10 @@ func (a *API) eventCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	if strings.TrimSpace(body.Event.Title) == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
 	if body.Event.EventDate == "" {
 		writeErr(w, 400, "event_date required")
 		return
@@ -194,6 +198,10 @@ func (a *API) eventUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body.Event.ID = id
+	if strings.TrimSpace(body.Event.Title) == "" {
+		writeErr(w, 400, "title required")
+		return
+	}
 	if body.Event.EventDate == "" {
 		writeErr(w, 400, "event_date required")
 		return
@@ -478,6 +486,18 @@ func (a *API) repaymentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rp.OccurredAt = d
+	// 还款只对借还有意义：礼物/花销提交即结清（normalizeTx 的口径），
+	// 给它们记还款会把「已结清」的账翻成未结清，界面自相矛盾。
+	// 交易不存在时 TransactionGet 回 ErrNoRows → 404。
+	t, err := a.Store.TransactionGet(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if t == nil || t.Kind != "loan" {
+		writeErr(w, 400, "只有借还账目可以登记还款")
+		return
+	}
 	if err := a.Store.RepaymentCreate(r.Context(), &rp); err != nil {
 		writeStoreErr(w, err)
 		return
@@ -520,12 +540,17 @@ func (a *API) repaymentDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // resyncSettled 按「本金 - 已还」自动校正交易的结清标记。
+// 只校正借还：非借还的账提交即 settled=true（normalizeTx），
+// 无差别校正会把一笔部分还款的礼物翻成「未结清」。
 func (a *API) resyncSettled(ctx context.Context, txID string) error {
 	if txID == "" {
 		return nil
 	}
 	t, err := a.Store.TransactionGet(ctx, txID)
 	if err != nil || t == nil {
+		return nil
+	}
+	if t.Kind != "loan" {
 		return nil
 	}
 	remaining := t.AmountFen - t.RepaidFen

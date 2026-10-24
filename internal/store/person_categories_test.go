@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -211,6 +212,15 @@ func TestCircleMembershipCascades(t *testing.T) {
 	}
 	if len(got.Categories) != 0 {
 		t.Fatalf("删圈子后人不应再挂该圈子: %+v", got.Categories)
+	}
+}
+
+// 不存在的 category_id 必须报错，而不是被 INSERT OR IGNORE 静默吞掉。
+func TestPersonCategories_UnknownIDFails(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	if err := s.PersonCreate(ctx, &Person{Name: "幽灵圈子", CategoryIDs: []int{999999}}); err == nil {
+		t.Fatal("不存在的 category_id 应报错")
 	}
 }
 

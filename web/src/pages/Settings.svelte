@@ -58,9 +58,12 @@
   let appriseUrls = $state('');
   let pushHour = $state(9);
 
-  // 货殖对接：地址与密钥都存在 settings 表里，密钥只在本机服务端使用
+  // 货殖对接：地址与密钥都存在 settings 表里，密钥只在本机服务端使用。
+  // GET /settings 对密钥只回显哨兵值（__masked__），所以 hzKey 只在用户
+  // 真正输入新密钥时非空；保存时不上报该键，服务端保留原值。
   let hzBase = $state('');
   let hzKey = $state('');
+  let hzKeySaved = $state(false);
   let hzStatus = $state<HuozhiStatus | null>(null);
   let hzBusy = $state(false);
 
@@ -204,7 +207,9 @@
       selfId = s['self_person_id'] || '';
       selfSaved = selfId;
       hzBase = s['huozhi_base_url'] || '';
-      hzKey = s['huozhi_api_key'] || '';
+      // 哨兵值 = 服务端已有密钥但不回显；表单留空，保存时不动它
+      hzKeySaved = s['huozhi_api_key'] === '__masked__';
+      hzKey = '';
       rhythmOn = !['0', 'false', 'off', 'no'].includes(
         (s['contact_rhythm_enabled'] || '').trim().toLowerCase()
       );
@@ -228,10 +233,10 @@
   async function saveHuozhi() {
     hzBusy = true;
     try {
-      await API.post('/api/v1/settings/bulk', {
-        huozhi_base_url: hzBase.trim(),
-        huozhi_api_key: hzKey.trim()
-      });
+      // 只在用户真输了新密钥时才带上该键；空着 = 保留服务端现有密钥
+      const payload: Record<string, string> = { huozhi_base_url: hzBase.trim() };
+      if (hzKey.trim()) payload.huozhi_api_key = hzKey.trim();
+      await API.post('/api/v1/settings/bulk', payload);
     } catch (err) {
       toast.fail('保存货殖配置失败', err);
       hzBusy = false;
@@ -240,8 +245,29 @@
     // 保存之后立刻打一次真实请求，让「填了但连不通」当场暴露，而不是等关联账单时才报错
     await checkHuozhi();
     hzBusy = false;
-    if (hzStatus?.ok) toast.ok('货殖连接正常');
-    else toast.error(hzStatus?.error || '货殖连接失败，请检查地址与密钥');
+    if (hzStatus?.ok) {
+      if (hzKey.trim()) {
+        hzKey = '';
+        hzKeySaved = true;
+      }
+      toast.ok('货殖连接正常');
+    } else toast.error(hzStatus?.error || '货殖连接失败，请检查地址与密钥');
+  }
+
+  // 显式清除：留空保存是「不动密钥」，这里才是「删掉密钥」
+  async function clearHuozhiKey() {
+    hzBusy = true;
+    try {
+      await API.post('/api/v1/settings/bulk', { huozhi_api_key: '' });
+      hzKeySaved = false;
+      hzKey = '';
+      await checkHuozhi();
+      toast.ok('已清除货殖密钥');
+    } catch (err) {
+      toast.fail('清除货殖密钥失败', err);
+    } finally {
+      hzBusy = false;
+    }
   }
 
   async function loadAuto() {
@@ -801,7 +827,7 @@
       <h2 class="q-section-title"><Link2 size={15} /> 货殖账单</h2>
       <p class="q-hint mb-3">
         关联后，一次往来的开销可以来自货殖里的多张账单，往来卡片按账单汇总。
-        牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端。
+        牵丝只读货殖的账单（不增、不改、不删），密钥只保存在本机服务端、保存后不再回显。
         <strong style="color: var(--q-text);">请使用货殖里的「只读」密钥</strong>——读写密钥连带 MCP
         的删改能力，牵丝用不上，没必要把这份权限交出来。
       </p>
@@ -818,9 +844,16 @@
             bind:value={hzKey}
             type="password"
             autocomplete="off"
-            placeholder="API Key（货殖 → 设置 → API 密钥）"
+            placeholder={hzKeySaved ? '已保存密钥 · 输入新值才会替换' : 'API Key（货殖 → 设置 → API 密钥）'}
             class="q-input min-w-[220px] flex-1 font-mono"
           />
+          {#if hzKeySaved}
+            <button
+              class="q-btn q-btn--ghost shrink-0 whitespace-nowrap"
+              disabled={hzBusy}
+              onclick={clearHuozhiKey}>清除密钥</button
+            >
+          {/if}
           <button
             class="q-btn q-btn--primary shrink-0 whitespace-nowrap"
             disabled={hzBusy}

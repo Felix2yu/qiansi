@@ -124,7 +124,8 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	}
 
 	// 更新：改标题、换参与人、清空 locations 但保留 location 兼容字段。
-	// 带上 expense 同步：金额不变，归属人从 p1 换到 p2，仍只有一条开销。
+	// 带上 expense 同步：此时事件还没有认领任何开销（tx1 是用户从金钱页
+	// 手工挂上来的），于是新认领一笔，而不是去改写 tx1。
 	e.Title = "新年聚餐2"
 	e.Locations = nil
 	e.Location = "静安"
@@ -132,12 +133,20 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	if err := s.EventUpdate(ctx, e, []string{p2.ID}, &EventExpense{PersonID: p2.ID, AmountFen: 8000, Title: "新年聚餐2", OccurredAt: "2026-03-01"}); err != nil {
 		t.Fatalf("EventUpdate: %v", err)
 	}
-	if after, _ := s.TransactionGet(ctx, tx1.ID); after.PersonID != p2.ID || after.Title != "新年聚餐2" {
-		t.Fatalf("开销未随事件更新: %+v", after)
+	// 手工挂账原样保留：事件表单没有资格改写用户的账
+	if after, _ := s.TransactionGet(ctx, tx1.ID); after.PersonID != p1.ID || after.Title != "餐费" || after.AmountFen != 8000 {
+		t.Fatalf("手工挂账不应被事件表单改写: %+v", after)
 	}
+	// 认领的是新插入的那笔
 	got, err = s.EventGet(ctx, e.ID)
 	if err != nil {
 		t.Fatalf("EventGet(更新后): %v", err)
+	}
+	if got.ExpenseTransactionID == "" || got.ExpenseTransactionID == tx1.ID {
+		t.Fatalf("应新认领一笔开销而非手工挂账: %q (tx1=%q)", got.ExpenseTransactionID, tx1.ID)
+	}
+	if managed, _ := s.TransactionGet(ctx, got.ExpenseTransactionID); managed.PersonID != p2.ID || managed.Title != "新年聚餐2" || managed.AmountFen != 8000 {
+		t.Fatalf("认领的开销字段不符: %+v", managed)
 	}
 	if got.Title != "新年聚餐2" || got.Location != "静安" || len(got.Locations) != 1 || got.Locations[0] != "静安" {
 		t.Fatalf("更新后的字段不符: %+v", got)
@@ -246,6 +255,80 @@ func TestEventStore_EventExpenseAtomic(t *testing.T) {
 	}
 	if n := len(expenses(e.ID)); n != 0 {
 		t.Fatalf("清空开销后仍剩 %d 条", n)
+	}
+}
+
+// TestEventStore_EventExpenseKeepsManualTx 事件表单的开销字段只认领、只改动
+// 自己那笔；用户从金钱页手工挂到事件上的 expense 交易必须原样幸存。
+// 回归：旧实现按 event_id 批量删/改，保存一次没填开销的事件就会丢账。
+func TestEventStore_EventExpenseKeepsManualTx(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	p := evMustPerson(t, s, "老周")
+
+	e := &Event{Title: "饭局", EventDate: "2026-04-01"}
+	if err := s.EventCreate(ctx, e, []string{p.ID}, nil); err != nil {
+		t.Fatalf("EventCreate: %v", err)
+	}
+	// 用户从金钱页手工挂一笔开销到这个事件上（kind=expense/out，event_id 指向它）
+	manual := &Transaction{PersonID: p.ID, Kind: "expense", Direction: "out", AmountFen: 5000, Title: "打车", OccurredAt: "2026-04-01", EventID: e.ID}
+	if err := s.TransactionCreate(ctx, manual); err != nil {
+		t.Fatalf("TransactionCreate(manual): %v", err)
+	}
+
+	// 场景一：事件没填开销，保存 → 手工挂账必须活着
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, nil); err != nil {
+		t.Fatalf("EventUpdate(nil): %v", err)
+	}
+	if after, err := s.TransactionGet(ctx, manual.ID); err != nil || after == nil {
+		t.Fatalf("未填开销的保存把手工挂账删了: %v", err)
+	}
+
+	// 场景二：填了开销 → 新认领一笔，手工挂账不改写
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, &EventExpense{PersonID: p.ID, AmountFen: 3000, Title: "饭局", OccurredAt: e.EventDate}); err != nil {
+		t.Fatalf("EventUpdate(expense): %v", err)
+	}
+	got, err := s.EventGet(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("EventGet: %v", err)
+	}
+	if got.ExpenseTransactionID == "" || got.ExpenseTransactionID == manual.ID {
+		t.Fatalf("应新认领一笔: %q", got.ExpenseTransactionID)
+	}
+	if after, _ := s.TransactionGet(ctx, manual.ID); after.AmountFen != 5000 || after.Title != "打车" {
+		t.Fatalf("手工挂账被改写: %+v", after)
+	}
+	// 开销合计 = 手工 5000 + 认领 3000（两笔都算，明细与合计对得上）
+	if got.ExpenseFen != 8000 {
+		t.Fatalf("ExpenseFen = %d, 期望 8000", got.ExpenseFen)
+	}
+	// 重复保存同一金额：认领行更新，不新增
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, &EventExpense{PersonID: p.ID, AmountFen: 3000, Title: "饭局", OccurredAt: e.EventDate}); err != nil {
+		t.Fatalf("EventUpdate(again): %v", err)
+	}
+	list, err := s.EventExpenses(ctx, e.ID)
+	if err != nil {
+		t.Fatalf("EventExpenses: %v", err)
+	}
+	var managed int
+	for _, x := range list {
+		if x.ID == got.ExpenseTransactionID {
+			managed++
+		}
+	}
+	if managed != 1 || len(list) != 2 {
+		t.Fatalf("重复保存后应有 1 条认领 + 1 条手工, got managed=%d total=%d", managed, len(list))
+	}
+
+	// 场景三：清空开销 → 只删认领的那笔，手工挂账留下
+	if err := s.EventUpdate(ctx, e, []string{p.ID}, nil); err != nil {
+		t.Fatalf("EventUpdate(clear): %v", err)
+	}
+	if _, err := s.TransactionGet(ctx, manual.ID); err != nil {
+		t.Fatalf("清空开销把手工挂账删了: %v", err)
+	}
+	if _, err := s.TransactionGet(ctx, got.ExpenseTransactionID); err == nil {
+		t.Fatalf("清空开销应删掉认领的那笔")
 	}
 }
 

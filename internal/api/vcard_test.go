@@ -175,11 +175,27 @@ func TestNormalizeBirthday(t *testing.T) {
 		"1990-01-02T08:00:00Z": "1990-01-02",
 		"--01-02":              "", // 无年份不支持
 		"1990":                 "",
+		"1990-13-01":           "", // 形状对但日子不存在
+		"1990-1a-01":           "", // 同上
 		"":                     "",
 	}
 	for in, want := range cases {
 		if got := normalizeBirthday(in); got != want {
 			t.Errorf("normalizeBirthday(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
+// badBirthday 只拦「形状完整但日子不存在」：不支持的形状（--MM-DD）照旧静默跳过
+func TestBadBirthday(t *testing.T) {
+	for _, in := range []string{"1990-13-01", "1990-02-30", "1990-1a-01", "19901301"} {
+		if !badBirthday(in) {
+			t.Errorf("badBirthday(%q) = false, want true", in)
+		}
+	}
+	for _, in := range []string{"1990-01-02", "--01-02", "1990", "", "农历三月初三"} {
+		if badBirthday(in) {
+			t.Errorf("badBirthday(%q) = true, want false", in)
 		}
 	}
 }

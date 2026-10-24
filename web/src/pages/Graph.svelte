@@ -33,6 +33,7 @@
   import Modal from '../lib/ui/Modal.svelte';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { toast, errText } from '../lib/toast.svelte';
 
   echarts.use([GraphChart, TooltipComponent, CanvasRenderer]);
@@ -40,6 +41,8 @@
   type ViewMode = 'rel' | 'venn';
 
   let people = $state<Person[]>([]);
+  // 加载失败与「还没有人物或关系」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   const categories = $derived(dict.categories);
   const allTags = $derived(dict.tags);
   let rels = $state<Relationship[]>([]);
@@ -88,12 +91,16 @@
   async function load() {
     // 圈子/标签/关系类型是全站共享字典，这里只保证「拿到」，不再各自重拉
     await Promise.all([ensure('categories'), ensure('tags'), ensure('relTypes')]);
-    const r = await API.get<any>('/api/v1/relationships').catch((err) => {
-      // 拉不到就整张图空白，一句提示也没有——空图和不画是两件事
+    let r: any = null;
+    try {
+      r = await API.get<any>('/api/v1/relationships');
+    } catch (err) {
+      // 拉不到不能装作「还没有人物或关系」——空图和不画是两件事
       toast.fail('加载关系图失败', err);
-      return null;
-    });
-    if (!r) return;
+      loadError = errText(err);
+      return;
+    }
+    loadError = '';
     await loadSelf();
     people = r.people;
     rels = r.relationships;
@@ -708,7 +715,11 @@
 
   <div class="q-stack">
     {#if people.length === 0}
-      <Empty icon={Share2} text="还没有人物或关系，先去通讯录记一个人" />
+      {#if loadError}
+        <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+      {:else}
+        <Empty icon={Share2} text="还没有人物或关系，先去通讯录记一个人" />
+      {/if}
     {:else}
       {#if view === 'rel'}
         <div class="q-card q-card--tight flex flex-wrap items-center gap-2">

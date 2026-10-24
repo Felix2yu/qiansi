@@ -163,12 +163,14 @@ func nullableString(v string) any {
 }
 
 // replacePersonCategories 用 ids 整体替换一个人的圈子（PUT 是整行覆盖，圈子同样按覆盖处理）。
+// 不用 INSERT OR IGNORE：不存在的 category_id 会被静默吞掉，前端显示成功、
+// 数据却没变。交给外键约束报错，API 层翻成 400。
 func (s *Store) replacePersonCategories(ctx context.Context, personID string, ids []int) error {
 	if _, err := s.DB.ExecContext(ctx, "DELETE FROM person_categories WHERE person_id=?", personID); err != nil {
 		return err
 	}
 	for _, id := range dedupeInts(ids) {
-		if _, err := s.DB.ExecContext(ctx, "INSERT OR IGNORE INTO person_categories(person_id,category_id) VALUES(?,?)", personID, id); err != nil {
+		if _, err := s.DB.ExecContext(ctx, "INSERT INTO person_categories(person_id,category_id) VALUES(?,?)", personID, id); err != nil {
 			return err
 		}
 	}
@@ -486,7 +488,7 @@ FROM live_people p WHERE (` + strings.Join(conds, " OR ") + ")"
 }
 
 // PersonMerge 把 source 的关联数据全部迁到 target，然后删除 source。
-// 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、圈子、自定义字段、关系的两端。
+// 迁移范围：事件参与人、备忘、交易、纪念日、提醒、标签、圈子、自定义字段、关系的两端、附件与头像指针。
 // 事件参与人用 INSERT OR IGNORE，避免同一事件里出现重复条目。
 // source 的生日纪念日不迁移（它代表 source 自身的生日，而 birthday 字段留在 target 不变），
 // 合并完成后按 target 自己的生日重新同步一次。
@@ -529,6 +531,13 @@ func (s *Store) PersonMerge(ctx context.Context, sourceID, targetID string) erro
 		// 圈子可多个，交并集：target 已有的组合靠 OR IGNORE 跳过
 		{"INSERT OR IGNORE INTO person_categories(person_id,category_id) SELECT ?,category_id FROM person_categories WHERE person_id=?", []any{targetID, sourceID}},
 		{"UPDATE person_fields SET person_id=? WHERE person_id=?", []any{targetID, sourceID}},
+		// 附件（头像文件）跟着人走：行改挂 target 名下。磁盘文件不搬——
+		// 前端存的 avatar_attachment_id 就是 /uploads/ 路径，与 entity_id 无关；
+		// 文件最终由彻底删除 target 时统一清掉，与「换头像只清指针、文件留到 purge」同口径。
+		// 少了这一步，source 的附件行会在合并后悬空（表上没有外键），文件永远没人收。
+		{"UPDATE attachments SET entity_id=? WHERE entity_type='person' AND entity_id=?", []any{targetID, sourceID}},
+		// 头像指针：target 自己有的不动；没有才继承 source 的（URL 仍然有效）
+		{"UPDATE people SET avatar_attachment_id=(SELECT avatar_attachment_id FROM people WHERE id=?) WHERE id=? AND (avatar_attachment_id IS NULL OR avatar_attachment_id='')", []any{sourceID, targetID}},
 		{"UPDATE OR IGNORE relationships SET from_person_id=? WHERE from_person_id=?", []any{targetID, sourceID}},
 		{"UPDATE OR IGNORE relationships SET to_person_id=? WHERE to_person_id=?", []any{targetID, sourceID}},
 		{"DELETE FROM relationships WHERE from_person_id=? OR to_person_id=?", []any{sourceID, sourceID}},
@@ -1047,7 +1056,20 @@ func (s *Store) EventTypeDelete(ctx context.Context, id int) error {
 
 // ===== Tagging =====
 
+// ErrRefMissing 关联的记录不存在。用于「先查后写」的路径：
+// INSERT OR IGNORE 会把「外键不存在」和「重复关联」一起吞掉，前端于是收到
+// 成功提示、数据却没变——比报错更难发现。
+var ErrRefMissing = errors.New("关联的记录不存在，可能已被删除")
+
 func (s *Store) TagAdd(ctx context.Context, targetType, targetID string, tagID int) error {
+	// 重复关联仍然走 IGNORE（幂等，双击不报错）；标签不存在则明确报错
+	var n int
+	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM tags WHERE id=?", tagID).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrRefMissing
+	}
 	_, err := s.DB.ExecContext(ctx, "INSERT OR IGNORE INTO taggings(tag_id,target_type,target_id) VALUES(?,?,?)", tagID, targetType, targetID)
 	return err
 }

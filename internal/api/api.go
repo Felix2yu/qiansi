@@ -155,10 +155,16 @@ func writeStoreErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusConflict, "这两个联系人之间已经是这种关系了")
 	case isConstraintErr(err, "UNIQUE"):
 		writeErr(w, http.StatusConflict, "这个名字已经存在")
+	case errors.Is(err, store.ErrRefMissing):
+		writeErr(w, http.StatusBadRequest, "关联的记录不存在，可能已被删除")
 	case isConstraintErr(err, "FOREIGN KEY"):
 		writeErr(w, http.StatusBadRequest, "关联的记录不存在，可能已被删除；请先选好联系人或往来")
 	default:
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		// 未知故障不回传 err.Error()：SQLite 的原文（"database is locked"、
+		// "NOT NULL constraint failed: …"）对用户没有可操作性，还可能带出
+		// 内部结构。真码记服务端日志，响应只给一句人话。
+		log.Printf("[api] store error: %v", err)
+		writeErr(w, http.StatusInternalServerError, "服务器开小差了，请稍后重试")
 	}
 }
 

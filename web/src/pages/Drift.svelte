@@ -4,12 +4,15 @@
   import { navigate } from '../lib/router';
   import PageHeader from '../lib/ui/PageHeader.svelte';
   import Empty from '../lib/ui/Empty.svelte';
+  import LoadError from '../lib/ui/LoadError.svelte';
   import { HeartPulse, PenLine } from '@lucide/svelte';
-  import { toast } from '../lib/toast.svelte';
+  import { toast, errText } from '../lib/toast.svelte';
 
   let list = $state<DriftPerson[]>([]);
   let onlyOverdue = $state(true);
   let loading = $state(true);
+  // 加载失败与「没有到期的人」必须分开显示：前者是没读到，后者是真的没有
+  let loadError = $state('');
   // 连点两个筛选会并发发出两趟请求，谁后回来谁说了算——只认最新那次
   let reqId = 0;
 
@@ -17,14 +20,19 @@
     const mine = ++reqId;
     loading = true;
     const qs = onlyOverdue ? '?only=overdue&limit=200' : '?limit=200';
-    const got =
-      (await API.get<DriftPerson[]>(`/api/v1/contacts/drift${qs}`).catch((err: any) => {
-        toast.fail('加载失败', err);
-        return [] as DriftPerson[];
-      })) || [];
-    if (mine !== reqId) return;
-    list = got;
-    loading = false;
+    try {
+      const got = await API.get<DriftPerson[]>(`/api/v1/contacts/drift${qs}`);
+      if (mine !== reqId) return;
+      list = got;
+      loadError = '';
+    } catch (err) {
+      if (mine !== reqId) return;
+      toast.fail('加载失败', err);
+      loadError = errText(err);
+      list = [];
+    } finally {
+      if (mine === reqId) loading = false;
+    }
   }
 
   onMount(load);
@@ -86,12 +94,16 @@
     {#if loading}
       <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
     {:else if list.length === 0}
-      <Empty
-        icon={HeartPulse}
-        text={onlyOverdue
-          ? '没有到期的人。要连同还没到期的名单一起看，切到「全部」。'
-          : '还没有联系人。'}
-      />
+      {#if loadError}
+        <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+      {:else}
+        <Empty
+          icon={HeartPulse}
+          text={onlyOverdue
+            ? '没有到期的人。要连同还没到期的名单一起看，切到「全部」。'
+            : '还没有联系人。'}
+        />
+      {/if}
     {:else}
       <div class="q-stack--tight flex flex-col">
         {#each list as d (d.person_id)}
