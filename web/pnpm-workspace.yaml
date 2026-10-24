@@ -1,0 +1,6 @@
+# pnpm 11 起依赖覆盖配置从 package.json 的 pnpm.overrides 迁到此文件。
+# @tailwindcss/node@4.3.3 声明 source-map-js ^1.2.1，而 <1.2.2 存在
+# GHSA-68fv-2mgg-jv7q（索引 source-map 段偏移导致事件循环拒绝服务），
+# 上游暂无更新版本，将整棵依赖树统一钉到补丁版。
+overrides:
+  source-map-js: ^1.2.2
