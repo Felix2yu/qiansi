@@ -185,7 +185,7 @@
           <div class="q-stat__label flex items-center gap-1.5">
             <Wallet size={13} /> 我借出（未还）
           </div>
-          <div class="q-stat__value q-num" style="color: var(--q-ok);">
+          <div class="q-stat__value q-num q-money" style="color: var(--q-ok);">
             ¥ {(dashboard.lend_fen / 100).toFixed(2)}
           </div>
         </div>
@@ -193,7 +193,7 @@
           <div class="q-stat__label flex items-center gap-1.5">
             <Wallet size={13} /> 我待还
           </div>
-          <div class="q-stat__value q-num" style="color: var(--q-warn);">
+          <div class="q-stat__value q-num q-money" style="color: var(--q-warn);">
             ¥ {(dashboard.borrow_fen / 100).toFixed(2)}
           </div>
         </div>

@@ -402,7 +402,7 @@
     {#if hasBills}
       <!-- 有账单时手填金额让位：一个数字只能有一个来源，否则卡片上会出现两套花费 -->
       <div class="q-well flex items-center justify-between !py-2.5 text-sm">
-        <span>开销 <span class="q-num font-semibold">¥{yuan(billsSum)}</span></span>
+        <span>开销 <span class="q-num q-money font-semibold">¥{yuan(billsSum)}</span></span>
         <span class="text-xs" style="color: var(--q-muted);">
           由 {bills.length} 张货殖账单汇总
         </span>
@@ -470,7 +470,7 @@
                     · {b.category_name}</span
                   >{/if}
               </span>
-              <span class="shrink-0">¥{yuan(b.amount_fen)}</span>
+              <span class="q-money shrink-0">¥{yuan(b.amount_fen)}</span>
               {#if b.remote_base}
                 <a
                   href={`${b.remote_base}/transactions/edit/${b.remote_id}`}

@@ -32,15 +32,19 @@
     setThemeColor,
     setFontScale,
     setFontFamily,
+    setStartPage,
+    setMoneyMask,
     initTheme,
     isPreset,
     THEME_LABEL,
     THEME_PRESETS,
     FONT_SCALE_LABEL,
     FONT_FAMILY_LABEL,
+    START_PAGES,
     type ThemeMode,
     type FontScale,
-    type FontFamily
+    type FontFamily,
+    type StartPage
   } from '../lib/theme.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import { setSelf } from '../lib/self.svelte';
@@ -587,6 +591,37 @@
           {:else}
             标题衬线、正文黑体
           {/if}；字号整体缩放，跨设备同步
+        </span>
+      </div>
+      <!-- 启动页与金额打码：偏好区最后两组，与上面的档位控件同一套分段样式 -->
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div class="flex items-center gap-2">
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">启动页</span>
+          <div class="q-seg q-seg--fill">
+            {#each START_PAGES as p (p.path)}
+              <button
+                onclick={() => setStartPage(p.path)}
+                aria-pressed={theme.startPage === p.path}
+                class="q-seg__btn"
+              >
+                {p.label}
+              </button>
+            {/each}
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="shrink-0 text-xs" style="color: var(--q-muted);">金额</span>
+          <div class="q-seg q-seg--fill">
+            <button onclick={() => setMoneyMask(false)} aria-pressed={!theme.maskMoney} class="q-seg__btn">
+              明文
+            </button>
+            <button onclick={() => setMoneyMask(true)} aria-pressed={theme.maskMoney} class="q-seg__btn">
+              打码
+            </button>
+          </div>
+        </div>
+        <span class="text-xs" style="color: var(--q-muted);">
+          启动页在下次进站生效；金额打码后侧栏眼睛图标可随时切换
         </span>
       </div>
     </section>

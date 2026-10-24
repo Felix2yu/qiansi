@@ -356,20 +356,21 @@
               {who(t)}{t.title && ` · ${t.title}`}
             </div>
             <div class="q-num mt-0.5 truncate text-xs" style="color: var(--q-muted);">
-              ¥{yuan(t.amount_fen)} · {KIND_LABEL[t.kind] || t.kind} ·
+              <span class="q-money">¥{yuan(t.amount_fen)}</span> · {KIND_LABEL[t.kind] || t.kind} ·
               {DIRECTION_LABEL[t.direction] || t.direction} ·
               {new Date(t.occurred_at).toLocaleDateString()}
               {#if t.kind === 'loan'}
                 {t.settled ? ' · 已结清' : ''}
                 {#if !t.settled && (t.repaid_fen || 0) > 0}
-                  · 已还 ¥{yuan(t.repaid_fen || 0)}，待还 ¥{yuan(remaining(t))}
+                  · 已还 <span class="q-money">¥{yuan(t.repaid_fen || 0)}</span>，待还
+                  <span class="q-money">¥{yuan(remaining(t))}</span>
                 {/if}
               {/if}
               {t.event_title && ` · 关联事件：${t.event_title}`}
             </div>
           </div>
           <div
-            class="q-num shrink-0 text-sm font-semibold"
+            class="q-num q-money shrink-0 text-sm font-semibold"
             style={`color: ${out ? 'var(--q-c-money)' : 'var(--q-ok)'};`}
           >
             {out ? '-' : '+'}¥{yuan(t.amount_fen)}
@@ -468,13 +469,16 @@
   <Modal wide onclose={() => (repayOf = null)} title={`还款流水 · ${who(repayOf)}`}>
     <div class="q-stack">
       <div class="q-well q-num text-sm" style="color: var(--q-muted);">
-        本金 ¥{yuan(repayOf.amount_fen)} · 已还 ¥{yuan(repayOf.repaid_fen || 0)} · 待还
-        <span class="font-semibold" style="color: var(--q-text);">¥{yuan(remaining(repayOf))}</span>
+        本金 <span class="q-money">¥{yuan(repayOf.amount_fen)}</span> · 已还
+        <span class="q-money">¥{yuan(repayOf.repaid_fen || 0)}</span> · 待还
+        <span class="q-money font-semibold" style="color: var(--q-text);"
+          >¥{yuan(remaining(repayOf))}</span
+        >
       </div>
       <ul class="q-stack--tight flex max-h-48 flex-col overflow-auto">
         {#each repayList as r (r.id)}
           <li class="q-row !py-2 text-sm">
-            <span class="q-num">¥{yuan(r.amount_fen)}</span>
+            <span class="q-num q-money">¥{yuan(r.amount_fen)}</span>
             <span class="q-num" style="color: var(--q-muted);">
               {r.occurred_at}{r.note ? ` · ${r.note}` : ''}
             </span>

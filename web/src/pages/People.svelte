@@ -512,12 +512,14 @@
                   style="color: var(--q-muted);"
                 >
                   {#if p.stats.gift_out_fen || p.stats.gift_in_fen}
-                    <span
+                    <span class="q-money"
                       >随出 ¥{yuanShort(p.stats.gift_out_fen)} / 收 ¥{yuanShort(
                         p.stats.gift_in_fen
                       )}</span
                     >
-                    <span style={p.stats.net_fen !== 0 ? 'color: var(--q-text);' : ''}
+                    <span
+                      class="q-money"
+                      style={p.stats.net_fen !== 0 ? 'color: var(--q-text);' : ''}
                       >{netLabel(p.stats.net_fen)}</span
                     >
                   {/if}

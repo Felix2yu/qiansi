@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { route, navigate } from './lib/router';
+  import { route, navigate, applyStartPage } from './lib/router';
   import { API, SEARCH_LABEL, type SearchResult } from './lib/api';
   import {
     initTheme,
     theme,
     setThemeMode,
+    setMoneyMask,
     nextMode,
     THEME_LABEL,
     type ThemeMode
@@ -28,6 +29,8 @@
     Monitor,
     Sun,
     Moon,
+    Eye,
+    EyeOff,
     Trash2,
     HeartPulse,
     Cake
@@ -36,6 +39,9 @@
   import AskHost from './lib/AskHost.svelte';
   import { toast } from './lib/toast.svelte';
   import Today from './pages/Today.svelte';
+
+  // 启动页：本地偏好在首帧渲染前把 / 换成用户指定的落点（无偏好则留在今日）
+  applyStartPage(theme.startPage);
 
   // 只有首页静态引入：其余页面各自成块，用到才下载（关系图/统计带 echarts，最重）
   const PAGES: Record<string, () => Promise<{ default: Component<any> }>> = {
@@ -269,6 +275,16 @@
 
     <div class="q-side__foot">
       <span class="q-side__ver">v0.1 · local-only</span>
+      <!-- 金额打码：投屏/截图场景一键遮住所有 ¥ 数字，再点恢复 -->
+      <button
+        class="q-iconbtn"
+        onclick={() => setMoneyMask(!theme.maskMoney)}
+        title={theme.maskMoney ? '显示金额' : '打码金额'}
+        aria-label={theme.maskMoney ? '显示金额' : '打码金额'}
+        aria-pressed={theme.maskMoney}
+      >
+        {#if theme.maskMoney}<EyeOff size={15} />{:else}<Eye size={15} />{/if}
+      </button>
       <!-- 外观快速切换：跟随系统 / 浅色 / 深色，图标表示当前选择 -->
       <div class="q-seg q-seg--fill">
         {#each THEME_ICONS as t, i (i)}
@@ -305,6 +321,14 @@
         <Search size={18} />
       </button>
       <!-- 移动端逐档循环切换外观：系统 → 浅色 → 深色 → 系统 -->
+      <button
+        class="q-iconbtn"
+        onclick={() => setMoneyMask(!theme.maskMoney)}
+        title={theme.maskMoney ? '显示金额' : '打码金额'}
+        aria-label={theme.maskMoney ? '显示金额' : '打码金额'}
+      >
+        {#if theme.maskMoney}<EyeOff size={18} />{:else}<Eye size={18} />{/if}
+      </button>
       <button
         class="q-iconbtn"
         onclick={() => setThemeMode(nextMode(theme.mode))}

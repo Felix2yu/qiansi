@@ -98,6 +98,16 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* 金额打码：金额展示位统一挂 .q-money，html.q-money-mask 时整体模糊。
+   表单输入与预填不走 .q-money，编辑场景不受影响 */
+.q-money {
+  transition: filter 0.15s ease;
+}
+html.q-money-mask .q-money {
+  filter: blur(7px);
+  user-select: none;
+}
+
 /* 纸面颗粒：极淡的噪点，营造宣纸质感，不抢内容 */
 body::after {
   content: '';

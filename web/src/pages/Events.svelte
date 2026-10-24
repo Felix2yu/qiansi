@@ -284,12 +284,14 @@
               <div class="mt-2 flex flex-wrap gap-1.5">
                 {#if e.has_gift}<span class="q-badge">有礼物{e.gift ? `：${e.gift}` : ''}</span
                   >{/if}
-                {#if e.expense_fen}<span class="q-badge">花费 ¥{yuan(e.expense_fen)}</span>{/if}
+                {#if e.expense_fen}
+                  <span class="q-badge q-money">花费 ¥{yuan(e.expense_fen)}</span>
+                {/if}
                 {#if e.bill_count}
                   <span class="q-badge" title="开销由货殖账单汇总">货殖 {e.bill_count} 笔</span>
                 {/if}
                 {#if e.gift_amount_fen}
-                  <span class="q-badge q-badge--theme"
+                  <span class="q-badge q-badge--theme q-money"
                     >{e.gift_direction === 'in' ? '收到礼金' : '随礼'}
                     ¥{yuan(e.gift_amount_fen)}</span
                   >

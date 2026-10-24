@@ -489,16 +489,20 @@
         <section class="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <div class="q-stat !py-3">
             <div class="q-stat__label">我随出去</div>
-            <div class="q-num text-base font-semibold">¥{yuan(person.stats.gift_out_fen)}</div>
+            <div class="q-num q-money text-base font-semibold">
+              ¥{yuan(person.stats.gift_out_fen)}
+            </div>
           </div>
           <div class="q-stat !py-3">
             <div class="q-stat__label">收到</div>
-            <div class="q-num text-base font-semibold">¥{yuan(person.stats.gift_in_fen)}</div>
+            <div class="q-num q-money text-base font-semibold">
+              ¥{yuan(person.stats.gift_in_fen)}
+            </div>
           </div>
           <div class="q-stat !py-3">
             <div class="q-stat__label">净额</div>
             <div
-              class="q-num text-base font-semibold"
+              class="q-num q-money text-base font-semibold"
               style={person.stats.net_fen !== 0 ? 'color: var(--q-theme);' : ''}
             >
               {netLabel(person.stats.net_fen)}

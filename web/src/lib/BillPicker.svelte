@@ -163,7 +163,7 @@
             <span class="min-w-0 flex-1">
               <span class="flex items-baseline justify-between gap-2">
                 <span class="truncate text-sm">{b.description || '（无备注）'}</span>
-                <span class="q-num shrink-0 text-sm">¥{yuan(b.amount_fen)}</span>
+                <span class="q-num q-money shrink-0 text-sm">¥{yuan(b.amount_fen)}</span>
               </span>
               <span
                 class="q-num mt-0.5 flex items-center gap-1.5 text-xs"

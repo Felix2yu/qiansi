@@ -25,6 +25,18 @@ export function navigate(to: string) {
 
 window.addEventListener('popstate', () => route.set(parse(location)));
 
+/**
+ * 启动页重定向：用户把「今日」以外的页面设为启动落点时，
+ * 在首帧渲染前把 / 悄悄换成目标路径（replaceState，不产生历史记录）。
+ * 首次进站（本地无偏好）时由 theme 的服务端同步再调一次。
+ */
+export function applyStartPage(path: string | null | undefined) {
+  if (!path || path === '/') return;
+  if (location.pathname !== '/' && location.pathname !== '') return;
+  history.replaceState({}, '', path);
+  route.set(parse(location));
+}
+
 // simple hash-less path matcher
 export function match(pattern: string, path: string): Record<string, string> | null {
   const pp = pattern.split('/').filter(Boolean);

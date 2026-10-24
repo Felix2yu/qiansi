@@ -6,6 +6,7 @@
 // 启动时以服务端为准（若已拉取），否则用本地值；用户切换时两边同时写。
 
 import { API } from './api';
+import { applyStartPage, navigate } from './router';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export const THEME_MODES: ThemeMode[] = ['system', 'light', 'dark'];
@@ -70,12 +71,34 @@ export const FONT_FAMILY_LABEL: Record<FontFamily, string> = {
 
 const VALID_FAMILY: FontFamily[] = ['default', 'serif', 'sans'];
 
+// ---------- 启动页 ----------
+// 打开牵丝落在哪个页面。白名单收口，防存储脏值把路由带进未知路径。
+export const START_PAGES = [
+  { path: '/', label: '今日' },
+  { path: '/people', label: '人物' },
+  { path: '/events', label: '往来' },
+  { path: '/money', label: '金钱' },
+  { path: '/timeline', label: '时间线' },
+  { path: '/analytics', label: '统计' }
+] as const;
+
+export type StartPage = (typeof START_PAGES)[number]['path'];
+
+const START_PATHS: string[] = START_PAGES.map((p) => p.path);
+
+function readStartPage(): string {
+  const raw = localStorage.getItem('q_start_page');
+  return raw && START_PATHS.includes(raw) ? raw : '/';
+}
+
 // localStorage 键。沿用既有的 q_dark（历史值 '1'/'0'）以兼容老用户：
 // 迁移时若没有 q_theme_mode，但有 q_dark，则按其值折算成 light/dark。
 const KEY_MODE = 'q_theme_mode';
 const KEY_COLOR = 'q_theme';
 const KEY_SCALE = 'q_font_scale';
 const KEY_FAMILY = 'q_font_family';
+const KEY_START = 'q_start_page';
+const KEY_MASK = 'q_money_mask';
 
 const VALID: ThemeMode[] = ['light', 'dark', 'system'];
 
@@ -98,11 +121,20 @@ function readFamily(): FontFamily {
   return raw && (VALID_FAMILY as string[]).includes(raw) ? (raw as FontFamily) : 'default';
 }
 
-export const theme = $state<{ mode: ThemeMode; color: string; fontScale: FontScale; fontFamily: FontFamily }>({
+export const theme = $state<{
+  mode: ThemeMode;
+  color: string;
+  fontScale: FontScale;
+  fontFamily: FontFamily;
+  startPage: string;
+  maskMoney: boolean;
+}>({
   mode: readMode(),
   color: localStorage.getItem(KEY_COLOR) || '#9E2A2B',
   fontScale: readScale(),
-  fontFamily: readFamily()
+  fontFamily: readFamily(),
+  startPage: readStartPage(),
+  maskMoney: localStorage.getItem(KEY_MASK) === '1'
 });
 
 const mql = typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
@@ -141,6 +173,8 @@ export function applyTheme() {
     root.style.removeProperty('--font-serif');
     root.style.removeProperty('--font-sans');
   }
+  // 金额打码：blur 由 CSS 按 .q-money 生效
+  root.classList.toggle('q-money-mask', theme.maskMoney);
   // 移动端浏览器地址栏/状态栏跟随页面配色
   const meta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
   if (meta) meta.content = isDark() ? '#15120e' : theme.color;
@@ -162,11 +196,17 @@ export async function initTheme() {
     const color = st['theme_color'];
     const scale = st['font_scale'];
     const family = st['font_family'];
+    const start = st['start_page'];
+    const mask = st['money_mask'];
     if (mode && (VALID as string[]).includes(mode)) theme.mode = mode as ThemeMode;
     if (color) theme.color = color;
     if (scale && (VALID_SCALE as string[]).includes(scale)) theme.fontScale = scale as FontScale;
     if (family && (VALID_FAMILY as string[]).includes(family)) theme.fontFamily = family as FontFamily;
+    if (start && START_PATHS.includes(start)) theme.startPage = start;
+    if (mask === '1' || mask === '0') theme.maskMoney = mask === '1';
     applyTheme();
+    // 服务端带来的启动页若与本地不同，且用户还停在 / 没动过，补一次重定向
+    applyStartPage(theme.startPage);
   } catch {
     // 后端不可达时保持本地偏好，不阻塞渲染
   }
@@ -223,6 +263,30 @@ export async function setFontFamily(family: FontFamily) {
   applyTheme();
   try {
     await API.put('/api/v1/settings/font_family', { value: family });
+  } catch {
+    // 同上，本地已生效
+  }
+}
+
+/** 切换启动页并持久化。非「今日」落点且当前停在 / 时当场跳转；改回「今日」则下次进站生效。 */
+export async function setStartPage(path: StartPage) {
+  theme.startPage = path;
+  localStorage.setItem(KEY_START, path);
+  try {
+    await API.put('/api/v1/settings/start_page', { value: path });
+  } catch {
+    // 本地已生效；服务端失败仅影响跨设备同步
+  }
+  applyStartPage(path);
+}
+
+/** 切换金额打码并持久化（本地 + 服务端）。顶栏眼睛图标与设置页共用。 */
+export async function setMoneyMask(mask: boolean) {
+  theme.maskMoney = mask;
+  localStorage.setItem(KEY_MASK, mask ? '1' : '0');
+  applyTheme();
+  try {
+    await API.put('/api/v1/settings/money_mask', { value: mask ? '1' : '0' });
   } catch {
     // 同上，本地已生效
   }
