@@ -2,7 +2,8 @@
 //
 // 只做一件事：按 API Key 读账单，供往来关联开销用。
 // 刻意不实现写入——账单的增删改是账本里的事，牵丝一旦能改账，
-// 两边口径就再也说不清了。货殖那边也只开了 /api/integration 这一组读接口。
+// 两边口径就再也说不清了。货殖那边也只开了 /api/public/bills 这一组读接口，
+// 同一组接口幕间也在用（按 id 取单张），所以这里不自己造第二套契约。
 package huozhi
 
 import (
@@ -11,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -24,27 +26,48 @@ var ErrNotConfigured = errors.New("未配置货殖地址或 API Key")
 // ErrUnauthorized 货殖拒绝了密钥（未生成、被禁用、已重置）。
 var ErrUnauthorized = errors.New("货殖拒绝了该 API Key")
 
-// Bill 货殖账单的快照字段。金额单位是「分」，与货殖对接端点一致。
+// ErrNotFound 货殖里没有这张账单（已删除或不属于该密钥的账号）。
+var ErrNotFound = errors.New("货殖没有这张账单")
+
+// Bill 货殖账单。货殖对外的字段口径：
+//   - amount：元（浮点，历史字段，幕间在用）
+//   - amount_fen：分（整数，牵丝一律用这个）
+//   - tx_date："2006-01-02 15:04:05"，牵丝只取日期部分
+//
+// 老版本货殖没有 amount_fen / category / account / book，取值时自行兜底。
 type Bill struct {
-	ID           uint   `json:"id"`
-	AmountFen    int    `json:"amount_fen"`
-	Type         string `json:"type"`
-	TxDate       string `json:"tx_date"`
-	Description  string `json:"description"`
-	Merchant     string `json:"merchant"`
-	Location     string `json:"location"`
-	CategoryName string `json:"category_name"`
-	AccountName  string `json:"account_name"`
-	BookName     string `json:"book_name"`
+	ID           uint    `json:"id"`
+	AmountFen    int     `json:"amount_fen"`
+	Amount       float64 `json:"amount"`
+	Type         string  `json:"type"`
+	TxDate       string  `json:"tx_date"`
+	Description  string  `json:"description"`
+	Merchant     string  `json:"merchant"`
+	Remark       string  `json:"remark"`
+	CategoryName string  `json:"category"`
+	AccountName  string  `json:"account"`
+	BookName     string  `json:"book"`
+}
+
+// normalize 把不同版本货殖的字段差异抹平：
+// 没有 amount_fen 时按「元」换算成分（四舍五入，避免 88.1*100=8809.999…），
+// tx_date 统一截成日期，分类/账户/账本缺失时留空串。
+func (b *Bill) normalize() {
+	if b.AmountFen == 0 && b.Amount != 0 {
+		b.AmountFen = int(math.Round(b.Amount * 100))
+	}
+	if len(b.TxDate) >= 10 {
+		b.TxDate = b.TxDate[:10]
+	}
 }
 
 // Query 搜索条件。日期是本地日期字符串（YYYY-MM-DD），由货殖按自己的时区裁决。
 type Query struct {
-	Keyword string
-	From    string
-	To      string
-	Type    string
-	Page    int
+	Keyword  string
+	From     string
+	To       string
+	Type     string
+	Page     int
 	PageSize int
 }
 
@@ -91,10 +114,12 @@ type envelope struct {
 }
 
 type listPayload struct {
-	Items    []Bill `json:"items"`
-	Total    int    `json:"total"`
-	Page     int    `json:"page"`
-	PageSize int    `json:"page_size"`
+	List       []Bill `json:"list"`
+	Pagination struct {
+		Page     int   `json:"page"`
+		PageSize int   `json:"page_size"`
+		Total    int64 `json:"total"`
+	} `json:"pagination"`
 }
 
 // List 按条件搜索账单。
@@ -124,10 +149,17 @@ func (c *Client) List(ctx context.Context, q Query) (*ListResult, error) {
 	vals.Set("page_size", strconv.Itoa(size))
 
 	var out listPayload
-	if err := c.get(ctx, "/api/integration/bills?"+vals.Encode(), &out); err != nil {
+	if err := c.get(ctx, "/api/public/bills?"+vals.Encode(), &out); err != nil {
 		return nil, err
 	}
-	return &ListResult{Items: out.Items, Total: out.Total, Page: out.Page, PageSize: out.PageSize}, nil
+	for i := range out.List {
+		out.List[i].normalize()
+	}
+	pg := out.Pagination
+	if pg.Page < 1 {
+		pg.Page = page
+	}
+	return &ListResult{Items: out.List, Total: int(pg.Total), Page: pg.Page, PageSize: pg.PageSize}, nil
 }
 
 // ByIDs 按 id 批量取（刷新快照用）。货殖侧会忽略不存在或无权访问的 id。
@@ -142,23 +174,25 @@ func (c *Client) ByIDs(ctx context.Context, ids []string) ([]Bill, error) {
 		return nil, nil
 	}
 	var out listPayload
-	if err := c.get(ctx, "/api/integration/bills?ids="+url.QueryEscape(strings.Join(clean, ",")), &out); err != nil {
+	if err := c.get(ctx, "/api/public/bills?ids="+url.QueryEscape(strings.Join(clean, ",")), &out); err != nil {
 		return nil, err
 	}
-	return out.Items, nil
+	for i := range out.List {
+		out.List[i].normalize()
+	}
+	return out.List, nil
 }
 
-// One 取单条。不存在时返回 os.ErrNotExist 语义由调用方判断（这里返回 ErrNotFound）。
-var ErrNotFound = errors.New("货殖没有这张账单")
-
+// One 取单条。不存在时返回 ErrNotFound。
 func (c *Client) One(ctx context.Context, id string) (*Bill, error) {
 	var out Bill
-	if err := c.get(ctx, "/api/integration/bills/"+url.PathEscape(strings.TrimSpace(id)), &out); err != nil {
+	if err := c.get(ctx, "/api/public/bills/"+url.PathEscape(strings.TrimSpace(id)), &out); err != nil {
 		if errors.Is(err, errUpstreamNotFound) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	out.normalize()
 	return &out, nil
 }
 

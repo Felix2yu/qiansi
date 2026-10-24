@@ -79,7 +79,36 @@ func (a *API) huozhiStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"configured": true, "ok": true, "base": client.Base()})
 }
 
-// huozhiBills 搜索货殖账单（关联选择器用）。返回体与货殖一致，额外带上 base 供前端拼跳转链接。
+// huozhiBillDTO 是给浏览器的账单视图。
+// 不直接把货殖的响应结构透传出去：上游字段名（category/account/book）属于货殖的契约，
+// 牵丝前端按自己的名字（category_name/…）消费，日后货殖改名也不会波及前端。
+type huozhiBillDTO struct {
+	ID           uint   `json:"id"`
+	AmountFen    int    `json:"amount_fen"`
+	Type         string `json:"type"`
+	TxDate       string `json:"tx_date"`
+	Description  string `json:"description"`
+	Merchant     string `json:"merchant"`
+	CategoryName string `json:"category_name"`
+	AccountName  string `json:"account_name"`
+	BookName     string `json:"book_name"`
+}
+
+func toHuozhiBillDTO(b huozhi.Bill) huozhiBillDTO {
+	return huozhiBillDTO{
+		ID:           b.ID,
+		AmountFen:    b.AmountFen,
+		Type:         b.Type,
+		TxDate:       b.TxDate,
+		Description:  b.Description,
+		Merchant:     b.Merchant,
+		CategoryName: b.CategoryName,
+		AccountName:  b.AccountName,
+		BookName:     b.BookName,
+	}
+}
+
+// huozhiBills 搜索货殖账单（关联选择器用）。返回体额外带上 base 供前端拼跳转链接。
 func (a *API) huozhiBills(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client, err := a.huozhiClient(ctx)
@@ -100,8 +129,12 @@ func (a *API) huozhiBills(w http.ResponseWriter, r *http.Request) {
 		writeHuozhiErr(w, err)
 		return
 	}
+	items := make([]huozhiBillDTO, 0, len(res.Items))
+	for _, b := range res.Items {
+		items = append(items, toHuozhiBillDTO(b))
+	}
 	writeJSON(w, 200, map[string]any{
-		"items":     res.Items,
+		"items":     items,
 		"total":     res.Total,
 		"page":      res.Page,
 		"page_size": res.PageSize,

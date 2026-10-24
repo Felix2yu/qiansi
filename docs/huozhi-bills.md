@@ -69,17 +69,27 @@ END
 
 ## 5. 接口
 
-### 货殖（新增，只读，API Key 鉴权）
+### 货殖（复用既有对外契约，只读，API Key 鉴权）
+
+货殖对外的账单接口只有一组 `/api/public/bills`，**幕间（演出记录）与牵丝共用**，
+不另开第二套。牵丝这次只往这份契约上做了**向后兼容的增补**：
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/integration/bills` | 搜索：`keyword` / `start_date` / `end_date` / `type` / `page` / `page_size`，复用 Web 端同一套筛选口径 |
-| GET | `/api/integration/bills?ids=1,2,3` | 按 id 批量取（上限 200），刷新快照用 |
-| GET | `/api/integration/bills/:id` | 单条 |
+| GET | `/api/public/bills/:id` | 单张（幕间按 id 取，牵丝刷新时也会用） |
+| GET | `/api/public/bills` | 列表：`page` / `page_size` / `start_date` / `end_date`（历史参数）+ 本次新增 `keyword` / `type` / `ids` |
 
-返回 `{code,message,data:{items:[...]}}`，每项含 `amount_fen`（分）、`tx_date`、
-`category_name` / `account_name` / `book_name`（已解析名称）。
-**单开一组而不是给 `/api/transactions` 加 API Key**：长期密钥只该有读权限。
+响应 `{code,message,data}`：
+
+- 列表把数组放在 `data.list`，分页在 `data.pagination`（沿用既有的 `PagedOK` 结构）；
+- 每个账单：`id` / `description` / `tx_date`（`YYYY-MM-DD HH:MM:SS`，历史格式不变）/
+  `type` / `currency` / `merchant` / `remark`；
+- 金额双写：`amount`（元，浮点，历史字段，幕间在用）+ `amount_fen`（分，整数，牵丝在用）；
+- 本次新增：`category` / `account` / `book`（字典名称，缺失为空串）。幕间早就按
+  `category` 判「门票实付 / 其他开销」，此前货殖不返回该字段，它一直退化成全部算门票——
+  这次补上顺带修好了。
+
+只加字段、不改既有字段语义，所以幕间无需改动。`ids=1,2,3`（上限 200）用于刷新已关联快照。
 
 ### 牵丝
 
@@ -92,7 +102,8 @@ END
 | DELETE | `/api/v1/events/{id}/bills/{billID}` | 解除一条（只删关联，不碰货殖账单） |
 
 关联时金额与名称一律由服务端向货殖取回后落库，**不信任前端传的快照**——
-否则旧版本页面能把过期金额写进去。
+否则旧版本页面能把过期金额写进去。客户端对旧版货殖做了兜底：缺 `amount_fen` 时按
+`amount`（元）四舍五入换算成分，`tx_date` 统一截到日期。
 
 ## 6. 展示规则
 

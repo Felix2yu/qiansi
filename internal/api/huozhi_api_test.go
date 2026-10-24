@@ -12,8 +12,10 @@ import (
 
 // ===== 货殖账单关联（1:N）=====
 
-// fakeHuozhi 起一个只有读接口的假货殖，用最小的信封结构验证客户端解析。
-// 真货殖的响应包了一层 {code,message,data}，这里不能简化掉——否则解析路径测不到。
+// fakeHuozhi 起一个只有读接口的假货殖，复刻 /api/public/bills 的真实契约：
+// 信封 {code,message,data}，列表放在 data.list、分页在 data.pagination，
+// 金额同时给「元」与「分」，字典名称在 category/account/book。
+// 这层结构不能简化——否则客户端的解析路径根本没被测到。
 func fakeHuozhi(t *testing.T, key string, bills []map[string]any) *httptest.Server {
 	t.Helper()
 	byID := map[string]map[string]any{}
@@ -28,7 +30,7 @@ func fakeHuozhi(t *testing.T, key string, bills []map[string]any) *httptest.Serv
 		}
 		items := []map[string]any{}
 		switch {
-		case r.URL.Path == "/api/integration/bills":
+		case r.URL.Path == "/api/public/bills":
 			if ids := r.URL.Query().Get("ids"); ids != "" {
 				for _, id := range strings.Split(ids, ",") {
 					if b, ok := byID[id]; ok {
@@ -37,14 +39,19 @@ func fakeHuozhi(t *testing.T, key string, bills []map[string]any) *httptest.Serv
 				}
 			} else {
 				kw := r.URL.Query().Get("keyword")
+				typ := r.URL.Query().Get("type")
 				for _, b := range bills {
-					if kw == "" || strings.Contains(itoaAny(b["description"]), kw) {
-						items = append(items, b)
+					if kw != "" && !strings.Contains(itoaAny(b["description"]), kw) {
+						continue
 					}
+					if typ != "" && itoaAny(b["type"]) != typ {
+						continue
+					}
+					items = append(items, b)
 				}
 			}
-		case strings.HasPrefix(r.URL.Path, "/api/integration/bills/"):
-			id := strings.TrimPrefix(r.URL.Path, "/api/integration/bills/")
+		case strings.HasPrefix(r.URL.Path, "/api/public/bills/"):
+			id := strings.TrimPrefix(r.URL.Path, "/api/public/bills/")
 			b, ok := byID[id]
 			if !ok {
 				w.WriteHeader(http.StatusNotFound)
@@ -59,7 +66,10 @@ func fakeHuozhi(t *testing.T, key string, bills []map[string]any) *httptest.Serv
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"code": 0, "message": "ok",
-			"data": map[string]any{"items": items, "total": len(items), "page": 1, "page_size": 20},
+			"data": map[string]any{
+				"list":       items,
+				"pagination": map[string]any{"page": 1, "page_size": 20, "total": len(items)},
+			},
 		})
 	}))
 	t.Cleanup(srv.Close)
@@ -83,10 +93,10 @@ func TestAPAHuozhiBillLink(t *testing.T) {
 	key := "k-test"
 
 	srv := fakeHuozhi(t, key, []map[string]any{
-		{"id": 101, "amount_fen": 8800, "type": "expense", "tx_date": "2026-10-20",
-			"description": "茶馆", "category_name": "餐饮", "account_name": "现金", "book_name": "日常"},
-		{"id": 102, "amount_fen": 1200, "type": "expense", "tx_date": "2026-10-20",
-			"description": "打车", "category_name": "交通", "account_name": "微信", "book_name": "日常"},
+		{"id": 101, "amount": 88, "amount_fen": 8800, "type": "expense", "tx_date": "2026-10-20 12:30:00",
+			"description": "茶馆", "category": "餐饮", "account": "现金", "book": "日常"},
+		{"id": 102, "amount": 12.5, "amount_fen": 1250, "type": "expense", "tx_date": "2026-10-20 18:00:00",
+			"description": "打车", "category": "交通", "account": "微信", "book": "日常"},
 	})
 	if err := s.Store.SettingSet(ctx, settingHuozhiBase, srv.URL); err != nil {
 		t.Fatal(err)
@@ -118,8 +128,8 @@ func TestAPAHuozhiBillLink(t *testing.T) {
 	}
 
 	detail := s.get("/api/v1/events/" + evID)
-	if v, _ := detail["expense_fen"].(float64); v != 10000 {
-		t.Fatalf("开销 = %v, want 10000（两张账单之和）", detail["expense_fen"])
+	if v, _ := detail["expense_fen"].(float64); v != 10050 {
+		t.Fatalf("开销 = %v, want 10050（8800 + 1250 两张账单之和）", detail["expense_fen"])
 	}
 	bills, _ := detail["bills"].([]any)
 	if len(bills) != 2 {
@@ -147,7 +157,8 @@ func TestAPAHuozhiBillLink(t *testing.T) {
 	// 刷新：假货殖价格变了，快照跟着变
 	srv.Close()
 	srv2 := fakeHuozhi(t, key, []map[string]any{
-		{"id": 101, "amount_fen": 9900, "type": "expense", "tx_date": "2026-10-20", "description": "茶馆（涨价）"},
+		// 只给「元」不给「分」：模拟未升级的货殖，客户端要按 99 元折成 9900 分
+		{"id": 101, "amount": 99, "type": "expense", "tx_date": "2026-10-20 12:30:00", "description": "茶馆（涨价）"},
 		// 102 在货殖里被删了
 	})
 	_ = s.Store.SettingSet(ctx, settingHuozhiBase, srv2.URL)
@@ -158,8 +169,8 @@ func TestAPAHuozhiBillLink(t *testing.T) {
 	if len(stale) != 1 || stale[0] != "102" {
 		t.Fatalf("stale = %v, want [102]", refreshed["stale"])
 	}
-	if v, _ := s.get("/api/v1/events/" + evID)["expense_fen"].(float64); v != 11100 {
-		t.Fatalf("刷新后开销 = %v, want 11100（9900 + 旧快照 1200）", v)
+	if v, _ := s.get("/api/v1/events/" + evID)["expense_fen"].(float64); v != 11150 {
+		t.Fatalf("刷新后开销 = %v, want 11150（9900 + 旧快照 1250）", v)
 	}
 
 	// 解除货殖里已被删掉的那条（102），剩下 101 的 9900
@@ -209,5 +220,35 @@ func TestAPAHuozhiWrongKey(t *testing.T) {
 	status := s.get("/api/v1/huozhi/status")
 	if status["configured"] != true || status["ok"] != false {
 		t.Fatalf("密钥错误时状态不对: %v", status)
+	}
+}
+
+// 代理搜索必须把货殖的字段名（category/account/book）翻成牵丝前端使用的
+// category_name/…，否则关联选择器里分类与账户会静默变成空白。
+func TestAPAHuozhiSearchContract(t *testing.T) {
+	s := newTestServer(t)
+	ctx := context.Background()
+	key := "k-search"
+	srv := fakeHuozhi(t, key, []map[string]any{
+		{"id": 201, "amount": 30, "amount_fen": 3000, "type": "expense", "tx_date": "2026-10-19 09:00:00",
+			"description": "早饭", "category": "餐饮", "account": "现金", "book": "日常"},
+	})
+	_ = s.Store.SettingSet(ctx, settingHuozhiBase, srv.URL)
+	_ = s.Store.SettingSet(ctx, settingHuozhiKey, key)
+
+	body := s.get("/api/v1/huozhi/bills?q=&type=expense")
+	items, _ := body["items"].([]any)
+	if len(items) != 1 {
+		t.Fatalf("搜索结果数 = %d, want 1: %v", len(items), body)
+	}
+	it := items[0].(map[string]any)
+	if it["category_name"] != "餐饮" || it["account_name"] != "现金" || it["book_name"] != "日常" {
+		t.Fatalf("字段名未映射到前端契约: %v", it)
+	}
+	if _, leaked := it["category"]; leaked {
+		t.Fatalf("不应透传货殖的上游字段名: %v", it)
+	}
+	if it["amount_fen"].(float64) != 3000 || it["tx_date"] != "2026-10-19" {
+		t.Fatalf("金额或日期不符合预期: %v", it)
 	}
 }
