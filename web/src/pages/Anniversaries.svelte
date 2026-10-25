@@ -109,15 +109,23 @@
     await trashOne('anniversary', a.id, load, '已删除');
   }
 
+  // new Date('YYYY-MM-DD') 按 UTC 解析，UTC 以西的时区 getMonth/getDate 会退一天；
+  // 手动拆段按本地构造（api.ts 的 daysSince 同款做法）
+  function localDate(s?: string): Date {
+    if (!s) return new Date();
+    const [y, m, d] = s.slice(0, 10).split('-').map(Number);
+    return y && m && d ? new Date(y, m - 1, d) : new Date(s);
+  }
+
   /** 每年重复的纪念日只有月日有意义，展示时补上今年的年份便于阅读 */
   function displayDate(a: Anniversary) {
-    const d = new Date(a.date);
+    const d = localDate(a.date);
     return a.repeat_yearly ? `${d.getMonth() + 1}月${d.getDate()}日` : d.toLocaleDateString();
   }
 
   /** 角标显示下一次发生的月日（循环/农历项取后端换算后的公历日期） */
   function badgeDate(a: Anniversary) {
-    const d = new Date(a.next_date || a.date);
+    const d = localDate(a.next_date || a.date);
     return { m: d.getMonth() + 1, d: d.getDate() };
   }
 

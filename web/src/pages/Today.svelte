@@ -1,14 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import {
-    API,
-    todayLocal,
-    REF_TYPE_LABEL,
-    type Dashboard,
-    type Reminder,
-    type Suggestion
-  } from '../lib/api';
+  import { API, REF_TYPE_LABEL, type Dashboard, type Reminder, type Suggestion } from '../lib/api';
   import { navigate } from '../lib/router';
+  import { todayStr } from '../lib/today.svelte';
   import { toast, errText } from '../lib/toast.svelte';
   import { completeReminder } from '../lib/reminderActions';
   import { self, loadSelf } from '../lib/self.svelte';
@@ -29,7 +23,7 @@
     CalendarCheck
   } from '@lucide/svelte';
 
-  const today = todayLocal();
+  const today = $derived(todayStr());
   let dashboard = $state<Dashboard | null>(null);
   // 加载失败与「真的没有数据」必须分开显示：首页一片空白会被当成页面坏了
   let loadError = $state('');
@@ -73,26 +67,47 @@
   async function load() {
     loading = true;
     try {
-      const [d, r, s] = await Promise.all([
+      // 三个接口各自降级：建议或待办挂了不该拖垮整页统计——
+      // 尤其建议模块可能在设置里被隐藏，它的失败更没资格让首页变错误态
+      const [d, r, s] = await Promise.allSettled([
         API.get('/api/v1/dashboard/stats'),
         API.get('/api/v1/reminders/upcoming?days=30'),
         API.get('/api/v1/dashboard/suggestions')
       ]);
-      dashboard = d as Dashboard;
-      upcoming = r as Reminder[];
-      suggestions = s as Suggestion[];
       loadError = '';
-    } catch (err) {
-      // 拉不到要留在屏幕上：首页一片空白和真的没有数据看起来一样
-      toast.fail('加载失败', err);
-      loadError = errText(err);
+      if (d.status === 'fulfilled') {
+        dashboard = d.value as Dashboard;
+      } else {
+        // 统计是首页的主体，只有它失败才值得整页报错
+        toast.fail('加载失败', d.reason);
+        loadError = errText(d.reason);
+      }
+      if (r.status === 'fulfilled') {
+        upcoming = r.value as Reminder[];
+      } else if (!loadError) {
+        toast.fail('待办加载失败', r.reason);
+      }
+      if (s.status === 'fulfilled') {
+        suggestions = s.value as Suggestion[];
+      } else if (!loadError) {
+        toast.fail('建议加载失败', s.reason);
+      }
     } finally {
       loading = false;
     }
   }
-  onMount(() => {
-    loadSelf();
-    load();
+  // 今天翻篇（长开标签页过午夜、从后台切回）就重新拉一遍：
+  // 逾期/今天到期的分桶和「该联系了」都跟着新一天走
+  let loadedForDay = '';
+  $effect(() => {
+    const day = todayStr();
+    if (day === loadedForDay) return;
+    loadedForDay = day;
+    void load();
+  });
+  onMount(async () => {
+    // 先拿本人再拉列表：两个请求赛跑时，名单过滤可能读到还没就位的 self.id
+    await loadSelf();
   });
   function done(r: Reminder) {
     void completeReminder(r, load);

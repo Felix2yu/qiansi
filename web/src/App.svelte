@@ -184,6 +184,9 @@
     window.dispatchEvent(new PopStateEvent('popstate'));
   }
 
+  // 未知路径的归位提示只发一次的防重入标志
+  let unknownRouteHandled = false;
+
   function current() {
     const p = $route.path;
     if (p === '/' || p === '') return 'Today';
@@ -207,7 +210,23 @@
       '/drift': 'Drift',
       '/meetings': 'Meetings'
     };
-    return map[p] || 'Today';
+    const hit = map[p];
+    if (!hit && p !== '/' && p !== '') {
+      // 输错的深链静默落回今日页，URL 与侧栏高亮都对不上，像「应用坏了」。
+      // 换 URL/拨路由 store 都是副作用，不能在 $derived 求值里同步做（Svelte 5
+      // 会按 unsafe mutation 拦），丢到微任务里；防重入标志避免重复提示
+      if (!unknownRouteHandled) {
+        unknownRouteHandled = true;
+        queueMicrotask(() => {
+          unknownRouteHandled = false;
+          history.replaceState({}, '', '/');
+          window.dispatchEvent(new PopStateEvent('popstate'));
+          toast.info('页面不存在，已回到今日');
+        });
+      }
+      return 'Today';
+    }
+    return hit || 'Today';
   }
 
   const cur = $derived(current());

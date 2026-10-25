@@ -45,6 +45,8 @@
           var ff = localStorage.getItem('q_font_family');
           if (ff === 'serif') el.style.setProperty('--font-sans', 'var(--font-serif)');
           else if (ff === 'sans') el.style.setProperty('--font-serif', 'var(--font-sans)');
+          // 金额打码：同样要抢在首帧之前挂 class，否则刷新时金额会明文闪现
+          if (localStorage.getItem('q_money_mask') === '1') el.classList.add('q-money-mask');
         } catch (e) {
           /* 隐私模式下 localStorage 可能抛错，忽略即可 */
         }

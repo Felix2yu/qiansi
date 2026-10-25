@@ -123,6 +123,8 @@
     const colors = dark
       ? ['#6f675a', '#bfa077', '#c98a52', '#cf6a4d', '#d4533f']
       : ['#d8cfbd', '#c9a87a', '#b58354', '#a8513a', '#8c2f24'];
+    // 「未设置」与一档同色会把「没打分」读成「一星」，给它一个中性的灰
+    const unsetColor = dark ? '#4d463d' : '#b6afa2';
     gradeChart?.dispose();
     gradeChart = echarts.init(gradeChartDiv);
     gradeChart.setOption({
@@ -153,7 +155,7 @@
           data: rows.map((r) => ({
             value: r.count,
             itemStyle: {
-              color: r.grade > 0 ? colors[r.grade - 1] || colors[4] : colors[0],
+              color: r.grade > 0 ? colors[r.grade - 1] || colors[4] : unsetColor,
               borderRadius: [3, 3, 0, 0]
             }
           }))
@@ -165,9 +167,18 @@
     monthChart?.resize();
     gradeChart?.resize();
   }
+  // mode='system' 时系统切明暗只改 .dark class，theme.mode 不变——
+  // 监听 prefers-color-scheme 自己计一跳，让下面的重绘 effect 感知到
+  let schemeTick = $state(0);
+  const schemeMql =
+    typeof matchMedia === 'function' ? matchMedia('(prefers-color-scheme: dark)') : null;
+  function onSchemeChange() {
+    schemeTick += 1;
+  }
   onMount(() => {
     load();
     window.addEventListener('resize', onResize);
+    schemeMql?.addEventListener('change', onSchemeChange);
   });
   // 明暗主题 / 主题色 / 字号变化时，画布上的轴色与提示框配色要跟着换：
   // 只在 onMount 画一次的话，切换外观后图表还停在旧主题，得切页再进才恢复。
@@ -176,6 +187,7 @@
     void theme.mode;
     void theme.color;
     void theme.fontScale;
+    void schemeTick;
     void monthRows;
     void gradeRows;
     if (!loading) {
@@ -187,6 +199,7 @@
     monthChart?.dispose();
     gradeChart?.dispose();
     window.removeEventListener('resize', onResize);
+    schemeMql?.removeEventListener('change', onSchemeChange);
   });
 </script>
 

@@ -144,8 +144,13 @@
         throw new Error(msg);
       }
       const data = await res.json();
-      // 存可直接渲染的 URL（/uploads/xxx）——avatar_attachment_id 是自由文本字段
-      await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: data.url });
+      // 存可直接渲染的 URL（/uploads/xxx）——avatar_attachment_id 是自由文本字段。
+      // PUT 是整行覆盖：GET 带回的是读投影 categories，不补 category_ids 会把圈子清空
+      await API.put(`/api/v1/people/${id}`, {
+        ...person,
+        avatar_attachment_id: data.url,
+        category_ids: (person.categories ?? []).map((c) => c.id)
+      });
       await load();
     } catch (err) {
       toast.fail('头像上传失败', err);
@@ -159,7 +164,11 @@
   async function removeAvatar() {
     if (!person) return;
     try {
-      await API.put(`/api/v1/people/${id}`, { ...person, avatar_attachment_id: '' });
+      await API.put(`/api/v1/people/${id}`, {
+        ...person,
+        avatar_attachment_id: '',
+        category_ids: (person.categories ?? []).map((c) => c.id)
+      });
       await load();
     } catch (err) {
       toast.fail('移除头像失败', err);
@@ -197,9 +206,12 @@
     }
   }
 
+  let quickSaving = false;
   async function submitQuick() {
+    if (quickSaving) return;
     if (!quick) return;
     const text = quickText.trim();
+    quickSaving = true;
     try {
       if (quick === 'money') {
         const fen = toFen(quickAmount);
@@ -235,6 +247,8 @@
       await loadWords();
     } catch (err) {
       toast.fail('保存失败', err);
+    } finally {
+      quickSaving = false;
     }
   }
 
@@ -300,8 +314,11 @@
     navigate('/people');
   }
 
+  let addingField = false;
   async function addField() {
+    if (addingField) return; // 回车连击：第一笔还没回来 label 尚未清空
     if (!newField.label.trim()) return;
+    addingField = true;
     try {
       const saved = (await API.post(`/api/v1/people/${id}/fields`, {
         label: newField.label.trim(),
@@ -311,6 +328,8 @@
       newField = { label: '', value: '' };
     } catch (err) {
       toast.fail('添加失败', err);
+    } finally {
+      addingField = false;
     }
   }
   // 带 id 提交就是更新（后端 ON CONFLICT(id) DO UPDATE），否则改一个字只能删了重建

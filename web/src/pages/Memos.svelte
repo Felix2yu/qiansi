@@ -38,26 +38,40 @@
   let page = $state(0);
   let hasMore = $state(false);
 
+  // 每趟请求编号，只认最新一次（与往来页同款防竞态）
+  let reqId = 0;
+  let loading = $state(false);
+
   async function load(reset = true) {
     if (reset) page = 0;
-    let batch: Memo[] | null = null;
+    const mine = ++reqId;
+    loading = true;
+    let batch: Memo[];
     try {
       batch = await API.get<Memo[]>(
         `/api/v1/memos?promises_only=${onlyPromises ? 1 : 0}&limit=${PAGE}&offset=${page * PAGE}`
       );
     } catch (err) {
-      // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
-      loadError = errText(err);
-      toast.fail('加载失败', err);
+      if (mine === reqId) {
+        // 读失败也不能装作「暂无记录」：空列表和查不到是两件事
+        loadError = errText(err);
+        toast.fail('加载失败', err);
+        loading = false;
+      }
       return;
     }
+    if (mine !== reqId) return;
+    loading = false;
     loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
   async function loadMore() {
+    const prev = page;
     page += 1;
     await load(false);
+    // 失败时页码已自增，直接再点会跳过一整页且无提示；退回失败前的位置
+    if (loadError) page = prev;
   }
   onMount(() => {
     loadSelf();
@@ -91,7 +105,9 @@
     editId = '';
   }
 
+  let saving = $state(false);
   async function submit() {
+    if (saving) return;
     if (!form.content.trim()) {
       toast.error('内容必填');
       return;
@@ -101,6 +117,7 @@
     if (!body.person_id) delete body.person_id;
     if (!body.due_date) delete body.due_date;
     const isEdit = !!editId;
+    saving = true;
     try {
       if (isEdit) await API.put(`/api/v1/memos/${editId}`, body);
       else await API.post('/api/v1/memos', body);
@@ -108,6 +125,8 @@
       // 失败时弹窗不关、内容不丢，改完可以直接再存一次
       toast.fail('保存失败', err);
       return;
+    } finally {
+      saving = false;
     }
     closeForm();
     toast.ok(isEdit ? '已更新' : '已保存');
@@ -233,6 +252,8 @@
       {:else}
         {#if loadError}
           <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+        {:else if loading && list.length === 0}
+          <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
         {:else}
           <Empty
             icon={MessageCircle}
@@ -296,7 +317,7 @@
     </div>
     {#snippet foot()}
       <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
-      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+      <button class="q-btn q-btn--primary" onclick={submit} disabled={saving}>保存</button>
     {/snippet}
   </Modal>
 {/if}

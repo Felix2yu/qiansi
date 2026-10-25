@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { API, todayLocal, REF_TYPE_LABEL, type Reminder } from '../lib/api';
+  import { todayStr } from '../lib/today.svelte';
   import { loadSelf } from '../lib/self.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import Modal from '../lib/ui/Modal.svelte';
@@ -106,7 +107,8 @@
   }
 
   // 按时间分区：逾期 / 今天 / 未来，避免逾期项与近期项混排后失去优先级
-  const today = $derived(todayLocal());
+  // 跨午夜自动跟上（长开标签页不会再拿昨天分桶）
+  const today = $derived(todayStr());
   const groups = $derived.by(() => {
     if (showDone) return [{ key: 'done', label: '已完成', items: list }];
     const overdue: Reminder[] = [],
@@ -196,7 +198,10 @@
       {#if loadError}
         <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
       {:else}
-        <Empty icon={Bell} text={showDone ? '还没有已完成的待办' : '没有待办，正好去见见想见的人'} />
+        <Empty
+          icon={Bell}
+          text={showDone ? '还没有已完成的待办' : '没有待办，正好去见见想见的人'}
+        />
       {/if}
     {:else}
       {#each groups as g, i (i)}

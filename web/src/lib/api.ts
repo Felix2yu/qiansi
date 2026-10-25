@@ -101,6 +101,8 @@ export type Person = {
   category_ids?: number[];
   categories?: PersonCategory[];
   archived?: boolean;
+  /** macOS 联系人.app 的 UID：vCard 导入去重靠它，编辑时必须原样带回 */
+  x_abuid?: string;
   created_at: string;
   updated_at: string;
   intimacy?: number;

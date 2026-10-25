@@ -51,6 +51,7 @@
   }
 
   async function create() {
+    if (busy) return; // 回车连击会在按钮 disabled 生效前再进来一次
     if (!draft.name.trim()) return;
     busy = true;
     try {
@@ -62,6 +63,7 @@
       });
       draft = { name: '', color: draft.color };
       await onchange();
+      toast.ok('已添加');
     } catch (err) {
       warn(err, '添加');
     } finally {
@@ -189,7 +191,8 @@
     <input type="color" bind:value={editForm.color} class="term-color" aria-label="选择颜色" />
     {#if boolField}
       <label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm">
-        <input type="checkbox" bind:checked={editBool} /> {boolField.label}
+        <input type="checkbox" bind:checked={editBool} />
+        {boolField.label}
       </label>
     {/if}
     <button class="q-btn q-btn--primary" disabled={busy} onclick={save}>保存</button>
@@ -209,7 +212,8 @@
     <input type="color" bind:value={draft.color} class="term-color" aria-label="选择颜色" />
     {#if boolField}
       <label class="flex shrink-0 cursor-pointer items-center gap-1.5 text-sm">
-        <input type="checkbox" bind:checked={draftBool} /> {boolField.label}
+        <input type="checkbox" bind:checked={draftBool} />
+        {boolField.label}
       </label>
     {/if}
     <button class="q-btn q-btn--primary" disabled={busy} onclick={create}>

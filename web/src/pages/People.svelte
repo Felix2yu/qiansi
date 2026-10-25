@@ -171,7 +171,7 @@
       !(await ask({
         title: '清空全部联系人？',
         detail:
-          '所有往来、对话、记账与纪念日会一并进回收站。回收站里的记录恢复前不会出现在任何列表里，彻底清空才真的删除。',
+          '所有联系人（含已归档的）连同往来、对话、记账与纪念日一并进回收站。回收站里的记录恢复前不会出现在任何列表里，彻底清空才真的删除。',
         danger: true,
         confirmLabel: '清空全部'
       }))
@@ -195,26 +195,42 @@
   let page = $state(0);
   let hasMore = $state(false);
 
+  // 连点两个筛选项会并发发出两趟请求，谁后回来谁说了算——
+  // 列表可能停在上一组条件的答案上。给每趟请求编号，只认最新那次（与往来页同款）。
+  let reqId = 0;
+  let loading = $state(false);
+
   async function load(reset = true) {
     if (reset) page = 0;
+    const mine = ++reqId;
+    loading = true;
     const archived = onlyArchived ? '&archived=only' : '';
     const gender = selectedGender ? `&gender=${selectedGender}` : '';
     const batch = await API.get<Person[]>(
       `/api/v1/people?q=${encodeURIComponent(q)}${archived}${gender}&category_id=${selectedCat}&tag_id=${selectedTag}&limit=${PAGE}&offset=${page * PAGE}`
     ).catch((err) => {
+      if (mine !== reqId) return null;
       // 读失败不能显示「暂无联系人」，那看起来像是数据没了
       loadError = errText(err);
       toast.fail('加载失败', err);
       return null;
     });
-    if (batch === null) return;
+    if (batch === null) {
+      if (mine === reqId) loading = false;
+      return;
+    }
+    if (mine !== reqId) return;
+    loading = false;
     loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
   async function loadMore() {
+    const prev = page;
     page += 1;
     await load(false);
+    // 失败时页码已自增，直接再点会跳过一整页且无提示；退回失败前的位置
+    if (loadError) page = prev;
   }
   async function init() {
     ensure('categories');
@@ -393,15 +409,36 @@
           </button>
         {/if}
       </div>
-      <select bind:value={selectedCat} onchange={() => load()} class="q-select !py-2">
+      <select
+        bind:value={selectedCat}
+        onchange={() => {
+          selectedIds = [];
+          load();
+        }}
+        class="q-select !py-2"
+      >
         <option value={0}>全部圈子</option>
         {#each categories as c (c.id)}<option value={c.id}>{c.name}</option>{/each}
       </select>
-      <select bind:value={selectedTag} onchange={() => load()} class="q-select !py-2">
+      <select
+        bind:value={selectedTag}
+        onchange={() => {
+          selectedIds = [];
+          load();
+        }}
+        class="q-select !py-2"
+      >
         <option value={0}>全部标签</option>
         {#each tags as t (t.id)}<option value={t.id}>{t.name}</option>{/each}
       </select>
-      <select bind:value={selectedGender} onchange={() => load()} class="q-select !py-2">
+      <select
+        bind:value={selectedGender}
+        onchange={() => {
+          selectedIds = [];
+          load();
+        }}
+        class="q-select !py-2"
+      >
         <option value="">全部性别</option>
         {#each GENDER_OPTIONS as o, i (i)}<option value={o.code}>{o.label}</option>{/each}
         <option value="none">未填</option>
@@ -573,6 +610,8 @@
         <div class="col-span-full">
           {#if loadError}
             <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+          {:else if loading && list.length === 0}
+            <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
           {:else if onlyArchived}
             <Empty icon={Users} text="没有已归档的联系人" />
           {:else}

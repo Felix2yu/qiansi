@@ -270,6 +270,13 @@
     const isEdit = !!person?.id;
     try {
       const body: any = { ...form, name: composedName().trim() };
+      // PUT 是整行覆盖：表单没管的列必须原样带回，否则一次普通编辑
+      // 会静默清掉头像、把已归档的人放回列表、抹掉 vCard 匹配 ID（x_abuid）
+      if (isEdit) {
+        body.avatar_attachment_id = person?.avatar_attachment_id ?? '';
+        body.archived = !!person?.archived;
+        body.x_abuid = person?.x_abuid ?? '';
+      }
       // 圈子可多选，随整行 PUT 一起提交；空数组即「不归入任何圈子」
       body.category_ids = selectedCats;
       let saved: Person;

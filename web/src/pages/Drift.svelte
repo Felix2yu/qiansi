@@ -85,7 +85,8 @@
           aria-pressed={onlyOverdue === tab.v}
           class="q-seg__btn"
         >
-          {tab.n}{#if tab.v && !loading}<span class="q-num ml-1 opacity-80">{list.length}</span
+          {tab.n}{#if tab.v && !loading}<span class="q-num ml-1 opacity-80"
+              >{list.filter((d) => d.overdue).length}</span
             >{/if}
         </button>
       {/each}

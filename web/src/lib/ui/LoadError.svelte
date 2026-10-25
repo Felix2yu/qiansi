@@ -16,7 +16,12 @@
   class="q-empty"
   style="border-style: solid; border-color: color-mix(in srgb, var(--q-danger) 45%, var(--q-border));"
 >
-  <AlertTriangle class="q-empty__icon" size={26} strokeWidth={1.5} style="color: var(--q-danger);" />
+  <AlertTriangle
+    class="q-empty__icon"
+    size={26}
+    strokeWidth={1.5}
+    style="color: var(--q-danger);"
+  />
   <div class="q-empty__text" style="color: var(--q-danger);">{text}</div>
   {#if onretry}
     <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => onretry()}>

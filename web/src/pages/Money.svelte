@@ -31,7 +31,18 @@
   // 当前关联值必须出现在选项里——否则 select 找不到匹配项会落到空值上，
   // 用户什么都没做，保存却把关联静默改没了。这里把当前关联补进来。
   let extraEvents = $state<Event[]>([]);
-  const eventOptions = $derived([...extraEvents, ...events]);
+  // 按 id 去重：字典异步补齐后，「编辑时单独补拉的那条」可能已在列表里，
+  // 重复 key 会让 Svelte 的 each 报错、下拉里同一场往来出现两次
+  const eventOptions = $derived.by(() => {
+    const seen = new Set<string>();
+    const out: Event[] = [];
+    for (const e of [...extraEvents, ...events]) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      out.push(e);
+    }
+    return out;
+  });
   let showForm = $state(false);
   let editId = $state('');
   let form = $state(emptyForm());
@@ -54,7 +65,8 @@
       occurred_at: todayLocal(),
       due_date: '',
       event_id: '',
-      settled: false
+      settled: false,
+      settled_at: ''
     };
   }
 
@@ -83,34 +95,41 @@
 
   // 同往来页：连着改两个筛选项时只认最新一趟请求的结果
   let reqId = 0;
+  let loading = $state(false);
 
   async function load(reset = true) {
     if (reset) page = 0;
     const mine = ++reqId;
+    loading = true;
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
     if (filterPerson) qs.set('person_id', filterPerson);
     if (filterKind) qs.set('kind', filterKind);
     if (filterSettled) qs.set('settled', filterSettled);
     if (filterFrom) qs.set('from', filterFrom);
     if (filterTo) qs.set('to', filterTo);
-    let batch: Transaction[] | null = null;
+    let batch: Transaction[];
     try {
       batch = await API.get<Transaction[]>(`/api/v1/transactions?${qs}`);
     } catch (err) {
       if (mine === reqId) {
         loadError = errText(err);
         toast.fail('加载失败', err);
+        loading = false;
       }
       return;
     }
     if (mine !== reqId) return;
+    loading = false;
     loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
   async function loadMore() {
+    const prev = page;
     page += 1;
     await load(false);
+    // 失败时页码已自增，直接再点会跳过一整页且无提示；退回失败前的位置
+    if (loadError) page = prev;
   }
   onMount(() => {
     loadSelf();
@@ -154,7 +173,9 @@
       occurred_at: (full.occurred_at || '').slice(0, 10),
       due_date: full.due_date ? full.due_date.slice(0, 10) : '',
       event_id: full.event_id || '',
-      settled: !!full.settled
+      settled: !!full.settled,
+      // PUT 整行覆盖：不回传的话，还款自动结清时写入的时间戳会被抹掉
+      settled_at: full.settled_at || ''
     };
     showForm = true;
   }
@@ -164,7 +185,9 @@
     editId = '';
   }
 
+  let saving = $state(false);
   async function submit() {
+    if (saving) return;
     const fen = toFen(form.amount_yuan);
     if (!form.person_id || fen <= 0) {
       toast.error('请选择联系人并填写大于 0 的金额（元）');
@@ -180,15 +203,19 @@
       occurred_at: form.occurred_at || todayLocal(),
       due_date: form.due_date || '',
       event_id: form.event_id || '',
-      settled: form.kind === 'loan' ? !!form.settled : true
+      settled: form.kind === 'loan' ? !!form.settled : true,
+      settled_at: form.settled_at || ''
     };
     const isEdit = !!editId;
+    saving = true;
     try {
       if (isEdit) await API.put(`/api/v1/transactions/${editId}`, body);
       else await API.post('/api/v1/transactions', body);
     } catch (err) {
       toast.fail('保存失败', err);
       return;
+    } finally {
+      saving = false;
     }
     closeForm();
     toast.ok(isEdit ? '已更新' : '已记一笔');
@@ -418,6 +445,8 @@
       {:else}
         {#if loadError}
           <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+        {:else if loading && list.length === 0}
+          <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
         {:else}
           <Empty
             icon={Wallet}
@@ -497,7 +526,7 @@
     </div>
     {#snippet foot()}
       <button class="q-btn q-btn--ghost" onclick={closeForm}>取消</button>
-      <button class="q-btn q-btn--primary" onclick={submit}>保存</button>
+      <button class="q-btn q-btn--primary" onclick={submit} disabled={saving}>保存</button>
     {/snippet}
   </Modal>
 {/if}

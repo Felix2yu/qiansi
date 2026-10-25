@@ -200,6 +200,7 @@
     <div
       class="absolute top-0 right-0 left-0 z-40 overflow-hidden rounded-[var(--q-radius-sm)]"
       style="background: var(--q-surface); border: 1px solid var(--q-border-strong); box-shadow: var(--q-shadow-pop);"
+      data-esc-owner
     >
       <div class="flex items-center gap-1.5 px-2.5 py-1.5">
         <Search size={compact ? 12 : 14} class="shrink-0" style="color: var(--q-faint);" />

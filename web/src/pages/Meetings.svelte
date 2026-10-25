@@ -34,14 +34,18 @@
     }
   }
 
-  onMount(() => {
-    loadSelf();
-    load();
+  onMount(async () => {
+    // 先拿本人再拉名单：两个请求赛跑时 self.id 还没就位，「我」会混进被约名单
+    await loadSelf();
+    await load();
   });
 
   function rowMeta(r: MeetingOverviewRow): string {
     const grade = gradeLabel(r.grade);
-    const freq = r.avg_gap_days ? `平均每 ${r.avg_gap_days} 天` : '只见过一次';
+    // 间隔为 0 只说明多次见面发生在同一天，不代表「只见过一次」
+    const gap = r.avg_gap_days ?? 0;
+    const freq =
+      r.meeting_count <= 1 ? '只见过一次' : gap > 0 ? `平均每 ${gap} 天` : '都发生在同一天';
     return `${grade} · 见过 ${r.meeting_count} 次 · ${freq}`;
   }
 
@@ -52,7 +56,10 @@
 </script>
 
 <div class="q-page">
-  <PageHeader title="见面总览" subtitle="按「算见面」的往来统计：上次见面、次数与平均间隔，最久没见的排最前">
+  <PageHeader
+    title="见面总览"
+    subtitle="按「算见面」的往来统计：上次见面、次数与平均间隔，最久没见的排最前"
+  >
     {#snippet actions()}
       <button class="q-btn q-btn--ghost q-btn--sm" onclick={() => navigate('/settings')}>
         调见面口径

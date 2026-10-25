@@ -91,7 +91,7 @@
   async function load() {
     // 圈子/标签/关系类型是全站共享字典，这里只保证「拿到」，不再各自重拉
     await Promise.all([ensure('categories'), ensure('tags'), ensure('relTypes')]);
-    let r: any = null;
+    let r: any;
     try {
       r = await API.get<any>('/api/v1/relationships');
     } catch (err) {
@@ -230,6 +230,11 @@
     if (!chart) {
       chart = echarts.init(el);
       chart.on('click', onChartClick);
+      // 拖完节点松手时 ECharts 会紧接着派发一次 click，不记下松手时刻的话
+      // 「挪一下布局」会被当成点击，直接跳进人物详情页
+      chart.getZr().on('dragend', () => {
+        dragEndedAt = Date.now();
+      });
       ro = new ResizeObserver(() => {
         // 抽屉展开/转屏瞬间可能给 0 尺寸，resize 到 0 同样触发奇异矩阵
         if (el.clientWidth > 0 && el.clientHeight > 0) chart?.resize();

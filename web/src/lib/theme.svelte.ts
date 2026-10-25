@@ -6,7 +6,7 @@
 // 启动时以服务端为准（若已拉取），否则用本地值；用户切换时两边同时写。
 
 import { API } from './api';
-import { applyStartPage, navigate } from './router';
+import { applyStartPage } from './router';
 
 export type ThemeMode = 'light' | 'dark' | 'system';
 export const THEME_MODES: ThemeMode[] = ['system', 'light', 'dark'];
@@ -206,16 +206,29 @@ export function applyTheme() {
   if (meta) meta.content = isDark() ? '#15120e' : theme.color;
 }
 
+// initTheme 的竞态防护：请求发出后用户又改过的键，响应回来不再覆盖。
+// 没有这层守卫，「点侧栏眼睛 → GET 返回旧的服务端值 → 界面弹回旧值」
+// 在慢网络与设置页（每次 mount 都调一次 initTheme）下稳定复现。
+// 集合按整个页面会话累计：用户表达过一次意图就不再跟 TA 抢；
+// 每次 PUT 成功后服务端值已同步为用户所选，跳过应用也不会造成偏差。
+const userTouched = new Set<string>();
+
+let systemThemeBound = false;
+
 /**
  * 启动主题：先按本地值立即应用（同步，消除首屏闪白），
  * 再从服务端拉取偏好并覆盖（跨设备一致）。
  */
 export async function initTheme() {
   applyTheme();
-  // 系统外观变化时实时跟随（仅 system 模式）
-  mql?.addEventListener?.('change', () => {
-    if (theme.mode === 'system') applyTheme();
-  });
+  // 系统外观变化时实时跟随（仅 system 模式）。App 与设置页都会调 initTheme，
+  // 不加幂等守卫的话每进一次设置页就多挂一个 listener。
+  if (!systemThemeBound) {
+    systemThemeBound = true;
+    mql?.addEventListener?.('change', () => {
+      if (theme.mode === 'system') applyTheme();
+    });
+  }
   try {
     const st = await API.get<Record<string, string>>('/api/v1/settings');
     const mode = st['theme_mode'];
@@ -226,14 +239,39 @@ export async function initTheme() {
     const mask = st['money_mask'];
     const todayHidden = st['today_hidden'];
     const onboardHidden = st['onboard_hidden'];
-    if (mode && (VALID as string[]).includes(mode)) theme.mode = mode as ThemeMode;
-    if (color) theme.color = color;
-    if (scale && (VALID_SCALE as string[]).includes(scale)) theme.fontScale = scale as FontScale;
-    if (family && (VALID_FAMILY as string[]).includes(family)) theme.fontFamily = family as FontFamily;
-    if (start && START_PATHS.includes(start)) theme.startPage = start;
-    if (mask === '1' || mask === '0') theme.maskMoney = mask === '1';
-    if (todayHidden !== undefined) theme.todayHidden = parseTodayHidden(todayHidden);
-    if (onboardHidden === '1' || onboardHidden === '0') {
+    // 应用服务端值的同时回写 localStorage：下次刷新首屏直接用新值渲染，
+    // 不再「先按旧本地值出一帧、再被服务端值纠正」地闪一下
+    if (!userTouched.has('mode') && mode && (VALID as string[]).includes(mode)) {
+      theme.mode = mode as ThemeMode;
+      localStorage.setItem(KEY_MODE, mode);
+    }
+    if (!userTouched.has('color') && color) {
+      theme.color = color;
+      localStorage.setItem(KEY_COLOR, color);
+    }
+    if (!userTouched.has('fontScale') && scale && (VALID_SCALE as string[]).includes(scale)) {
+      theme.fontScale = scale as FontScale;
+      localStorage.setItem(KEY_SCALE, scale);
+    }
+    if (!userTouched.has('fontFamily') && family && (VALID_FAMILY as string[]).includes(family)) {
+      theme.fontFamily = family as FontFamily;
+      localStorage.setItem(KEY_FAMILY, family);
+    }
+    if (!userTouched.has('startPage') && start && START_PATHS.includes(start)) {
+      theme.startPage = start;
+      localStorage.setItem(KEY_START, start);
+    }
+    if (!userTouched.has('maskMoney') && (mask === '1' || mask === '0')) {
+      theme.maskMoney = mask === '1';
+      localStorage.setItem(KEY_MASK, mask);
+    }
+    if (!userTouched.has('todayHidden') && todayHidden !== undefined) {
+      theme.todayHidden = parseTodayHidden(todayHidden);
+      const joined = theme.todayHidden.join(',');
+      if (joined) localStorage.setItem(KEY_TODAY, joined);
+      else localStorage.removeItem(KEY_TODAY);
+    }
+    if (!userTouched.has('onboardHidden') && (onboardHidden === '1' || onboardHidden === '0')) {
       theme.onboardHidden = onboardHidden === '1';
       localStorage.setItem(KEY_ONBOARD, onboardHidden);
     }
@@ -253,6 +291,7 @@ export function nextMode(mode: ThemeMode): ThemeMode {
 
 /** 切换外观并持久化（本地 + 服务端）。 */
 export async function setThemeMode(mode: ThemeMode) {
+  userTouched.add('mode');
   theme.mode = mode;
   localStorage.setItem(KEY_MODE, mode);
   // 同步旧的 q_dark，避免旧逻辑（如历史代码）读出矛盾状态
@@ -267,6 +306,7 @@ export async function setThemeMode(mode: ThemeMode) {
 
 /** 修改主题色并持久化。 */
 export async function setThemeColor(color: string) {
+  userTouched.add('color');
   theme.color = color;
   localStorage.setItem(KEY_COLOR, color);
   applyTheme();
@@ -279,6 +319,7 @@ export async function setThemeColor(color: string) {
 
 /** 切换字号档位并持久化（本地 + 服务端）。 */
 export async function setFontScale(scale: FontScale) {
+  userTouched.add('fontScale');
   theme.fontScale = scale;
   localStorage.setItem(KEY_SCALE, scale);
   applyTheme();
@@ -291,6 +332,7 @@ export async function setFontScale(scale: FontScale) {
 
 /** 切换字体族并持久化（本地 + 服务端）。 */
 export async function setFontFamily(family: FontFamily) {
+  userTouched.add('fontFamily');
   theme.fontFamily = family;
   localStorage.setItem(KEY_FAMILY, family);
   applyTheme();
@@ -303,6 +345,7 @@ export async function setFontFamily(family: FontFamily) {
 
 /** 切换启动页并持久化。非「今日」落点且当前停在 / 时当场跳转；改回「今日」则下次进站生效。 */
 export async function setStartPage(path: StartPage) {
+  userTouched.add('startPage');
   theme.startPage = path;
   localStorage.setItem(KEY_START, path);
   try {
@@ -315,6 +358,7 @@ export async function setStartPage(path: StartPage) {
 
 /** 切换金额打码并持久化（本地 + 服务端）。顶栏眼睛图标与设置页共用。 */
 export async function setMoneyMask(mask: boolean) {
+  userTouched.add('maskMoney');
   theme.maskMoney = mask;
   localStorage.setItem(KEY_MASK, mask ? '1' : '0');
   applyTheme();
@@ -327,6 +371,7 @@ export async function setMoneyMask(mask: boolean) {
 
 /** 收起/放回今日页的一块卡片并持久化（本地 + 服务端）。 */
 export async function setTodayModule(key: TodayModuleKey, visible: boolean) {
+  userTouched.add('todayHidden');
   const next = theme.todayHidden.filter((k) => k !== key);
   if (!visible) next.push(key);
   theme.todayHidden = next;
@@ -342,6 +387,7 @@ export async function setTodayModule(key: TodayModuleKey, visible: boolean) {
 
 /** 首启引导「不用了」：本机先收，再同步服务端，换设备不再重现。 */
 export async function setOnboardHidden(hidden: boolean) {
+  userTouched.add('onboardHidden');
   theme.onboardHidden = hidden;
   if (hidden) localStorage.setItem(KEY_ONBOARD, '1');
   else localStorage.removeItem(KEY_ONBOARD);

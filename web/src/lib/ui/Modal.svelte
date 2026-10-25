@@ -37,6 +37,9 @@
   function onKey(e: KeyboardEvent) {
     if (!open) return;
     if (e.key === 'Escape') {
+      // 内层浮层（选人下拉等）展开时，Esc 先归它收起——
+      // 两个 window 级监听都会收到事件，Modal 先注册先执行，必须主动让位
+      if (document.querySelector('[data-esc-owner]')) return;
       onclose?.();
       return;
     }

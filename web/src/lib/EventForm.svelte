@@ -225,7 +225,12 @@
       bills = res.bills || [];
       showBillPicker = false;
       if (res.missing?.length) {
-        toast.error(`${res.missing.length} 张账单在货殖里找不到（可能已删除），其余已关联`);
+        // 一张都没挂上和挂了一部分是两件事，混用一句文案会误导
+        if (res.missing.length === ids.length) {
+          toast.error(`${ids.length} 张账单在货殖里都找不到（可能已删除），本次没有关联任何账单`);
+        } else {
+          toast.error(`${res.missing.length} 张账单在货殖里找不到（可能已删除），其余已关联`);
+        }
       } else {
         toast.ok(`已关联 ${ids.length} 张账单`);
       }

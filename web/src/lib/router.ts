@@ -4,6 +4,16 @@ export type Route = { path: string; params: Record<string, string>; query: Recor
 
 export const route = writable<Route>(parse(location));
 
+// URL 里出现未转义的 '%'（手输 ?q=100%、IM 粘贴的坏链接）时
+// decodeURIComponent 会抛 URIError；它在模块顶层就执行，炸了整站白屏。
+function safeDecode(s: string): string {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return s;
+  }
+}
+
 function parse(loc: Location): Route {
   // 查询串在 location.search 里；pathname 永远不含 '?'，从它身上切只会拿到空串
   const p = loc.pathname;
@@ -12,7 +22,7 @@ function parse(loc: Location): Route {
   for (const kv of qs.split('&')) {
     if (!kv) continue;
     const [k, v = ''] = kv.split('=');
-    query[decodeURIComponent(k)] = decodeURIComponent(v);
+    query[safeDecode(k)] = safeDecode(v);
   }
   return { path: p || '/', params: {}, query };
 }
@@ -44,7 +54,7 @@ export function match(pattern: string, path: string): Record<string, string> | n
   if (pp.length !== rp.length) return null;
   const params: Record<string, string> = {};
   for (let i = 0; i < pp.length; i++) {
-    if (pp[i].startsWith(':')) params[pp[i].slice(1)] = decodeURIComponent(rp[i]);
+    if (pp[i].startsWith(':')) params[pp[i].slice(1)] = safeDecode(rp[i]);
     else if (pp[i] !== rp[i]) return null;
   }
   return params;

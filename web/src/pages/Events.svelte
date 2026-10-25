@@ -92,34 +92,41 @@
   // 连点两个筛选项会并发发出两趟请求，谁后回来谁说了算，
   // 于是列表可能停在上一组条件的答案上。给每趟请求编号，只认最新那次。
   let reqId = 0;
+  let loading = $state(false);
 
   async function load(reset = true) {
     if (reset) page = 0;
     const mine = ++reqId;
+    loading = true;
     const qs = new URLSearchParams({ limit: String(PAGE), offset: String(page * PAGE) });
     if (filterPerson) qs.set('person_id', filterPerson);
     if (filterQuery.trim()) qs.set('q', filterQuery.trim());
     if (filterType) qs.set('type_id', filterType);
     if (filterFrom) qs.set('from', filterFrom);
     if (filterTo) qs.set('to', filterTo);
-    let batch: Event[] | null = null;
+    let batch: Event[];
     try {
       batch = await API.get<Event[]>(`/api/v1/events?${qs}`);
     } catch (err) {
       if (mine === reqId) {
         loadError = errText(err);
         toast.fail('加载失败', err);
+        loading = false;
       }
       return;
     }
     if (mine !== reqId) return;
+    loading = false;
     loadError = '';
     hasMore = batch.length === PAGE;
     list = reset ? batch : [...list, ...batch];
   }
   async function loadMore() {
+    const prev = page;
     page += 1;
     await load(false);
+    // 失败时页码已自增，直接再点会跳过一整页且无提示；退回失败前的位置
+    if (loadError) page = prev;
   }
   onMount(() => {
     loadSelf();
@@ -315,6 +322,8 @@
         {:else}
           {#if loadError}
             <LoadError text={`加载失败：${loadError}`} onretry={() => load()} />
+          {:else if loading && list.length === 0}
+            <div class="py-12 text-center text-sm" style="color: var(--q-muted);">加载中…</div>
           {:else}
             <Empty icon={CalendarDays} text="没有符合条件的往来" />
           {/if}

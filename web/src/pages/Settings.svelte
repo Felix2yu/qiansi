@@ -45,8 +45,7 @@
     setTodayModule,
     type ThemeMode,
     type FontScale,
-    type FontFamily,
-    type StartPage
+    type FontFamily
   } from '../lib/theme.svelte';
   import PersonPicker from '../lib/PersonPicker.svelte';
   import { setSelf } from '../lib/self.svelte';
@@ -56,6 +55,9 @@
 
   let settings = $state<Record<string, string>>({});
   let appriseUrls = $state('');
+  // apprise URL 内嵌各平台 token，与货殖密钥同一套脱敏语义：
+  // GET 只回哨兵值，表单留空；输入新内容 = 整体替换，清空走单独按钮
+  let appriseSaved = $state(false);
   let pushHour = $state(9);
 
   // 货殖对接：地址与密钥都存在 settings 表里，密钥只在本机服务端使用。
@@ -202,7 +204,8 @@
     });
     if (s) {
       settings = s;
-      appriseUrls = s['apprise_urls'] || '';
+      appriseSaved = s['apprise_urls'] === '__masked__';
+      appriseUrls = '';
       pushHour = parseInt(s['push_time_hour'] || '9', 10);
       selfId = s['self_person_id'] || '';
       selfSaved = selfId;
@@ -308,29 +311,57 @@
     load();
   });
 
+  // 推送渠道内容为空时不带 apprise_urls 键：可能是「没改」也可能是「已保存待替换」，
+  // 只有用户真输了内容才整体替换；清空走 clearApprise 的显式动作
+  function notifyPayload(): Record<string, string> {
+    const payload: Record<string, string> = { push_time_hour: String(pushHour) };
+    if (appriseUrls.trim()) payload.apprise_urls = appriseUrls.trim();
+    return payload;
+  }
+
   async function saveNotify() {
     try {
-      await API.post('/api/v1/settings/bulk', {
-        apprise_urls: appriseUrls,
-        push_time_hour: String(pushHour)
-      });
+      await API.post('/api/v1/settings/bulk', notifyPayload());
     } catch (err) {
       toast.fail('保存推送设置失败', err);
       return;
     }
+    if (appriseUrls.trim()) appriseSaved = true;
+    appriseUrls = '';
     toast.ok('已保存推送设置');
   }
+
+  async function clearApprise() {
+    if (
+      !(await ask({
+        title: '清空全部推送渠道？',
+        detail: '每日摘要与临期提醒将不再发送，测试推送也会失败。',
+        danger: true,
+        confirmLabel: '清空渠道'
+      }))
+    )
+      return;
+    try {
+      await API.post('/api/v1/settings/bulk', { apprise_urls: '' });
+    } catch (err) {
+      toast.fail('清空失败', err);
+      return;
+    }
+    appriseSaved = false;
+    appriseUrls = '';
+    toast.ok('已清空推送渠道');
+  }
+
   // 之前的「测试推送」只保存了配置却提示已触发，属于误导
   async function testNotify() {
     try {
-      await API.post('/api/v1/settings/bulk', {
-        apprise_urls: appriseUrls,
-        push_time_hour: String(pushHour)
-      });
+      await API.post('/api/v1/settings/bulk', notifyPayload());
     } catch (err) {
       toast.fail('保存推送设置失败', err);
       return;
     }
+    if (appriseUrls.trim()) appriseSaved = true;
+    appriseUrls = '';
     try {
       await API.post('/api/v1/notify/test', {});
       toast.ok('已发送测试推送，请检查对应渠道');
@@ -662,10 +693,18 @@
         <div class="flex items-center gap-2">
           <span class="shrink-0 text-xs" style="color: var(--q-muted);">金额</span>
           <div class="q-seg q-seg--fill">
-            <button onclick={() => setMoneyMask(false)} aria-pressed={!theme.maskMoney} class="q-seg__btn">
+            <button
+              onclick={() => setMoneyMask(false)}
+              aria-pressed={!theme.maskMoney}
+              class="q-seg__btn"
+            >
               明文
             </button>
-            <button onclick={() => setMoneyMask(true)} aria-pressed={theme.maskMoney} class="q-seg__btn">
+            <button
+              onclick={() => setMoneyMask(true)}
+              aria-pressed={theme.maskMoney}
+              class="q-seg__btn"
+            >
               打码
             </button>
           </div>
@@ -801,10 +840,17 @@
       {/if}
       <div class="q-divider"></div>
       <h3 class="q-label">多渠道通知（apprise URL）</h3>
+      {#if appriseSaved}
+        <p class="q-hint !mt-0">
+          已保存推送渠道（含 token，不再回显）。输入新内容保存即整体替换；要移除请点「清空渠道」。
+        </p>
+      {/if}
       <textarea
         bind:value={appriseUrls}
         class="q-textarea h-28 font-mono"
-        placeholder="每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat"
+        placeholder={appriseSaved
+          ? '留空 = 保留已保存的渠道'
+          : '每行一个 URL，如：&#10;bark://host/key&#10;feishu://...&#10;tgram://token/chat'}
       ></textarea>
       <!-- 窄屏放不下整行时宁可让按钮整块换行，也不能压进按钮里把「测试推送」拆成两行 -->
       <div class="mt-3 flex flex-wrap items-center gap-2">
@@ -821,6 +867,10 @@
         />
         <button class="q-btn q-btn--primary shrink-0" onclick={saveNotify}>保存</button>
         <button class="q-btn q-btn--ghost shrink-0" onclick={testNotify}>测试推送</button>
+        {#if appriseSaved}
+          <button class="q-btn q-btn--danger-ghost shrink-0" onclick={clearApprise}>清空渠道</button
+          >
+        {/if}
       </div>
       <p class="q-hint">
         支持 bark、feishu、telegram、discord、smtp 等 100+ 渠道；一行一个 URL，逗号或换行分隔。
@@ -848,7 +898,9 @@
             bind:value={hzKey}
             type="password"
             autocomplete="off"
-            placeholder={hzKeySaved ? '已保存密钥 · 输入新值才会替换' : 'API Key（货殖 → 设置 → API 密钥）'}
+            placeholder={hzKeySaved
+              ? '已保存密钥 · 输入新值才会替换'
+              : 'API Key（货殖 → 设置 → API 密钥）'}
             class="q-input min-w-[220px] flex-1 font-mono"
           />
           {#if hzKeySaved}

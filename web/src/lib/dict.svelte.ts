@@ -27,11 +27,17 @@ const fresh = new Set<DictName>();
 // 同一个字典在被填满之前会有好几个调用点等着它（页面 mount + 表单打开），
 // 所以并发请求必须共用一趟。
 const inflight = new Map<DictName, Promise<void>>();
+// 每个字典一个代际号：refresh 发新请求后，仍在途的旧请求即便后到，
+// 写回也会被代际拦下——不然慢网络下旧名单会把刚刷来的新名单盖回去。
+const gen = new Map<DictName, number>();
 
 function fetchInto(name: DictName): Promise<void> {
   const src = SOURCES[name];
+  const myGen = (gen.get(name) ?? 0) + 1;
+  gen.set(name, myGen);
   return (async () => {
     const list = await API.get<any[]>(src.path);
+    if (gen.get(name) !== myGen) return; // 已有更新的一趟在跑，这趟的数据作废
     dict[src.key] = list || [];
     fresh.add(name);
   })().catch(() => {});

@@ -94,6 +94,12 @@
     await load();
   }
 
+  // deleted_at 是 UTC 时间戳：先换算成本地日期再算「几天前」，
+  // 否则 UTC+8 的凌晨 0–8 点删除的记录会立刻显示成「1 天前」
+  function localDay(iso: string): string {
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
   function deletedTime(it: TrashItem) {
     return it.deleted_at ? new Date(it.deleted_at).toLocaleString() : '';
   }
@@ -138,7 +144,7 @@
               {/if}
               {#if it.person_name}{it.person_name} ·
               {/if}
-              删除于 {deletedTime(it)}（{contactAgo(it.deleted_at.slice(0, 10))}）
+              删除于 {deletedTime(it)}（{contactAgo(localDay(it.deleted_at))}）
             </div>
           </div>
           <button class="q-btn q-btn--ghost q-btn--sm shrink-0" onclick={() => restore(it)}>
