@@ -11,7 +11,7 @@ import (
 func TestEventFilter_TypeAndDateRange(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
-	if _, err := s.DB.Exec(`INSERT INTO event_types(id,name,color) VALUES(71,'聚会','#111111'),(72,'运动','#222222')`); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO event_types(id,name,color) VALUES(71,'聚会','#111111'),(72,'运动','#222222')`); err != nil {
 		t.Fatalf("seed event_types: %v", err)
 	}
 	party, sport := 71, 72

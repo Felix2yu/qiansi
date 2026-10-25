@@ -228,7 +228,7 @@ func TestPersonCategories_UnknownIDFails(t *testing.T) {
 func TestPeopleTableHasNoCategoryColumn(t *testing.T) {
 	ctx := pctx(t)
 	s := newTestStore(t)
-	rows, err := s.DB.QueryContext(ctx, "SELECT name FROM pragma_table_info('people')")
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT name FROM pragma_table_info('people')")
 	if err != nil {
 		t.Fatalf("pragma_table_info: %v", err)
 	}

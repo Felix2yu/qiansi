@@ -92,7 +92,7 @@ func TestNotifyDailyTasksFireAfterTheirHour(t *testing.T) {
 
 	var snapDay, digestDay string
 	want := at(14, 37).Format("2006-01-02")
-	if err := s.DB.QueryRow("SELECT day FROM intimacy_snapshots WHERE person_id=?", p.ID).Scan(&snapDay); err != nil {
+	if err := s.CurrentDB().QueryRow("SELECT day FROM intimacy_snapshots WHERE person_id=?", p.ID).Scan(&snapDay); err != nil {
 		t.Fatalf("快照未按 03:00 之后补跑: %v", err)
 	}
 	if snapDay != want {
@@ -159,7 +159,7 @@ func TestNotifySnapshotAll(t *testing.T) {
 
 	// PersonList 出错（people 表被删）→ 返回错误，调用方不记账、下次重试
 	broken := newNotifyStore(t)
-	if _, err := broken.DB.Exec("DROP TABLE people"); err != nil {
+	if _, err := broken.CurrentDB().Exec("DROP TABLE people"); err != nil {
 		t.Fatalf("drop: %v", err)
 	}
 	if err := snapshotAll(ctx, broken, time.Now()); err == nil {
@@ -172,7 +172,7 @@ func TestNotifySnapshotAll(t *testing.T) {
 		t.Fatalf("snapshotAll(empty): %v", err)
 	}
 	var n int
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 0 {
@@ -192,7 +192,7 @@ func TestNotifySnapshotAll(t *testing.T) {
 		t.Fatalf("snapshotAll: %v", err)
 	}
 
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 2 {
@@ -202,7 +202,7 @@ func TestNotifySnapshotAll(t *testing.T) {
 	if err := snapshotAll(ctx, s, time.Now()); err != nil {
 		t.Fatalf("snapshotAll again: %v", err)
 	}
-	if err := s.DB.QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRow("SELECT COUNT(*) FROM intimacy_snapshots").Scan(&n); err != nil {
 		t.Fatalf("count again: %v", err)
 	}
 	if n != 2 {

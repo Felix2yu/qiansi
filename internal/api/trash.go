@@ -107,7 +107,7 @@ func RemoveAttachmentFiles(ctx context.Context, st *store.Store, uploadsDir stri
 		if filepath.Clean(p) == p {
 			_ = os.Remove(p)
 		}
-		_, _ = st.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
+		_, _ = st.CurrentDB().ExecContext(ctx, "DELETE FROM attachments WHERE id=?", att.ID)
 	}
 }
 

@@ -1,13 +1,14 @@
 package api
 
 import (
+	crand "crypto/rand"
 	"errors"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -170,10 +171,20 @@ func (a *API) notifyTest(w http.ResponseWriter, r *http.Request) {
 }
 
 func randStr(n int) string {
+	// 上传文件名走 crypto/rand：math/rand 可预测，猜中名字就能直接引用
 	const letters = "abcdefghijklmnopqrstuvwxyz0123456789"
 	b := make([]byte, n)
+	buf := make([]byte, n)
+	if _, err := crand.Read(buf); err != nil {
+		// 系统熵源失败极罕见；退回时间戳拼料，保证文件名仍然唯一
+		ts := strconv.FormatInt(time.Now().UnixNano(), 36)
+		for i := range b {
+			b[i] = letters[(int(ts[i%len(ts)])+i)%len(letters)]
+		}
+		return string(b)
+	}
 	for i := range b {
-		b[i] = letters[rand.Intn(len(letters))]
+		b[i] = letters[int(buf[i])%len(letters)]
 	}
 	return string(b)
 }
@@ -213,7 +224,7 @@ func registerDashboard(r chi.Router, a *API) {
 			writeJSON(w, 200, list)
 		})
 		r.Get("/suggestions", func(w http.ResponseWriter, r *http.Request) {
-			writeJSON(w, 200, a.suggest())
+			writeJSON(w, 200, a.suggest(r.Context()))
 		})
 	})
 	_ = config.Config{} // silence unused

@@ -18,7 +18,6 @@ import (
 
 	"github.com/qiansi/app/internal/api"
 	"github.com/qiansi/app/internal/backup"
-	bsched "github.com/qiansi/app/internal/backup/scheduler"
 	"github.com/qiansi/app/internal/config"
 	"github.com/qiansi/app/internal/db"
 	"github.com/qiansi/app/internal/notify"
@@ -55,9 +54,9 @@ func main() {
 
 	a := api.New(st, cfg)
 
-	// 自动备份调度器需要 store/cfg，与 HTTP 层共用同一份配置对象。
-	// 不传 *sql.DB：恢复备份会换掉 Store 里的句柄，常驻调度器每次执行时现取才不会抱着旧库。
-	backupRunner := bsched.New(st, cfg)
+	// 自动备份调度器与 HTTP 层共用 API 里的同一实例：
+	// 「立即执行」与定时触发共用互斥锁，不会同时跑两份 VACUUM INTO。
+	backupRunner := a.BackupRunner()
 
 	// uploads static
 	a.Router.Get("/uploads/*", http.StripPrefix("/uploads/", safeFileServer(cfg.Uploads)).ServeHTTP)
@@ -76,10 +75,13 @@ func main() {
 	go housekeepTrash(ctx, st, cfg)
 
 	srv := &http.Server{
-		Addr:         cfg.Addr,
-		Handler:      a,
-		ReadTimeout:  60 * time.Second,
-		WriteTimeout: 60 * time.Second,
+		Addr:    cfg.Addr,
+		Handler: a,
+		// 不设整段 Read/WriteTimeout：恢复上传与备份导出都是大体积慢传输，
+		// 60s 总时限会把它们拦腰掐断（下载到一半断流、上传莫名失败）。
+		// 头部超时兜住慢连接滥用，正文本就是令牌/本机流量。
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	errCh := make(chan error, 1)

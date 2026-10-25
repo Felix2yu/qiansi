@@ -280,13 +280,13 @@ func TestVCardAPIImportCreatesBirthdayAnniversary(t *testing.T) {
 	}
 
 	var n int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='1992-07-08' AND is_lunar=0", ids["赵六"]).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='1992-07-08' AND is_lunar=0", ids["赵六"]).Scan(&n); err != nil {
 		t.Fatalf("query anniversaries: %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("生日应生成 1 条纪念日，得到 %d", n)
 	}
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["孙七"]).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["孙七"]).Scan(&n); err != nil {
 		t.Fatalf("query anniversaries: %v", err)
 	}
 	if n != 0 {
@@ -299,7 +299,7 @@ func TestVCardAPIImportCreatesBirthdayAnniversary(t *testing.T) {
 	if res2["imported"] != float64(0) || res2["skipped"] != float64(2) {
 		t.Fatalf("重复导入应全部跳过: %v", res2)
 	}
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["赵六"]).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", ids["赵六"]).Scan(&n); err != nil {
 		t.Fatalf("query anniversaries: %v", err)
 	}
 	if n != 1 {
@@ -978,8 +978,10 @@ func TestBackupRestoreHappyPath(t *testing.T) {
 	if r := second.do(http.MethodPost, "/api/v1/backup/snapshot", nil); r.Code != 500 {
 		t.Errorf("backups 为文件时 snapshot 应 500, got %d", r.Code)
 	}
-	if r := second.do(http.MethodGet, "/api/v1/backup/list", nil); r.Code != 200 || strings.TrimSpace(r.Body.String()) != "[]" {
-		t.Errorf("backups 为文件时 list 应空数组, got %d: %s", r.Code, r.Body.String())
+	// 读不到归档目录不再回 200 空数组：那会让「没有备份」和「目录出问题」长一个样，
+	// 权限坏掉的部署会被误读成「一切正常只是没有备份」
+	if r := second.do(http.MethodGet, "/api/v1/backup/list", nil); r.Code != 500 {
+		t.Errorf("backups 为文件时 list 应 500, got %d: %s", r.Code, r.Body.String())
 	}
 }
 

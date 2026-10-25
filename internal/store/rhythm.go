@@ -178,7 +178,7 @@ func (s *Store) DriftList(ctx context.Context, f DriftFilter) ([]*DriftPerson, e
 	for _, t := range rhythm {
 		days[t.Grade] = t.Days
 	}
-	rows, err := s.DB.QueryContext(ctx, driftContactCTE+`
+	rows, err := s.CurrentDB().QueryContext(ctx, driftContactCTE+`
 SELECT p.id,p.name,p.grade,COALESCE(contact.d,''),p.created_at
 FROM live_people p LEFT JOIN contact ON contact.person_id=p.id
 WHERE p.archived=0`)
@@ -249,6 +249,10 @@ WHERE p.archived=0`)
 		}
 		return list[i].DueAt < list[j].DueAt
 	})
+	if f.Offset < 0 {
+		// API 层的 parseIntQuery 不认负数，但 store 不该信任到可以直接拿去切片
+		f.Offset = 0
+	}
 	if f.Limit > 0 {
 		if f.Offset >= len(list) {
 			return []*DriftPerson{}, nil
@@ -301,13 +305,13 @@ func (s *Store) ContactUpcoming(ctx context.Context) ([]*Reminder, error) {
 // 不然连点两次会把节奏往后挪两轮。
 func (s *Store) ContactCheckin(ctx context.Context, personID string) error {
 	var one int
-	if err := s.DB.QueryRowContext(ctx, "SELECT 1 FROM live_people WHERE id=?", personID).Scan(&one); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT 1 FROM live_people WHERE id=?", personID).Scan(&one); err != nil {
 		if err == sql.ErrNoRows {
 			return sql.ErrNoRows // 不存在或已进回收站：404，不写孤儿打卡
 		}
 		return err
 	}
-	_, err := s.DB.ExecContext(ctx,
+	_, err := s.CurrentDB().ExecContext(ctx,
 		"INSERT OR IGNORE INTO contact_checkins(person_id,day,created_at) VALUES(?,?,?)",
 		personID, todayLocal(), nowUTC())
 	return err

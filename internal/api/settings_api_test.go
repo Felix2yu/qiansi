@@ -91,7 +91,7 @@ func apiCall(a *API, method, path string, headers map[string]string) *httptest.R
 func apiClosedDBServer(t *testing.T) *testServer {
 	t.Helper()
 	s := newTestServer(t)
-	if err := s.Store.DB.Close(); err != nil {
+	if err := s.Store.CurrentDB().Close(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
 	return s
@@ -501,7 +501,7 @@ func TestAPISettingsEventTypesCRUD(t *testing.T) {
 	}
 
 	// 事件引用该类型后删除，事件的 type_id 置空
-	_, err := s.Store.DB.Exec("INSERT INTO events(id,title,type_id,event_date,created_at,updated_at) VALUES('e1','饭',?,'2026-01-02','2026-01-02','2026-01-02')", id)
+	_, err := s.Store.CurrentDB().Exec("INSERT INTO events(id,title,type_id,event_date,created_at,updated_at) VALUES('e1','饭',?,'2026-01-02','2026-01-02','2026-01-02')", id)
 	if err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
@@ -510,7 +510,7 @@ func TestAPISettingsEventTypesCRUD(t *testing.T) {
 		t.Fatalf("删除后 = %v", got)
 	}
 	var typeID any
-	if err := s.Store.DB.QueryRow("SELECT type_id FROM events WHERE id='e1'").Scan(&typeID); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT type_id FROM events WHERE id='e1'").Scan(&typeID); err != nil {
 		t.Fatalf("query event: %v", err)
 	}
 	if typeID != nil {

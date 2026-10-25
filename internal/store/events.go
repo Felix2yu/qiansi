@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -135,7 +136,9 @@ VALUES(?,?,'expense','out',?,?,?,NULL,1,?,?,?)`,
 			return err
 		}
 	} else {
-		_, err := tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,direction='out',amount_fen=?,title=?,occurred_at=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
+		// kind 钉死为 expense：指针只认领事件表单管理的那笔开销，
+		// 若它在金钱页被改成借还/礼金，保存事件应把它掰回开销而不是继续认领一笔异类账
+		_, err := tx.ExecContext(ctx, "UPDATE transactions SET person_id=?,kind='expense',direction='out',amount_fen=?,title=?,occurred_at=?,settled=1,settled_at=COALESCE(settled_at,?) WHERE id=?",
 			ex.PersonID, ex.AmountFen, nullableString(ex.Title), ex.OccurredAt, ex.OccurredAt, owned)
 		if err != nil {
 			return err
@@ -217,13 +220,16 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 	}
 	e.CreatedAt = nowUTC()
 	e.UpdatedAt = e.CreatedAt
-	e.GiftTransactionID = ""      // 新建没有可认领的账，客户端传什么都不认
-	e.ExpenseTransactionID = ""   // 同上
-	tx, err := s.DB.BeginTx(ctx, nil)
+	e.GiftTransactionID = ""    // 新建没有可认领的账，客户端传什么都不认
+	e.ExpenseTransactionID = "" // 同上
+	tx, err := s.CurrentDB().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := ensureLiveParticipants(ctx, tx, participantIDs); err != nil {
+		return err
+	}
 	_, err = tx.ExecContext(ctx, "INSERT INTO events(id,title,type_id,event_date,location,locations,has_gift,gift,summary,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
 		e.ID, e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.CreatedAt, e.UpdatedAt)
 	if err != nil {
@@ -243,15 +249,46 @@ func (s *Store) EventCreate(ctx context.Context, e *Event, participantIDs []stri
 	return tx.Commit()
 }
 
+// ensureLiveParticipants 保证参与人都在册（回收站外）。
+//
+// 软删后 people 行还在，外键拦不住；而 live_events 视图会因任一参与人被
+// 回收把整场往来藏起来——陈旧表单/并发标签页里保存「成功」，整场记录
+// 却连同自动生成的开销/礼金一起消失，无任何提示。落库前拦下并回 400。
+func ensureLiveParticipants(ctx context.Context, q interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}, ids []string) error {
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		var n int
+		if err := q.QueryRowContext(ctx, "SELECT COUNT(*) FROM live_people WHERE id=?", id).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("参与人已不在通讯录（可能刚被移入回收站）: %w", ErrRefMissing)
+		}
+	}
+	return nil
+}
+
 // EventUpdate 语义同 EventCreate：事件字段、参与人、开销与礼金在一次事务里落定，
 // 任何一步失败都整体回滚，不会出现「事件改了、账没改」。
 func (s *Store) EventUpdate(ctx context.Context, e *Event, participantIDs []string, expense *EventExpense) error {
 	e.UpdatedAt = nowUTC()
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.CurrentDB().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	if err := ensureLiveParticipants(ctx, tx, participantIDs); err != nil {
+		return err
+	}
 	if err := execOne(ctx, tx, "UPDATE events SET title=?,type_id=?,event_date=?,location=?,locations=?,has_gift=?,gift=?,summary=?,updated_at=? WHERE id=? AND deleted_at IS NULL",
 		e.Title, e.TypeID, e.EventDate, e.Location, encodeLocations(e.Locations), e.HasGift, e.Gift, e.Summary, e.UpdatedAt, e.ID); err != nil {
 		return err
@@ -290,13 +327,13 @@ WHERE t.id=(SELECT gift_transaction_id FROM events WHERE id=?)),'')`, e.ID).Scan
 }
 
 func (s *Store) EventDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE events SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE events SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 // EventPurge 真删除一场往来。往来本身留在账上（钱确实花过），只是不再挂在事件上，
 // 与旧版删除的口径一致。
 func (s *Store) EventPurge(ctx context.Context, id string) error {
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.CurrentDB().BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -312,21 +349,22 @@ func (s *Store) EventPurge(ctx context.Context, id string) error {
 	return tx.Commit()
 }
 
+// eventExpenseFenSQL 是「一场往来的开销」的唯一权威表达式，列表与 CSV 导出共用。
+// 有支出账单 → 账单金额之和（账单是权威，手填的那笔不再计入，否则同一笔钱算两次）；
+// 没账单 → 挂在本往来上的支出交易之和，减去自带礼金那笔（它由 gift_amount_fen 单列）。
+// 入账/转账账单不是这次往来的花费：既不计入合计，也不触发「账单权威」切换。
+const eventExpenseFenSQL = `(CASE WHEN EXISTS(SELECT 1 FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
+  THEN (SELECT COALESCE(SUM(eb.amount_fen),0) FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
+  ELSE (SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id)
+ END)`
+
 // expense_fen 只统计支出方向（收到的礼金/回礼属入账，不算开销），
 // 并且排掉事件自带那笔礼金：它已经由 gift_amount_fen 单独显示，
 // 再算进「花费」会让同一笔 800 在一张卡片上出现两次。
 // 后面三列是事件自带那笔礼金的投影：金额/方向/归属都从 transactions 读，
 // 事件表里只留一个认领用的 id。
-//
-// 第一列开销有两套口径，按「有没有关联货殖支出账单」切换：
-// 有账单 → 支出账单金额之和（账单是权威，手填的那笔不再计入，否则同一笔钱算两次）；
-// 没账单 → 沿用原有 logic：挂在本往来上的支出交易之和，减去自带礼金那笔。
-// 入账/转账账单不是这次往来的花费：既不计入合计，也不触发「账单权威」切换。
 const eventColumns = `e.id,e.title,e.type_id,e.event_date,e.location,e.locations,e.has_gift,e.gift,e.summary,e.created_at,e.updated_at,et.name,et.color,
-(CASE WHEN EXISTS(SELECT 1 FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
-  THEN (SELECT COALESCE(SUM(eb.amount_fen),0) FROM event_bills eb WHERE eb.event_id=e.id AND eb.type='expense')
-  ELSE (SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id)
- END),
+` + eventExpenseFenSQL + `,
 (SELECT COALESCE((SELECT t.id FROM live_transactions t WHERE t.id=e.gift_transaction_id),'')),
 (SELECT t.amount_fen FROM live_transactions t WHERE t.id=e.gift_transaction_id),
 (SELECT t.direction FROM live_transactions t WHERE t.id=e.gift_transaction_id),
@@ -374,7 +412,7 @@ func scanEvent(rows *sql.Rows) (*Event, error) {
 
 // EventExpenses 返回挂在该事件下的开销/往来记录
 func (s *Store) EventExpenses(ctx context.Context, eventID string) ([]*Transaction, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name
 FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.event_id=? ORDER BY t.occurred_at DESC`, eventID)
 	if err != nil {
 		return nil, err
@@ -459,7 +497,7 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id`
 	}
 	qry += " ORDER BY e.event_date DESC, e.created_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
-	rows, err := s.DB.QueryContext(ctx, qry, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +536,7 @@ func (s *Store) eventParticipantsFor(ctx context.Context, ids []string) (map[str
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT ep.event_id,p.id,p.name
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT ep.event_id,p.id,p.name
 FROM event_participants ep JOIN live_people p ON p.id=ep.person_id
 WHERE ep.event_id IN (`+ph+`) ORDER BY ep.event_id,ep.rowid`, args...)
 	if err != nil {
@@ -560,7 +598,7 @@ func (s *Store) MemoCreate(ctx context.Context, m *Memo) error {
 	} else {
 		dueDate = nil
 	}
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO memos(id,person_id,speaker,content,said_at,is_promise,due_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO memos(id,person_id,speaker,content,said_at,is_promise,due_date,status,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
 		m.ID, personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.CreatedAt)
 	return err
 }
@@ -578,16 +616,16 @@ func (s *Store) MemoUpdate(ctx context.Context, m *Memo) error {
 	} else {
 		dueDate = nil
 	}
-	return execOne(ctx, s.DB, "UPDATE memos SET person_id=?,speaker=?,content=?,said_at=?,is_promise=?,due_date=?,status=? WHERE id=? AND deleted_at IS NULL", personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.ID)
+	return execOne(ctx, s.CurrentDB(), "UPDATE memos SET person_id=?,speaker=?,content=?,said_at=?,is_promise=?,due_date=?,status=? WHERE id=? AND deleted_at IS NULL", personID, m.Speaker, m.Content, m.SaidAt, m.IsPromise, dueDate, m.Status, m.ID)
 }
 
 // MemoDelete 收进回收站，MemoPurge 才是真删。
 func (s *Store) MemoDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE memos SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE memos SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 func (s *Store) MemoPurge(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM memos WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM memos WHERE id=?", id)
 }
 
 func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool, limit, offset int) ([]*Memo, error) {
@@ -605,7 +643,7 @@ func (s *Store) MemoList(ctx context.Context, personID string, promisesOnly bool
 	}
 	q += " ORDER BY m.said_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, offset)
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -665,7 +703,7 @@ func (s *Store) RelationshipCreate(ctx context.Context, r *Relationship) error {
 		remark = nil
 	}
 	// 用普通 INSERT：旧版是 INSERT OR REPLACE，同一对人再建一条会把前一条静默顶掉。
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO relationships(id,from_person_id,to_person_id,type,remark,created_at) VALUES(?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO relationships(id,from_person_id,to_person_id,type,remark,created_at) VALUES(?,?,?,?,?,?)",
 		r.ID, r.FromPerson, r.ToPerson, r.Type, remark, r.CreatedAt)
 	if isUniqueRel(err) {
 		return ErrRelationshipExists
@@ -681,7 +719,7 @@ func (s *Store) RelationshipUpdate(ctx context.Context, r *Relationship) error {
 	} else {
 		remark = nil
 	}
-	err := execOne(ctx, s.DB, "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
+	err := execOne(ctx, s.CurrentDB(), "UPDATE relationships SET from_person_id=?,to_person_id=?,type=?,remark=? WHERE id=?",
 		r.FromPerson, r.ToPerson, r.Type, remark, r.ID)
 	if isUniqueRel(err) {
 		return ErrRelationshipExists
@@ -690,11 +728,11 @@ func (s *Store) RelationshipUpdate(ctx context.Context, r *Relationship) error {
 }
 
 func (s *Store) RelationshipDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM relationships WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM relationships WHERE id=?", id)
 }
 
 func (s *Store) RelationshipList(ctx context.Context) ([]*Relationship, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT r.id,r.from_person_id,r.to_person_id,r.type,r.remark,r.created_at,
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT r.id,r.from_person_id,r.to_person_id,r.type,r.remark,r.created_at,
 pf.name,pt.name
 FROM relationships r
 LEFT JOIN live_people pf ON pf.id=r.from_person_id
@@ -788,10 +826,10 @@ func (s *Store) TransactionCreate(ctx context.Context, t *Transaction) error {
 	} else {
 		eventID = nil
 	}
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,due_date,settled,settled_at,created_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
 		t.ID, t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, t.CreatedAt, eventID)
 	if err == nil && t.EventID != "" && t.EventTitle == "" {
-		_ = s.DB.QueryRowContext(ctx, "SELECT title FROM live_events WHERE id=?", t.EventID).Scan(&t.EventTitle)
+		_ = s.CurrentDB().QueryRowContext(ctx, "SELECT title FROM live_events WHERE id=?", t.EventID).Scan(&t.EventTitle)
 	}
 	return err
 }
@@ -821,18 +859,18 @@ func (s *Store) TransactionUpdate(ctx context.Context, t *Transaction) error {
 	} else {
 		eventID = nil
 	}
-	return execOne(ctx, s.DB, "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=? AND deleted_at IS NULL",
+	return execOne(ctx, s.CurrentDB(), "UPDATE transactions SET person_id=?,kind=?,direction=?,amount_fen=?,title=?,occurred_at=?,due_date=?,settled=?,settled_at=?,event_id=? WHERE id=? AND deleted_at IS NULL",
 		t.PersonID, t.Kind, t.Direction, t.AmountFen, title, t.OccurredAt, dueDate, t.Settled, settledAt, eventID, t.ID)
 }
 
 // TransactionDelete 收进回收站。它名下的还款留在表里（外键没触发），
 // 恢复时本金与还款的账仍然对得上；真删除才按级联清掉还款。
 func (s *Store) TransactionDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE transactions SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE transactions SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 func (s *Store) TransactionPurge(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM transactions WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM transactions WHERE id=?", id)
 }
 
 const txColumns = `t.id,t.person_id,t.kind,t.direction,t.amount_fen,t.title,t.occurred_at,t.due_date,t.settled,t.settled_at,t.created_at,p.name,
@@ -868,7 +906,7 @@ func scanTransaction(rows *sql.Rows) (*Transaction, error) {
 }
 
 func (s *Store) TransactionGet(ctx context.Context, id string) (*Transaction, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+txColumns+`
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT `+txColumns+`
 FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id WHERE t.id=?`, id)
 	if err != nil {
 		return nil, err
@@ -935,7 +973,7 @@ FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id`
 	}
 	q += " ORDER BY t.occurred_at DESC LIMIT ? OFFSET ?"
 	args = append(args, limit, f.Offset)
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -983,7 +1021,7 @@ func (s *Store) AnniversaryCreate(ctx context.Context, a *Anniversary) error {
 	} else {
 		personID = nil
 	}
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO anniversaries(id,person_id,title,date,is_lunar,repeat_yearly,remind_days,created_at) VALUES(?,?,?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO anniversaries(id,person_id,title,date,is_lunar,repeat_yearly,remind_days,created_at) VALUES(?,?,?,?,?,?,?,?)",
 		a.ID, personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.CreatedAt)
 	return err
 }
@@ -995,21 +1033,21 @@ func (s *Store) AnniversaryUpdate(ctx context.Context, a *Anniversary) error {
 	} else {
 		personID = nil
 	}
-	return execOne(ctx, s.DB, "UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=?,remind_days=? WHERE id=? AND deleted_at IS NULL", personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.ID)
+	return execOne(ctx, s.CurrentDB(), "UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=?,remind_days=? WHERE id=? AND deleted_at IS NULL", personID, a.Title, a.Date, a.IsLunar, a.RepeatYearly, a.RemindDays, a.ID)
 }
 
 // AnniversaryDelete 收进回收站。派生出的提醒随视图一起消失，
 // 已经点过「完成」的那次发生（anniversary_dismiss）原样留着，恢复后不会凭空再响一次。
 func (s *Store) AnniversaryDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE anniversaries SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE anniversaries SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 func (s *Store) AnniversaryPurge(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM anniversaries WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM anniversaries WHERE id=?", id)
 }
 
 func (s *Store) AnniversaryList(ctx context.Context) ([]*Anniversary, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,a.created_at,p.name
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,a.created_at,p.name
 FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 	if err != nil {
 		return nil, err
@@ -1113,7 +1151,7 @@ func (s *Store) ReminderCreate(ctx context.Context, r *Reminder) error {
 	} else {
 		refID = nil
 	}
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO reminders(id,person_id,ref_type,ref_id,title,due_at,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO reminders(id,person_id,ref_type,ref_id,title,due_at,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)",
 		r.ID, personID, r.RefType, refID, r.Title, r.DueAt, r.Status, r.CreatedAt, nil)
 	return err
 }
@@ -1137,21 +1175,21 @@ func (s *Store) ReminderUpdate(ctx context.Context, r *Reminder) error {
 	} else {
 		completedAt = nil
 	}
-	return execOne(ctx, s.DB, "UPDATE reminders SET person_id=?,ref_type=?,ref_id=?,title=?,due_at=?,status=?,completed_at=? WHERE id=? AND deleted_at IS NULL", personID, r.RefType, refID, r.Title, r.DueAt, r.Status, completedAt, r.ID)
+	return execOne(ctx, s.CurrentDB(), "UPDATE reminders SET person_id=?,ref_type=?,ref_id=?,title=?,due_at=?,status=?,completed_at=? WHERE id=? AND deleted_at IS NULL", personID, r.RefType, refID, r.Title, r.DueAt, r.Status, completedAt, r.ID)
 }
 
 // ReminderDelete 收进回收站，只针对表里的自定义待办；
 // 纪念日/承诺派生的待办不在表里，由各自的来源记录回收（见 API 层的 derivedReminder）。
 func (s *Store) ReminderDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE reminders SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE reminders SET deleted_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 func (s *Store) ReminderPurge(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM reminders WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM reminders WHERE id=?", id)
 }
 
 func (s *Store) ReminderDone(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE reminders SET status='done',completed_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE reminders SET status='done',completed_at=? WHERE id=? AND deleted_at IS NULL", nowUTC(), id)
 }
 
 // ReminderList 列出 reminders 表里的待办。
@@ -1171,7 +1209,7 @@ FROM live_reminders r LEFT JOIN live_people p ON r.person_id=p.id WHERE 1=1`
 		q += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1218,7 +1256,7 @@ WHERE r.status='pending'`
 		args = append(args, localCutoff(horizonDays))
 	}
 	q += " ORDER BY r.due_at ASC"
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1272,7 +1310,7 @@ type anniversaryRow struct {
 }
 
 func (s *Store) anniversaryRows(ctx context.Context) ([]anniversaryRow, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,p.name
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT a.id,a.person_id,a.title,a.date,a.is_lunar,a.repeat_yearly,a.remind_days,p.name
 FROM live_anniversaries a LEFT JOIN live_people p ON p.id=a.person_id`)
 	if err != nil {
 		return nil, err
@@ -1439,7 +1477,7 @@ func (s *Store) AnniversarySoon(ctx context.Context, days int) ([]*Reminder, err
 // key 形如 "<anniversary_id>|<YYYY-MM-DD>:<offset>"。
 func (s *Store) dismissedOccurrences(ctx context.Context) map[string]bool {
 	out := map[string]bool{}
-	rows, err := s.DB.QueryContext(ctx, "SELECT anniversary_id,occurrence FROM anniversary_dismiss")
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT anniversary_id,occurrence FROM anniversary_dismiss")
 	if err != nil {
 		return out
 	}
@@ -1458,7 +1496,7 @@ func (s *Store) AnniversaryDismiss(ctx context.Context, anniversaryID, occurrenc
 	if anniversaryID == "" || occurrence == "" {
 		return nil
 	}
-	_, err := s.DB.ExecContext(ctx,
+	_, err := s.CurrentDB().ExecContext(ctx,
 		"INSERT OR IGNORE INTO anniversary_dismiss(anniversary_id,occurrence,created_at) VALUES(?,?,?)",
 		anniversaryID, occurrence, nowUTC())
 	return err
@@ -1483,7 +1521,7 @@ WHERE m.is_promise=1 AND m.status='open' AND m.due_date IS NOT NULL AND m.due_da
 		args = append(args, daysFromTodayLocal(horizonDays))
 	}
 	q += " ORDER BY substr(m.due_date,1,10) ASC"
-	rows, err := s.DB.QueryContext(ctx, q, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1521,7 +1559,7 @@ WHERE m.is_promise=1 AND m.status='open' AND m.due_date IS NOT NULL AND m.due_da
 
 // MemoFulfill 把一条承诺记为已兑现。只动承诺项，避免误改普通对话的状态。
 func (s *Store) MemoFulfill(ctx context.Context, memoID string) error {
-	return execOne(ctx, s.DB,
+	return execOne(ctx, s.CurrentDB(),
 		"UPDATE memos SET status='fulfilled' WHERE id=? AND is_promise=1 AND deleted_at IS NULL", memoID)
 }
 
@@ -1594,7 +1632,7 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 		default:
 			args = []any{like, perType}
 		}
-		rows, err := s.DB.QueryContext(ctx, qr.sql, args...)
+		rows, err := s.CurrentDB().QueryContext(ctx, qr.sql, args...)
 		if err != nil {
 			continue
 		}
@@ -1623,15 +1661,15 @@ func (s *Store) Search(ctx context.Context, q string, perType int) ([]*SearchRes
 // ===== Timeline =====
 
 type TimelineItem struct {
-	Date string `json:"date"`
-	Type string `json:"type"`
-	Title string `json:"title"`
-	PersonID string `json:"person_id,omitempty"`
+	Date       string `json:"date"`
+	Type       string `json:"type"`
+	Title      string `json:"title"`
+	PersonID   string `json:"person_id,omitempty"`
 	PersonName string `json:"person_name,omitempty"`
 	// GapDays 仅事件类型带回：距上一场「算见面」的往来隔了几天。
 	// 最早一场、不算见面的往来（电话微信等）与空日期的往来不带。
-	GapDays *int `json:"gap_days,omitempty"`
-	ID         string `json:"id"`
+	GapDays *int   `json:"gap_days,omitempty"`
+	ID      string `json:"id"`
 }
 
 func (s *Store) PersonTimeline(ctx context.Context, personID string) ([]*TimelineItem, error) {
@@ -1646,7 +1684,7 @@ SELECT occurred_at,'transaction',title,?, (SELECT name FROM people WHERE id=?), 
 UNION ALL
 SELECT date,'anniversary',title,?, (SELECT name FROM people WHERE id=?), '', 0, id FROM live_anniversaries WHERE person_id=?
 ORDER BY date DESC`
-	rows, err := s.DB.QueryContext(ctx, q, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID, personID)
 	if err != nil {
 		return nil, err
 	}
@@ -1716,7 +1754,7 @@ SELECT occurred_at,'transaction',title, (SELECT name FROM live_people WHERE id=p
 UNION ALL
 SELECT date,'anniversary',title, (SELECT name FROM live_people WHERE id=person_id), id FROM live_anniversaries
 ORDER BY date DESC LIMIT ?`
-	rows, err := s.DB.QueryContext(ctx, q, limit)
+	rows, err := s.CurrentDB().QueryContext(ctx, q, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -1758,10 +1796,10 @@ const unsettledBalanceSQL = `SELECT COALESCE(SUM(remaining),0) FROM (
 
 func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 	var totalPeople, totalEvents int
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM live_people WHERE archived=0`).Scan(&totalPeople)
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM live_events`).Scan(&totalEvents)
+	_ = s.CurrentDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM live_people WHERE archived=0`).Scan(&totalPeople)
+	_ = s.CurrentDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM live_events`).Scan(&totalEvents)
 	var pendingPromises int
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM live_memos WHERE is_promise=1 AND status='open'`).Scan(&pendingPromises)
+	_ = s.CurrentDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM live_memos WHERE is_promise=1 AND status='open'`).Scan(&pendingPromises)
 
 	// 待办口径与「近期待办」列表保持一致：自定义提醒 + 纪念日衍生，且排除已完成的纪念日提醒。
 	upcoming7, dueToday := 0, 0
@@ -1775,8 +1813,8 @@ func (s *Store) DashboardStats(ctx context.Context) (map[string]any, error) {
 		}
 	}
 	var lendFen, borrowFen sql.NullInt64
-	_ = s.DB.QueryRowContext(ctx, unsettledBalanceSQL, "out").Scan(&lendFen)
-	_ = s.DB.QueryRowContext(ctx, unsettledBalanceSQL, "in").Scan(&borrowFen)
+	_ = s.CurrentDB().QueryRowContext(ctx, unsettledBalanceSQL, "out").Scan(&lendFen)
+	_ = s.CurrentDB().QueryRowContext(ctx, unsettledBalanceSQL, "in").Scan(&borrowFen)
 	return map[string]any{
 		"total_people":     totalPeople,
 		"total_events":     totalEvents,
@@ -1796,7 +1834,7 @@ func (s *Store) StatsByMonth(ctx context.Context, months int) ([]map[string]any,
 	if months <= 0 {
 		months = 12
 	}
-	rows, err := s.DB.QueryContext(ctx, `WITH months(month) AS (
+	rows, err := s.CurrentDB().QueryContext(ctx, `WITH months(month) AS (
   SELECT DISTINCT strftime('%Y-%m', event_date) FROM live_events WHERE event_date IS NOT NULL AND event_date <> ''
   UNION
   SELECT DISTINCT strftime('%Y-%m', said_at) FROM live_memos WHERE said_at IS NOT NULL AND said_at <> ''
@@ -1829,7 +1867,7 @@ ORDER BY m.month DESC LIMIT ?`, months)
 }
 
 func (s *Store) GradeDistribution(ctx context.Context) ([]*GradeDist, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT grade, COUNT(*) FROM live_people WHERE archived=0 GROUP BY grade ORDER BY grade`)
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT grade, COUNT(*) FROM live_people WHERE archived=0 GROUP BY grade ORDER BY grade`)
 	if err != nil {
 		return nil, err
 	}
@@ -1848,7 +1886,7 @@ func (s *Store) GradeDistribution(ctx context.Context) ([]*GradeDist, error) {
 // ===== EventGet (single event with participants) =====
 
 func (s *Store) EventGet(ctx context.Context, id string) (*Event, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventColumns+`
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT `+eventColumns+`
 FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id)
 	if err != nil {
 		return nil, err
@@ -1862,7 +1900,10 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id
 		return nil, err
 	}
 	rows.Close()
-	prows, _ := s.DB.QueryContext(ctx, `SELECT p.id,p.name FROM live_people p JOIN event_participants ep ON ep.person_id=p.id WHERE ep.event_id=? ORDER BY ep.rowid`, e.ID)
+	prows, err := s.CurrentDB().QueryContext(ctx, `SELECT p.id,p.name FROM live_people p JOIN event_participants ep ON ep.person_id=p.id WHERE ep.event_id=? ORDER BY ep.rowid`, e.ID)
+	if err != nil {
+		return nil, err
+	}
 	defer prows.Close()
 	for prows.Next() {
 		var pid, pn string
@@ -1884,21 +1925,44 @@ FROM live_events e LEFT JOIN event_types et ON e.type_id=et.id WHERE e.id=?`, id
 
 // ===== Repayments =====
 
+// ErrRepayOverpay 并发还款挤过应用层校验、被原子 INSERT 拦下时返回。
+var ErrRepayOverpay = errors.New("还款总额不能超过本金")
+
 func (s *Store) RepaymentCreate(ctx context.Context, r *Repayment) error {
 	if r.ID == "" {
 		r.ID = uuid.NewString()
 	}
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO repayments(id,transaction_id,amount_fen,occurred_at,note) VALUES(?,?,?,?,?)",
-		r.ID, r.TransactionID, r.AmountFen, r.OccurredAt, r.Note)
-	return err
+	// 超付校验并进同一条 INSERT：应用层是先读后写，双击/双标签页并发时
+	// 两趟都能过检，超付的账既不进合计也没有去处。条件不满足时 INSERT
+	// 影响 0 行——交易不存在按 ErrNoRows 报 404，否则是超付。
+	// kind 的 loan 限制由 API 层负责（带可读文案），store 只兜算术底线。
+	res, err := s.CurrentDB().ExecContext(ctx, `INSERT INTO repayments(id,transaction_id,amount_fen,occurred_at,note)
+SELECT ?,?,?,?,?
+WHERE EXISTS (SELECT 1 FROM live_transactions t WHERE t.id=?)
+  AND (SELECT COALESCE(SUM(amount_fen),0) FROM repayments WHERE transaction_id=?) + ?
+      <= (SELECT t.amount_fen FROM live_transactions t WHERE t.id=?)`,
+		r.ID, r.TransactionID, r.AmountFen, r.OccurredAt, r.Note,
+		r.TransactionID, r.TransactionID, r.AmountFen, r.TransactionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var one int
+		if err := s.CurrentDB().QueryRowContext(ctx,
+			"SELECT 1 FROM live_transactions WHERE id=?", r.TransactionID).Scan(&one); err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return ErrRepayOverpay
+	}
+	return nil
 }
 
 func (s *Store) RepaymentDelete(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "DELETE FROM repayments WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM repayments WHERE id=?", id)
 }
 
 func (s *Store) RepaymentsOf(ctx context.Context, transactionID string) ([]*Repayment, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,transaction_id,amount_fen,occurred_at,note FROM repayments WHERE transaction_id=? ORDER BY occurred_at DESC", transactionID)
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT id,transaction_id,amount_fen,occurred_at,note FROM repayments WHERE transaction_id=? ORDER BY occurred_at DESC", transactionID)
 	if err != nil {
 		return nil, err
 	}
@@ -1938,11 +2002,11 @@ func (s *Store) PersonDetail(ctx context.Context, id string) (*Person, []*Person
 // ===== PersonArchive =====
 
 func (s *Store) PersonArchive(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE people SET archived=1 WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE people SET archived=1 WHERE id=?", id)
 }
 
 func (s *Store) PersonUnarchive(ctx context.Context, id string) error {
-	return execOne(ctx, s.DB, "UPDATE people SET archived=0 WHERE id=?", id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE people SET archived=0 WHERE id=?", id)
 }
 
 // ===== PersonIntimacy / WordCloud =====
@@ -1974,10 +2038,10 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 	}
 	// Recent event count
 	var recentCount int
-	_ = s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?) AND e.event_date >= ?`, personID, daysFromTodayLocal(-60)).Scan(&recentCount)
+	_ = s.CurrentDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?) AND e.event_date >= ?`, personID, daysFromTodayLocal(-60)).Scan(&recentCount)
 	// Last interaction
 	var last sql.NullString
-	_ = s.DB.QueryRowContext(ctx, `SELECT MAX(event_date) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?)`, personID).Scan(&last)
+	_ = s.CurrentDB().QueryRowContext(ctx, `SELECT MAX(event_date) FROM live_events e WHERE EXISTS (SELECT 1 FROM event_participants ep WHERE ep.event_id=e.id AND ep.person_id=?)`, personID).Scan(&last)
 	// Score = grade*20 + recentEvents*3 + (archived ? 0 : 10)
 	score := grade*20 + recentCount*3 + 10
 	if p != nil && p.Archived {
@@ -1996,7 +2060,7 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 
 	// 趋势：读取快照表，并把今天的最新分数补到末尾，保证至少有一个点。
 	out.Trend = []TrendPoint{}
-	if rows, err := s.DB.QueryContext(ctx,
+	if rows, err := s.CurrentDB().QueryContext(ctx,
 		`SELECT day,score FROM intimacy_snapshots WHERE person_id=? ORDER BY day DESC LIMIT 30`, personID); err == nil {
 		type row struct {
 			day   string
@@ -2024,7 +2088,7 @@ func (s *Store) PersonIntimacy(ctx context.Context, personID string) (*PersonInt
 
 func (s *Store) PersonWordCloudText(ctx context.Context, personID string) ([]map[string]any, error) {
 	// naive: collect memo content words
-	rows, err := s.DB.QueryContext(ctx, "SELECT content FROM live_memos WHERE person_id=?", personID)
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT content FROM live_memos WHERE person_id=?", personID)
 	if err != nil {
 		return nil, err
 	}
@@ -2075,7 +2139,7 @@ func tokenizeSimple(s string) []string {
 // ===== RelationshipsOf / RelationshipGraph =====
 
 func (s *Store) RelationshipsOf(ctx context.Context, personID string) ([]*Relationship, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT r.id,r.from_person_id,r.to_person_id,r.type,r.remark,r.created_at,
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT r.id,r.from_person_id,r.to_person_id,r.type,r.remark,r.created_at,
 pf.name,pt.name FROM relationships r
 LEFT JOIN live_people pf ON pf.id=r.from_person_id LEFT JOIN live_people pt ON pt.id=r.to_person_id
 WHERE (r.from_person_id=? OR r.to_person_id=?) AND pf.id IS NOT NULL AND pt.id IS NOT NULL`, personID, personID)
@@ -2107,7 +2171,7 @@ WHERE (r.from_person_id=? OR r.to_person_id=?) AND pf.id IS NOT NULL AND pt.id I
 // RelationshipTypes 列出关系边里已经用过的全部类型，
 // 给前端的类型 combobox 做历史候选（预置枚举之外的自定义类型也在里面）。
 func (s *Store) RelationshipTypes(ctx context.Context) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT DISTINCT type FROM relationships WHERE type<>'' ORDER BY type")
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT DISTINCT type FROM relationships WHERE type<>'' ORDER BY type")
 	if err != nil {
 		return nil, err
 	}
@@ -2195,24 +2259,24 @@ func (s *Store) AttachmentCreate(ctx context.Context, a *Attachment) error {
 		a.ID = uuid.NewString()
 	}
 	a.CreatedAt = nowUTC()
-	_, err := s.DB.ExecContext(ctx, "INSERT INTO attachments(id,entity_type,entity_id,file_name,stored_name,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)",
+	_, err := s.CurrentDB().ExecContext(ctx, "INSERT INTO attachments(id,entity_type,entity_id,file_name,stored_name,mime,size,created_at) VALUES(?,?,?,?,?,?,?,?)",
 		a.ID, a.EntityType, a.EntityID, a.FileName, a.StoredName, a.Mime, a.Size, a.CreatedAt)
 	return err
 }
 
 func (s *Store) AttachmentDelete(ctx context.Context, id string) (*Attachment, error) {
 	var a Attachment
-	err := s.DB.QueryRowContext(ctx, "SELECT id,entity_type,entity_id,file_name,stored_name,mime,size,created_at FROM attachments WHERE id=?", id).Scan(
+	err := s.CurrentDB().QueryRowContext(ctx, "SELECT id,entity_type,entity_id,file_name,stored_name,mime,size,created_at FROM attachments WHERE id=?", id).Scan(
 		&a.ID, &a.EntityType, &a.EntityID, &a.FileName, &a.StoredName, &a.Mime, &a.Size, &a.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.DB.ExecContext(ctx, "DELETE FROM attachments WHERE id=?", id)
+	_, err = s.CurrentDB().ExecContext(ctx, "DELETE FROM attachments WHERE id=?", id)
 	return &a, err
 }
 
 func (s *Store) AttachmentsOf(ctx context.Context, entityType, entityID string) ([]*Attachment, error) {
-	rows, err := s.DB.QueryContext(ctx, "SELECT id,entity_type,entity_id,file_name,stored_name,mime,size,created_at FROM attachments WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC", entityType, entityID)
+	rows, err := s.CurrentDB().QueryContext(ctx, "SELECT id,entity_type,entity_id,file_name,stored_name,mime,size,created_at FROM attachments WHERE entity_type=? AND entity_id=? ORDER BY created_at DESC", entityType, entityID)
 	if err != nil {
 		return nil, err
 	}
@@ -2231,7 +2295,7 @@ func (s *Store) AttachmentsOf(ctx context.Context, entityType, entityID string) 
 // ===== PersonIntimacySnapshot (helper) =====
 
 func (s *Store) PersonIntimacySnapshot(ctx context.Context, personID string, day string, score int) error {
-	_, err := s.DB.ExecContext(ctx,
+	_, err := s.CurrentDB().ExecContext(ctx,
 		"INSERT OR REPLACE INTO intimacy_snapshots(person_id,day,score) VALUES(?,?,?)",
 		personID, day, score)
 	return err

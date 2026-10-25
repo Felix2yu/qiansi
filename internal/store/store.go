@@ -9,30 +9,30 @@ import (
 )
 
 type Store struct {
-	// DB 是当前连接句柄。请求处理里的读写直接用这个字段即可 —— 一个请求只用一个句柄。
-	// 常驻 goroutine（自动备份调度器、通知调度器）必须走 CurrentDB()：
-	// 从备份恢复会在 HTTP goroutine 里换掉整个句柄，缓存旧指针意味着恢复后拿着
-	// 一个已 Close 的库继续跑，失败只落在 last_error 里，界面上看不出任何异常。
-	DB *sql.DB
-
+	// db 是当前连接句柄，一律经 CurrentDB() 读取：从备份恢复会在 HTTP
+	// goroutine 里经 UseDB 换掉整个句柄，任何直接读字段的路径都与这次写
+	// 构成数据竞争（race detector 必报），换句柄期间拿到旧句柄也只是
+	// 一次可重试的 500，不该是未定义行为。
+	db     *sql.DB
 	swapMu sync.RWMutex
 }
 
 func New(db *sql.DB) *Store {
-	return &Store{DB: db}
+	return &Store{db: db}
 }
 
-// CurrentDB 取当前句柄，供跨 goroutine 的常驻任务现取现用。
+// CurrentDB 取当前句柄。跨 goroutine 的常驻任务必须现取现用，
+// 缓存返回值意味着恢复后拿着一个已 Close 的库继续跑。
 func (s *Store) CurrentDB() *sql.DB {
 	s.swapMu.RLock()
 	defer s.swapMu.RUnlock()
-	return s.DB
+	return s.db
 }
 
 // UseDB 换上新的句柄（从备份恢复后）。旧句柄由调用方负责关闭。
 func (s *Store) UseDB(next *sql.DB) {
 	s.swapMu.Lock()
-	s.DB = next
+	s.db = next
 	s.swapMu.Unlock()
 }
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -439,6 +440,13 @@ func (a *API) txCreate(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) txUpdate(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
+	// 编辑前的版本：改本金会改变「本金 − 已还」的算术结果，
+	// 结清标记是否因此失真要拿它对照（见 resyncSettledAfterEdit）。
+	before, err := a.Store.TransactionGet(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
 	var t store.Transaction
 	if err := decode(r, &t); err != nil {
 		writeErr(w, 400, err.Error())
@@ -458,6 +466,7 @@ func (a *API) txUpdate(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
+	a.resyncSettledAfterEdit(r.Context(), before, &t)
 	writeJSON(w, 200, t)
 }
 
@@ -510,6 +519,16 @@ func (a *API) repaymentCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.Store.RepaymentCreate(r.Context(), &rp); err != nil {
+		// 并发还款挤过前面校验时，原子 INSERT 兜底拦下，按同一文案报 400
+		if errors.Is(err, store.ErrRepayOverpay) {
+			t2, _ := a.Store.TransactionGet(r.Context(), id)
+			remain := 0
+			if t2 != nil {
+				remain = t2.AmountFen - t2.RepaidFen
+			}
+			writeErr(w, 400, fmt.Sprintf("还款总额不能超过本金（还可还 ¥%s）", fenToYuan(remain)))
+			return
+		}
 		writeStoreErr(w, err)
 		return
 	}
@@ -576,6 +595,39 @@ func (a *API) resyncSettled(ctx context.Context, txID string) error {
 		t.SettledAt = ""
 	}
 	return a.Store.TransactionUpdate(ctx, t)
+}
+
+// resyncSettledAfterEdit 校正编辑后的结清标记（口径同 resyncSettled）。
+//
+// 改本金会改变「本金 − 已还」的算术：借 1000 已还清后把本金改成 2000，
+// 这笔账会带着 settled=1 从统计与建议里凭空消失。只沿两个必然方向校正：
+//   - 已还清（remaining ≤ 0）必须结清；
+//   - 「已结清却有余额」只在编辑前它与算术一致（是还款自动结清的）时才翻开——
+//     用户手勾的「这笔不用还了」要保留，不能一保存就被翻回去。
+func (a *API) resyncSettledAfterEdit(ctx context.Context, before, after *store.Transaction) {
+	if after == nil || after.Kind != "loan" {
+		return
+	}
+	remaining := after.AmountFen - before.RepaidFen
+	correct := false
+	switch {
+	case remaining <= 0 && !after.Settled:
+		after.Settled = true
+		after.SettledAt = nowLocalStamp()
+		correct = true
+	case remaining > 0 && after.Settled &&
+		before.Settled && before.AmountFen-before.RepaidFen <= 0:
+		after.Settled = false
+		after.SettledAt = ""
+		correct = true
+	}
+	if !correct {
+		return
+	}
+	if err := a.Store.TransactionUpdate(ctx, after); err != nil {
+		// 主更新已成功，校正失败只损失这一步的口径收敛，不把整次编辑判为失败
+		log.Printf("[api] 结清标记校正失败 tx=%s: %v", after.ID, err)
+	}
 }
 
 // ===== anniversaries =====

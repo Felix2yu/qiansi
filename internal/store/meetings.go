@@ -72,7 +72,7 @@ func (s *Store) MeetingOverview(ctx context.Context) ([]*MeetingOverviewRow, err
 SELECT p.id,p.name,p.grade,m.cnt,m.first_d,m.last_d
 FROM live_people p JOIN meeting m ON m.person_id=p.id
 WHERE p.archived=0`
-	rows, err := s.DB.QueryContext(ctx, qry)
+	rows, err := s.CurrentDB().QueryContext(ctx, qry)
 	if err != nil {
 		return nil, err
 	}

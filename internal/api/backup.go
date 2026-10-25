@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -34,11 +37,10 @@ func (a *API) registerBackup(r chi.Router) {
 	})
 }
 
-// backupRunner 构造自动备份调度器。API 每次请求现构造：
-// Runner 只持有 store/cfg 两个指针，无内部可变状态（并发控制靠自身的 mutex），
-// 这样避免在 New() 里多一个字段依赖，也便于测试直接构造。
-func (a *API) backupRunner() *bsched.Runner {
-	return bsched.New(a.Store, a.Cfg)
+// BackupRunner 暴露自动备份调度器。main 用它启动常驻循环——
+// HTTP 的「立即执行」与常驻定时必须共用同一实例（各自的 mutex 拦不住对方）。
+func (a *API) BackupRunner() *bsched.Runner {
+	return a.backup
 }
 
 // snapshotDB 生成一份一致性快照到 dest（委托给 backup 包，与调度器共用实现）。
@@ -84,7 +86,14 @@ func (a *API) archiveSnapshot(ctx context.Context) (string, error) {
 func (a *API) backupList(w http.ResponseWriter, r *http.Request) {
 	entries, err := os.ReadDir(a.Cfg.Backups)
 	if err != nil {
-		writeJSON(w, 200, []map[string]any{})
+		if os.IsNotExist(err) {
+			// 目录还不存在 = 一个备份都没有过；配置目录在启动时创建，这里只是测试/异常路径
+			writeJSON(w, 200, []map[string]any{})
+			return
+		}
+		// 目录在但读不了（权限、被同名文件占用）：回 200 空列表会让
+		// 「没有备份」和「目录出问题」长一个样，必须显式报错
+		writeStoreErr(w, err)
 		return
 	}
 	type item struct {
@@ -112,10 +121,28 @@ func (a *API) backupList(w http.ResponseWriter, r *http.Request) {
 
 // backupRestore 用上传的数据库文件替换当前库。
 //
-// 流程：校验是 SQLite → 归档当前库 → 关闭连接 → 替换 → 重新打开并跑迁移 → 换掉 Store.DB。
+// 流程：校验是 SQLite → 归档当前库 → 关闭连接 → 替换 → 重新打开并跑迁移 → 换掉 Store.CurrentDB()。
 // 恢复是破坏性操作，必须先把现有库另存，失败时可人工找回。
+// restoreMaxBody 恢复上传的体积上限。个人库几十 MB 是常态，256MB 留足余量；
+// 没有上限的话一个超大请求可以把磁盘写满。
+const restoreMaxBody = 256 << 20
+
+// restoreMu 串行化恢复：两个并发的恢复会互相 Close 对方刚打开的句柄、
+// 抢同一个目标路径的 rename，落一个半死不活的库。
+var restoreMu sync.Mutex
+
 func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
+	restoreMu.Lock()
+	defer restoreMu.Unlock()
+	// MaxBytesReader 先把请求体封顶，超限的表单不会先落一份临时文件才被发现
+	r.Body = http.MaxBytesReader(w, r.Body, restoreMaxBody)
 	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("备份文件超过 %d MB", restoreMaxBody>>20))
+			return
+		}
 		writeErr(w, 400, "上传解析失败: "+err.Error())
 		return
 	}
@@ -168,10 +195,15 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 	}
 	probe.Close()
 
-	// 3) 归档当前库，便于回滚
+	// 3) 归档当前库，便于回滚。保险快照失败必须中止恢复：
+	// 没有退路的破坏性替换不该继续，否则恢复失败就真的一无所有
 	if _, err := os.Stat(a.Cfg.DBPath); err == nil {
 		keep := filepath.Join(a.Cfg.Backups, "before-restore-"+time.Now().Format("20060102-150405")+".db")
-		_ = a.snapshotDB(r.Context(), keep)
+		if err := a.snapshotDB(r.Context(), keep); err != nil {
+			os.Remove(tmp)
+			writeErr(w, 500, "恢复前的安全归档失败，已中止（检查备份目录与磁盘空间）: "+err.Error())
+			return
+		}
 	}
 
 	// 4) 关闭连接并替换
@@ -207,7 +239,7 @@ func (a *API) backupRestore(w http.ResponseWriter, r *http.Request) {
 
 // backupAutoGet 返回自动备份配置与执行状态（含下次执行时间）。
 func (a *API) backupAutoGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, 200, a.backupRunner().Status(r.Context(), time.Now()))
+	writeJSON(w, 200, a.backup.Status(r.Context(), time.Now()))
 }
 
 // backupAutoSet 保存自动备份配置。
@@ -220,7 +252,7 @@ func (a *API) backupAutoSet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	runner := a.backupRunner()
+	runner := a.backup
 	if err := runner.SaveSchedule(r.Context(), s); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -231,7 +263,7 @@ func (a *API) backupAutoSet(w http.ResponseWriter, r *http.Request) {
 
 // backupAutoRun 立即执行一次备份并回传最新状态。失败时返回 500 与错误文本。
 func (a *API) backupAutoRun(w http.ResponseWriter, r *http.Request) {
-	runner := a.backupRunner()
+	runner := a.backup
 	path, err := runner.RunNow(r.Context(), time.Now())
 	if err != nil {
 		writeErr(w, 500, "备份失败: "+err.Error())

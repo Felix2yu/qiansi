@@ -56,7 +56,7 @@ func dgCol(t *testing.T, tab *DumpTable, name string) int {
 func dgText(t *testing.T, s *Store, query string, args ...any) string {
 	t.Helper()
 	var v sql.NullString
-	if err := s.DB.QueryRow(query, args...).Scan(&v); err != nil {
+	if err := s.CurrentDB().QueryRow(query, args...).Scan(&v); err != nil {
 		t.Fatalf("查询 %s 失败: %v", query, err)
 	}
 	return v.String

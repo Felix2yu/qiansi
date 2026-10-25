@@ -12,7 +12,7 @@ import (
 func egAPICount(t *testing.T, s *testServer, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := s.Store.DB.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow(query, args...).Scan(&n); err != nil {
 		t.Fatalf("查询 %s 失败: %v", query, err)
 	}
 	return n

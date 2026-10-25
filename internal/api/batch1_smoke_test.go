@@ -58,7 +58,7 @@ func TestSmokeBatch1_GiftIsNotADebtAndPromiseReachesTodos(t *testing.T) {
 
 	// 新建入口已经会自动了结非借还行，但库里可能躺着修复前的存量数据：
 	// 口径必须自己站得住，不能只靠写入时的兜底（迁移 010 之外的第二道防线）
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		`INSERT INTO transactions(id,person_id,kind,direction,amount_fen,title,occurred_at,settled,created_at)
 		 VALUES('legacy-gift',?,'gift','out',60000,'修复前留下的随礼',?,0,'t')`, zhang, apiDate(0)); err != nil {
 		t.Fatalf("seed legacy gift: %v", err)
@@ -103,7 +103,7 @@ func TestSmokeBatch1_GiftIsNotADebtAndPromiseReachesTodos(t *testing.T) {
 		t.Errorf("已兑现的承诺仍在待办里: %+v", after)
 	}
 	var status string
-	if err := s.Store.DB.QueryRowContext(ctx, "SELECT status FROM memos WHERE id=?", memoID).Scan(&status); err != nil {
+	if err := s.Store.CurrentDB().QueryRowContext(ctx, "SELECT status FROM memos WHERE id=?", memoID).Scan(&status); err != nil {
 		t.Fatalf("读承诺状态: %v", err)
 	}
 	if status != "fulfilled" {

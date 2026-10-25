@@ -42,9 +42,9 @@ func TestMemoList_CarriesPersonName(t *testing.T) {
 	}
 }
 
-// 联系人进了回收站，他名下的对话一起藏起来；联系人被彻底删除后对话的
-// person_id 置空（ON DELETE SET NULL），名字必须跟着空掉，
-// 否则列表上会留一个指向不存在的人的名字。
+// 联系人进了回收站，他名下的对话一起藏起来；联系人被彻底删除时，
+// 对话随人一起删掉——外键是 ON DELETE SET NULL，不显式删的话它们会以
+// 「无归属」状态重新出现在列表里，与回收站的牵连口径矛盾（旧口径已废弃）。
 func TestMemoList_NameFollowsPersonDelete(t *testing.T) {
 	s := newTestStore(t)
 	ctx := pctx(t)
@@ -69,10 +69,7 @@ func TestMemoList_NameFollowsPersonDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MemoList(彻底删除后): %v", err)
 	}
-	if len(list) != 1 {
-		t.Fatalf("备忘条数 = %d，期望删人后仍保留 1 条", len(list))
-	}
-	if list[0].PersonID != "" || list[0].PersonName != "" {
-		t.Fatalf("人已经没了，还挂着归属：%+v", list[0])
+	if len(list) != 0 {
+		t.Fatalf("备忘条数 = %d，期望随联系人一起删掉", len(list))
 	}
 }

@@ -38,7 +38,7 @@ func pMustCreate(t *testing.T, s *Store, p *Person) *Person {
 // pRaw 执行原始 SQL，失败即 fatal。
 func pRaw(t *testing.T, s *Store, query string, args ...any) {
 	t.Helper()
-	if _, err := s.DB.Exec(query, args...); err != nil {
+	if _, err := s.CurrentDB().Exec(query, args...); err != nil {
 		t.Fatalf("raw exec %q: %v", query, err)
 	}
 }
@@ -46,7 +46,7 @@ func pRaw(t *testing.T, s *Store, query string, args ...any) {
 func pRawScanInt(t *testing.T, s *Store, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := s.DB.QueryRow(query, args...).Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRow(query, args...).Scan(&n); err != nil {
 		t.Fatalf("raw scan %q: %v", query, err)
 	}
 	return n
@@ -55,7 +55,7 @@ func pRawScanInt(t *testing.T, s *Store, query string, args ...any) int {
 func pRawScanStr(t *testing.T, s *Store, query string, args ...any) string {
 	t.Helper()
 	var v string
-	if err := s.DB.QueryRow(query, args...).Scan(&v); err != nil {
+	if err := s.CurrentDB().QueryRow(query, args...).Scan(&v); err != nil {
 		t.Fatalf("raw scan %q: %v", query, err)
 	}
 	return v
@@ -107,10 +107,10 @@ func pTagNames(list []*Tag) []string {
 func TestStoreNewWrapsDB(t *testing.T) {
 	db := newTestDB(t)
 	s := New(db)
-	if s == nil || s.DB != db {
-		t.Fatalf("New 应把 *sql.DB 原样挂到 Store.DB 上")
+	if s == nil || s.CurrentDB() != db {
+		t.Fatalf("New 应把 *sql.DB 原样挂到 Store.CurrentDB() 上")
 	}
-	if err := s.DB.Ping(); err != nil {
+	if err := s.CurrentDB().Ping(); err != nil {
 		t.Fatalf("Ping: %v", err)
 	}
 }
@@ -1025,7 +1025,7 @@ func TestPeopleSyncBirthdayAnniversary(t *testing.T) {
 		t.Fatalf("应回填 BirthdayAnniversaryID")
 	}
 	row := struct{ id, title, date, remind, src string }{}
-	if err := s.DB.QueryRowContext(ctx,
+	if err := s.CurrentDB().QueryRowContext(ctx,
 		"SELECT id,title,date,remind_days,source FROM anniversaries WHERE id=?", p.BirthdayAnniversaryID).
 		Scan(&row.id, &row.title, &row.date, &row.remind, &row.src); err != nil {
 		t.Fatalf("查询纪念日: %v", err)
@@ -1950,8 +1950,9 @@ func TestPeopleSyncBirthdayErrorBranches(t *testing.T) {
 	if p3.BirthdayAnniversaryID != "" {
 		t.Fatalf("失败时不应回填内存 ID，得到 %q", p3.BirthdayAnniversaryID)
 	}
-	if n := pRawScanInt(t, s3, "SELECT COUNT(*) FROM anniversaries WHERE person_id='sb3' AND source='birthday'"); n != 1 {
-		t.Fatalf("纪念日应已插入，得到 %d", n)
+	// 三步写在同一事务里：回写失败整体回滚，不再留下「纪念日建了、指针没写」的半套
+	if n := pRawScanInt(t, s3, "SELECT COUNT(*) FROM anniversaries WHERE person_id='sb3' AND source='birthday'"); n != 0 {
+		t.Fatalf("事务应整体回滚，纪念日不应残留，得到 %d", n)
 	}
 
 	// UPDATE 分支后回写失败
@@ -1963,8 +1964,8 @@ func TestPeopleSyncBirthdayErrorBranches(t *testing.T) {
 	if err := s4.SyncBirthdayAnniversary(ctx, p4); err == nil {
 		t.Fatalf("回写失败应返回错误")
 	}
-	if got := pRawScanStr(t, s4, "SELECT title FROM anniversaries WHERE id='sb4-a'"); got != "更新回写失败的生日" {
-		t.Fatalf("纪念日应已被 UPDATE，标题得到 %q", got)
+	if got := pRawScanStr(t, s4, "SELECT title FROM anniversaries WHERE id='sb4-a'"); got != "t" {
+		t.Fatalf("事务回滚后标题应保持原值，得到 %q", got)
 	}
 
 	// 复用查询命中但结果为空串时不应误用（person 无纪念日 -> 新建）

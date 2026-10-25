@@ -127,7 +127,7 @@ func TestAPIPeopleBulkUpdateOnlyEmpty(t *testing.T) {
 func patchTestGender(t *testing.T, s *testServer, id string) string {
 	t.Helper()
 	var g string
-	if err := s.Store.DB.QueryRow("SELECT COALESCE(gender,'') FROM people WHERE id=?", id).Scan(&g); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COALESCE(gender,'') FROM people WHERE id=?", id).Scan(&g); err != nil {
 		t.Fatalf("读 %s 的 gender: %v", id, err)
 	}
 	return g

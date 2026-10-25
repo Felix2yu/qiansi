@@ -61,31 +61,67 @@ func (y YMD) AddDays(n int) YMD {
 	return YMD{t.Year(), int(t.Month()), t.Day()}
 }
 
+// daysInLunarMonth 返回某农历年某农历月的天数；月不存在（脏数据或越界）时为 0。
+// lunar-go 的 NewLunar 对越界日期直接 panic，先用年表问清天数再进去。
+func daysInLunarMonth(lunarYear, lunarMonth int) int {
+	m := cal.NewLunarYear(lunarYear).GetMonth(lunarMonth)
+	if m == nil {
+		return 0
+	}
+	return m.GetDayCount()
+}
+
+// lunarYMD 安全地把（农历年, 月, 日）换算成公历。
+// 「腊月三十」逢小月是能正常入库的合法输入（约一半年份腊月只有 29 天），
+// 此时回退到该月最后一天——除夕按廿九过，而不是 panic；
+// 连农历月都找不到时返回 ok=false，由调用方按「没有下一次」处理。
+func lunarYMD(lunarYear, lunarMonth, lunarDay int) (YMD, bool) {
+	days := daysInLunarMonth(lunarYear, lunarMonth)
+	if days <= 0 {
+		return YMD{}, false
+	}
+	if lunarDay < 1 {
+		lunarDay = 1
+	}
+	if lunarDay > days {
+		lunarDay = days
+	}
+	l := cal.NewLunar(lunarYear, lunarMonth, lunarDay, 12, 0, 0)
+	s := l.GetSolar()
+	return YMD{s.GetYear(), s.GetMonth(), s.GetDay()}, true
+}
+
 // LunarToSolar converts a lunar (month, day) pair — repeated every year — into
 // the **next** Gregorian occurrence on or after `today`.
 //
 // `anchorYear` is only used to seed the first call; the returned event is
 // always annual (repeat_yearly=true semantics). The anchor date's year value
 // is ignored (we iterate from current year up).
+//
+// 换算不可解（农历月越界）时返回零值 YMD，调用方按「没有下一次」跳过。
 func LunarToSolar(lunarMonth, lunarDay int, today YMD) YMD {
 	for offset := 0; offset < 3; offset++ {
-		year := today.Year + offset
-		l := cal.NewLunar(year, lunarMonth, lunarDay, 12, 0, 0)
-		s := l.GetSolar()
-		solar := YMD{s.GetYear(), s.GetMonth(), s.GetDay()}
-		if !solar.Before(today) {
+		if solar, ok := lunarYMD(today.Year+offset, lunarMonth, lunarDay); ok && !solar.Before(today) {
 			return solar
 		}
 	}
 	// Fallback: one year ahead (very edge case)
-	l := cal.NewLunar(today.Year+1, lunarMonth, lunarDay, 12, 0, 0)
-	s := l.GetSolar()
-	return YMD{s.GetYear(), s.GetMonth(), s.GetDay()}
+	if solar, ok := lunarYMD(today.Year+1, lunarMonth, lunarDay); ok {
+		return solar
+	}
+	return YMD{}
 }
 
 // SolarToLunar converts a Gregorian YMD to its lunar month and day.
 // Returns (lunarMonth, lunarDay).
+//
+// NewSolar 对 2 月 30 这类不存在日期直接 panic，先归一化校验再进库；
+// 非法输入返回 (0, 0)，调用方按无效处理。
 func SolarToLunar(solar YMD) (int, int) {
+	t := time.Date(solar.Year, time.Month(solar.Month), solar.Day, 12, 0, 0, 0, time.UTC)
+	if t.Year() != solar.Year || int(t.Month()) != solar.Month || t.Day() != solar.Day {
+		return 0, 0
+	}
 	s := cal.NewSolar(solar.Year, solar.Month, solar.Day, 12, 0, 0)
 	l := s.GetLunar()
 	return l.GetMonth(), l.GetDay()

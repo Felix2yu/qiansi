@@ -10,7 +10,7 @@ import (
 func egCount(t *testing.T, s *Store, query string, args ...any) int {
 	t.Helper()
 	var n int
-	if err := s.DB.QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRowContext(context.Background(), query, args...).Scan(&n); err != nil {
 		t.Fatalf("count %q: %v", query, err)
 	}
 	return n
@@ -41,7 +41,7 @@ func TestEventGift_CreateBooksOneTransaction(t *testing.T) {
 	}
 	var kind, dir, person, title, occurred string
 	var amount, settled int
-	err := s.DB.QueryRowContext(ctx,
+	err := s.CurrentDB().QueryRowContext(ctx,
 		"SELECT kind,direction,person_id,amount_fen,title,settled,occurred_at FROM transactions WHERE id=?", e.GiftTransactionID).
 		Scan(&kind, &dir, &person, &amount, &title, &settled, &occurred)
 	if err != nil {
@@ -173,7 +173,7 @@ func TestEventGift_DoesNotStealReassignedRow(t *testing.T) {
 
 	other := &Event{Title: "另一场", EventDate: "2026-10-06", GiftAmountFen: 10000, GiftDirection: "out", GiftPersonID: host.ID}
 	egCreate(t, s, other, []string{host.ID})
-	if _, err := s.DB.ExecContext(ctx, "UPDATE transactions SET event_id=? WHERE id=?", other.ID, owned); err != nil {
+	if _, err := s.CurrentDB().ExecContext(ctx, "UPDATE transactions SET event_id=? WHERE id=?", other.ID, owned); err != nil {
 		t.Fatalf("改挂账目: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestEventGift_DoesNotStealReassignedRow(t *testing.T) {
 		t.Fatalf("把已经属于别的往来的账抢了回来")
 	}
 	var evID string
-	if err := s.DB.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE id=?", owned).Scan(&evID); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE id=?", owned).Scan(&evID); err != nil {
 		t.Fatalf("读取被改挂的账: %v", err)
 	}
 	if evID != other.ID {
@@ -237,7 +237,7 @@ func TestEventGift_DeleteEventKeepsGiftRow(t *testing.T) {
 		t.Fatalf("EventDelete: %v", err)
 	}
 	var evID *string
-	if err := s.DB.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
 		t.Fatalf("礼金账目随事件一起消失了: %v", err)
 	}
 	if evID == nil || *evID != e.ID {
@@ -247,7 +247,7 @@ func TestEventGift_DeleteEventKeepsGiftRow(t *testing.T) {
 		t.Fatalf("EventPurge: %v", err)
 	}
 	evID = nil
-	if err := s.DB.QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT event_id FROM transactions WHERE kind='gift' AND person_id=?", host.ID).Scan(&evID); err != nil {
 		t.Fatalf("彻底删除后礼金账目消失了: %v", err)
 	}
 	if evID != nil {

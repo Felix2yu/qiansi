@@ -246,8 +246,8 @@ func TestTrashPurge(t *testing.T) {
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", seed.person.ID); n != 0 {
 		t.Fatalf("纪念日应随级联消失，剩余 %d", n)
 	}
-	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM memos"); n != 1 {
-		t.Fatalf("对话应留着（只是没了归属），得到 %d", n)
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM memos"); n != 0 {
+		t.Fatalf("对话应随联系人一起删掉（SET NULL 复活的旧口径已废弃），得到 %d", n)
 	}
 	if trashFind(t, s, ctx, "person", seed.person.ID) != nil {
 		t.Fatal("彻底删除后回收站里还有这条联系人")
@@ -390,12 +390,13 @@ func TestTrashEmpty(t *testing.T) {
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM transactions WHERE person_id=?", seed.person.ID); n != 0 {
 		t.Fatalf("被牵连的账目应随联系人级联清掉，剩余 %d", n)
 	}
-	// 对话与待办由外键置空归属后留着：那是用户自己写的记录
-	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM memos WHERE person_id IS NULL"); n != 1 {
-		t.Fatalf("老贺名下的对话应改为无归属留着，得到 %d", n)
+	// 对话与待办随联系人一起删掉：外键是 SET NULL，靠显式删除收尾——
+	// 否则它们会以「无归属」状态重新出现在列表里，与回收站 Hidden 的口径矛盾
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM memos WHERE person_id=?", seed.person.ID); n != 0 {
+		t.Fatalf("老贺名下的对话应随联系人删掉，剩余 %d", n)
 	}
-	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM reminders WHERE person_id IS NULL"); n != 1 {
-		t.Fatalf("老贺名下的待办应改为无归属留着，得到 %d", n)
+	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM reminders WHERE person_id=?", seed.person.ID); n != 0 {
+		t.Fatalf("老贺名下的待办应随联系人删掉，剩余 %d", n)
 	}
 	// 他参与的那场往来回到可见状态（参与人行被级联删掉，事件本身没进回收站）
 	if _, err := s.EventGet(ctx, seed.event.ID); err != nil {

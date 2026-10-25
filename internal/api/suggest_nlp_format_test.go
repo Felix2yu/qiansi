@@ -87,7 +87,7 @@ func TestFormatTruncate(t *testing.T) {
 	}
 }
 
-// ===== suggest.go: a.suggest() =====
+// ===== suggest.go: a.suggest(context.Background()) =====
 
 func hasSuggestion(list []Suggestion, typ, msgPart string) (*Suggestion, bool) {
 	for i := range list {
@@ -110,7 +110,7 @@ func countType(list []Suggestion, typ string) int {
 
 func TestSuggestEmptyStore(t *testing.T) {
 	ts := newTestServer(t)
-	got := ts.suggest()
+	got := ts.suggest(context.Background())
 	if len(got) != 0 {
 		t.Fatalf("suggest on empty store = %+v, want none", got)
 	}
@@ -134,7 +134,7 @@ func TestSuggestAllRules(t *testing.T) {
 	if err := st.PersonCreate(ctx, stale); err != nil {
 		t.Fatalf("PersonCreate: %v", err)
 	}
-	if _, err := st.DB.ExecContext(ctx,
+	if _, err := st.CurrentDB().ExecContext(ctx,
 		"UPDATE people SET updated_at=? WHERE id=?", "2020-01-01T00:00:00Z", stale.ID); err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSuggestAllRules(t *testing.T) {
 	if err := st.PersonCreate(ctx, arch); err != nil {
 		t.Fatalf("PersonCreate arch: %v", err)
 	}
-	if _, err := st.DB.ExecContext(ctx, "UPDATE people SET archived=1, updated_at='2019-01-01T00:00:00Z' WHERE id=?", arch.ID); err != nil {
+	if _, err := st.CurrentDB().ExecContext(ctx, "UPDATE people SET archived=1, updated_at='2019-01-01T00:00:00Z' WHERE id=?", arch.ID); err != nil {
 		t.Fatalf("archive: %v", err)
 	}
 
@@ -242,7 +242,7 @@ func TestSuggestAllRules(t *testing.T) {
 		t.Fatalf("MemoCreate future: %v", err)
 	}
 
-	list := ts.suggest()
+	list := ts.suggest(context.Background())
 
 	// 规则 1「久未联系」已由联系节奏引擎接管（N5），建议里不该再有这一类
 	if _, ok := hasSuggestion(list, "久未联系", "打个招呼"); ok {

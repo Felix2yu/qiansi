@@ -38,7 +38,7 @@ func TestEventStore_EventCRUDWithParticipantsAndExpenses(t *testing.T) {
 	s := newTestStore(t)
 
 	// 事件类型供 TypeName/TypeColor 关联
-	if _, err := s.DB.Exec(`INSERT INTO event_types(id,name,color) VALUES(1,'聚会','#123456')`); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO event_types(id,name,color) VALUES(1,'聚会','#123456')`); err != nil {
 		t.Fatalf("seed event_types: %v", err)
 	}
 	p1 := evMustPerson(t, s, "甲")
@@ -351,7 +351,7 @@ func TestEventStore_EventListFilters(t *testing.T) {
 		t.Fatalf("EventCreate e3: %v", err)
 	}
 	// locations 为非法 JSON 的脏数据 → 回退到 location 兼容字段
-	if _, err := s.DB.Exec(`INSERT INTO events(id,title,event_date,location,locations,has_gift,gift,summary,created_at,updated_at) VALUES('raw1','坏JSON','2026-04-01','老地方','{坏json',0,'','','t','t')`); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO events(id,title,event_date,location,locations,has_gift,gift,summary,created_at,updated_at) VALUES('raw1','坏JSON','2026-04-01','老地方','{坏json',0,'','','t','t')`); err != nil {
 		t.Fatalf("raw insert: %v", err)
 	}
 
@@ -1089,7 +1089,7 @@ func TestEventStore_PromiseUpcoming(t *testing.T) {
 		t.Fatalf("MemoFulfill(chat) 应 ErrNoRows, got %v", err)
 	}
 	var status string
-	if err := s.DB.QueryRow("SELECT status FROM memos WHERE id=?", chat.ID).Scan(&status); err != nil {
+	if err := s.CurrentDB().QueryRow("SELECT status FROM memos WHERE id=?", chat.ID).Scan(&status); err != nil {
 		t.Fatalf("读对话状态: %v", err)
 	}
 	if status != "open" {
@@ -1689,7 +1689,7 @@ func TestEventStore_PersonDetailIntimacyWordCloud(t *testing.T) {
 	if err := s.PersonCreate(ctx, p); err != nil {
 		t.Fatalf("PersonCreate: %v", err)
 	}
-	if _, err := s.DB.Exec(`INSERT INTO person_fields(id,person_id,label,value,sort_order) VALUES('f1',?,?,?,1)`, p.ID, "公司", "某厂"); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO person_fields(id,person_id,label,value,sort_order) VALUES('f1',?,?,?,1)`, p.ID, "公司", "某厂"); err != nil {
 		t.Fatalf("seed person_fields: %v", err)
 	}
 	person, fields, err := s.PersonDetail(ctx, p.ID)

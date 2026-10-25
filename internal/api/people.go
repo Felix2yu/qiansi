@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 
@@ -209,7 +210,12 @@ func (a *API) peopleGet(w http.ResponseWriter, r *http.Request) {
 		writeStoreErr(w, err)
 		return
 	}
-	fields, _ := a.Store.PersonFieldList(r.Context(), id)
+	fields, err := a.Store.PersonFieldList(r.Context(), id)
+	if err != nil {
+		// 人本身读到了就不 500：详情还能打开，字段缺失记日志排障
+		log.Printf("[api] 读联系人自定义字段失败 person=%s: %v", id, err)
+		fields = nil
+	}
 	writeJSON(w, 200, map[string]any{"person": p, "fields": fields})
 }
 

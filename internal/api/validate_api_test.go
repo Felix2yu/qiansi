@@ -19,7 +19,7 @@ import (
 func valAPICount(t *testing.T, ts *testServer, query string) int {
 	t.Helper()
 	var n int
-	if err := ts.Store.DB.QueryRow(query).Scan(&n); err != nil {
+	if err := ts.Store.CurrentDB().QueryRow(query).Scan(&n); err != nil {
 		t.Fatalf("COUNT %s: %v", query, err)
 	}
 	return n
@@ -90,7 +90,7 @@ func TestAPIValidate_BirthdayFeedsAnniversary(t *testing.T) {
 		t.Fatalf("birthday 应归一, got %v", got)
 	}
 	var annivDate string
-	if err := ts.Store.DB.QueryRow(
+	if err := ts.Store.CurrentDB().QueryRow(
 		"SELECT date FROM anniversaries WHERE person_id=? AND source='birthday'", created["id"]).Scan(&annivDate); err != nil {
 		t.Fatalf("birthday 纪念日应已生成: %v", err)
 	}

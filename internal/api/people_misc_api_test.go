@@ -131,7 +131,7 @@ func TestAPIPeopleCreateValidation(t *testing.T) {
 		t.Fatalf("未回写 birthday_anniversary_id: %v", got)
 	}
 	var count int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='1991-03-04'", got["id"]).Scan(&count); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='1991-03-04'", got["id"]).Scan(&count); err != nil {
 		t.Fatalf("query anniversaries: %v", err)
 	}
 	if count != 1 {
@@ -141,7 +141,7 @@ func TestAPIPeopleCreateValidation(t *testing.T) {
 	// 再建一条不带生日的，确保不会误生成
 	other := apiCreatePersonMap(t, s, map[string]any{"name": "无生日"})
 	var c2 int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", other["id"]).Scan(&c2); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=?", other["id"]).Scan(&c2); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if c2 != 0 {
@@ -215,7 +215,7 @@ func TestAPIPeopleGetUpdateDelete(t *testing.T) {
 	})
 	apiWantStatus(t, http.MethodPut, "clear birthday", rec, http.StatusOK)
 	var left int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE id=?", annivID).Scan(&left); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE id=?", annivID).Scan(&left); err != nil {
 		t.Fatalf("query: %v", err)
 	}
 	if left != 0 {
@@ -345,7 +345,7 @@ func TestAPIPeopleSearch(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed transaction: %v", err)
 	}
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO anniversaries(id,person_id,title,date,created_at) VALUES('ann-1',?,'周伯通寿辰',?,'2026-01-01')", pid, apiDate(1)); err != nil {
 		t.Fatalf("seed anniversary: %v", err)
 	}
@@ -497,11 +497,11 @@ func TestAPIPeopleMerge(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed transaction: %v", err)
 	}
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO anniversaries(id,person_id,title,date,created_at) VALUES('ann-src',?,'来源纪念日',?,'2026-01-01')", source, apiDate(5)); err != nil {
 		t.Fatalf("seed anniversary: %v", err)
 	}
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO reminders(id,person_id,ref_type,title,due_at,status,created_at) VALUES('rem-src',?,'manual','来源提醒',?,'pending','2026-01-01')", source, apiDate(1)+"T09:00:00"); err != nil {
 		t.Fatalf("seed reminder: %v", err)
 	}
@@ -552,7 +552,7 @@ func TestAPIPeopleMerge(t *testing.T) {
 	// 备忘 / 交易 / 纪念日 / 提醒 的 person_id 改写
 	for table, col := range map[string]string{"memos": "person_id", "transactions": "person_id", "anniversaries": "person_id", "reminders": "person_id"} {
 		var n int
-		if err := s.Store.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+col+"=?", target).Scan(&n); err != nil {
+		if err := s.Store.CurrentDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+col+"=?", target).Scan(&n); err != nil {
 			t.Fatalf("count %s: %v", table, err)
 		}
 		if n == 0 {
@@ -1013,7 +1013,7 @@ func TestAPIAttachUploadAndDelete(t *testing.T) {
 
 	// 数据库行存在
 	var fileName, mime string
-	if err := s.Store.DB.QueryRow("SELECT file_name,mime FROM attachments WHERE id=?", attID).Scan(&fileName, &mime); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT file_name,mime FROM attachments WHERE id=?", attID).Scan(&fileName, &mime); err != nil {
 		t.Fatalf("query attachment: %v", err)
 	}
 	if fileName != "photo.png" || mime != "image/png" {
@@ -1026,7 +1026,7 @@ func TestAPIAttachUploadAndDelete(t *testing.T) {
 		t.Fatalf("文件未被删除: %v", err)
 	}
 	var n int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM attachments WHERE id=?", attID).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM attachments WHERE id=?", attID).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 0 {
@@ -1141,7 +1141,7 @@ func TestAPIAttachDeleteUnknownAndRows(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.Cfg.Uploads, "stored-1.png"), apiPNGBytes(), 0o644); err != nil {
 		t.Fatalf("write seed file: %v", err)
 	}
-	if _, err := s.Store.DB.Exec(
+	if _, err := s.Store.CurrentDB().Exec(
 		"INSERT INTO attachments(id,entity_type,entity_id,file_name,stored_name,mime,size,created_at) VALUES('att-1','person','p1','seed.png','stored-1.png','image/png',10,'2026-01-01')"); err != nil {
 		t.Fatalf("seed attachment: %v", err)
 	}
@@ -1156,7 +1156,7 @@ func TestAPIAttachDeleteUnknownAndRows(t *testing.T) {
 	out := decodeMap(t, s.raw(http.MethodPost, "/api/v1/attachments/", body, ct))
 	stored := strings.TrimPrefix(out["url"].(string), "/uploads/")
 	attID := out["attachment"].(map[string]any)["id"]
-	if _, err := s.Store.DB.Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", attID, pid); err != nil {
+	if _, err := s.Store.CurrentDB().Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", attID, pid); err != nil {
 		t.Fatalf("set avatar: %v", err)
 	}
 	apiWantStatus(t, http.MethodDelete, "people delete", s.do(http.MethodDelete, "/api/v1/people/"+pid, nil), http.StatusNoContent)
@@ -1180,7 +1180,7 @@ func TestAPIAttachDeleteUnknownAndRows(t *testing.T) {
 func apiAttachmentRows(t *testing.T, s *testServer, stored string) int {
 	t.Helper()
 	var n int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM attachments WHERE stored_name=?", stored).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM attachments WHERE stored_name=?", stored).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	return n
@@ -1267,7 +1267,7 @@ func TestAPIDashboardStatsAndTimeline(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed transaction: %v", err)
 	}
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO anniversaries(id,person_id,title,date,remind_days,created_at) VALUES('ann-d',?,'统计纪念日',?,'0','2026-01-01')", pid, apiDate(2)); err != nil {
 		t.Fatalf("seed anniversary: %v", err)
 	}
@@ -1320,7 +1320,7 @@ func TestAPIDashboardByMonthAndGrade(t *testing.T) {
 	apiCreatePersonMap(t, s, map[string]any{"name": "另一乙", "grade": 1})
 
 	thisMonth := apiDate(-1)
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO events(id,title,event_date,created_at,updated_at) VALUES('ev-m1','本月事件',?,'2026-01-01','2026-01-01')", thisMonth); err != nil {
 		t.Fatalf("seed event: %v", err)
 	}
@@ -1377,12 +1377,12 @@ func TestAPIDashboardSuggestions(t *testing.T) {
 	ctx := context.Background()
 	// 一个很久没动过的联系人：旧的「久未联系」建议已下线（N5 交给联系节奏），留着确认它不再出现
 	stale := apiCreatePersonMap(t, s, map[string]any{"name": "久未联系者"})["id"].(string)
-	if _, err := s.Store.DB.ExecContext(ctx, "UPDATE people SET updated_at=? WHERE id=?", apiDate(-30)+"T10:00:00+08:00", stale); err != nil {
+	if _, err := s.Store.CurrentDB().ExecContext(ctx, "UPDATE people SET updated_at=? WHERE id=?", apiDate(-30)+"T10:00:00+08:00", stale); err != nil {
 		t.Fatalf("age person: %v", err)
 	}
 	// 2. 临近纪念日
 	soon := apiCreatePersonMap(t, s, map[string]any{"name": "寿星"})["id"].(string)
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO anniversaries(id,person_id,title,date,remind_days,created_at) VALUES('ann-s',?,'寿星的生日',?,'0','2026-01-01')", soon, apiDate(3)); err != nil {
 		t.Fatalf("seed anniversary: %v", err)
 	}
@@ -1393,7 +1393,7 @@ func TestAPIDashboardSuggestions(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed tx: %v", err)
 	}
-	if _, err := s.Store.DB.ExecContext(ctx,
+	if _, err := s.Store.CurrentDB().ExecContext(ctx,
 		"INSERT INTO repayments(id,transaction_id,amount_fen,occurred_at,note) VALUES('rep-1','tx-1',3000,?,'部分还款')", apiDate(-1)); err != nil {
 		t.Fatalf("seed repayment: %v", err)
 	}
@@ -1481,7 +1481,7 @@ func TestAPIDashboardDBErrors(t *testing.T) {
 // apiTrigger 在测试库上建/删触发器，用于制造「主写入成功、后续同步失败」的分支。
 func apiTrigger(t *testing.T, s *testServer, stmt string) {
 	t.Helper()
-	if _, err := s.Store.DB.ExecContext(context.Background(), stmt); err != nil {
+	if _, err := s.Store.CurrentDB().ExecContext(context.Background(), stmt); err != nil {
 		t.Fatalf("exec %q: %v", stmt, err)
 	}
 }
@@ -1491,7 +1491,7 @@ func TestAPIPeopleBirthdaySyncErrors(t *testing.T) {
 
 	apiTrigger(t, s, "CREATE TRIGGER blk_anniv BEFORE INSERT ON anniversaries BEGIN SELECT RAISE(ABORT,'trigger boom'); END")
 	t.Cleanup(func() {
-		_, _ = s.Store.DB.Exec("DROP TRIGGER IF EXISTS blk_anniv")
+		_, _ = s.Store.CurrentDB().Exec("DROP TRIGGER IF EXISTS blk_anniv")
 	})
 
 	// 人物已落库，但纪念日生成失败 => 专属 500 文案
@@ -1508,7 +1508,7 @@ func TestAPIPeopleBirthdaySyncErrors(t *testing.T) {
 	rec = s.do(http.MethodPut, "/api/v1/people/"+pid, map[string]any{"name": "无生日", "birthday": "2000-02-02"})
 	apiWantStatus(t, http.MethodPut, "/api/v1/people/{id}", rec, http.StatusOK)
 	var n int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='2000-02-02'", pid).Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM anniversaries WHERE person_id=? AND source='birthday' AND date='2000-02-02'", pid).Scan(&n); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if n != 1 {
@@ -1528,14 +1528,14 @@ func TestAPIPeopleDeleteStoreError(t *testing.T) {
 	rec := s.raw(http.MethodPost, "/api/v1/attachments/", body, ct)
 	apiWantStatus(t, http.MethodPost, "/api/v1/attachments/", rec, http.StatusOK)
 	attID := decodeMap(t, rec)["attachment"].(map[string]any)["id"].(string)
-	if _, err := s.Store.DB.Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", attID, pid); err != nil {
+	if _, err := s.Store.CurrentDB().Exec("UPDATE people SET avatar_attachment_id=? WHERE id=?", attID, pid); err != nil {
 		t.Fatalf("set avatar: %v", err)
 	}
 
 	// 删除是 UPDATE deleted_at，触发器要拦在写标记这一步上
 	apiTrigger(t, s, "CREATE TRIGGER blk_del BEFORE UPDATE OF deleted_at ON people BEGIN SELECT RAISE(ABORT,'no delete'); END")
 	t.Cleanup(func() {
-		_, _ = s.Store.DB.Exec("DROP TRIGGER IF EXISTS blk_del")
+		_, _ = s.Store.CurrentDB().Exec("DROP TRIGGER IF EXISTS blk_del")
 	})
 
 	rec = s.do(http.MethodDelete, "/api/v1/people/"+pid, nil)
@@ -1571,7 +1571,7 @@ func TestAPIPeopleDeleteStoreError(t *testing.T) {
 func apiPeopleRowCount(t *testing.T, s *testServer) int {
 	t.Helper()
 	var n int
-	if err := s.Store.DB.QueryRow("SELECT COUNT(*) FROM people").Scan(&n); err != nil {
+	if err := s.Store.CurrentDB().QueryRow("SELECT COUNT(*) FROM people").Scan(&n); err != nil {
 		t.Fatalf("count people: %v", err)
 	}
 	return n

@@ -100,13 +100,13 @@ func dumpTables(ctx context.Context, db *sql.DB) ([]string, error) {
 
 // DumpAll 读出全库内容。空表也照样列出来，导入时才能看出「这张表确实没数据」而不是「没导出这张表」。
 func (s *Store) DumpAll(ctx context.Context) (*Dump, error) {
-	names, err := dumpTables(ctx, s.DB)
+	names, err := dumpTables(ctx, s.CurrentDB())
 	if err != nil {
 		return nil, err
 	}
 	d := &Dump{App: DumpApp, Version: DumpVersion, ExportedAt: nowUTC(), Tables: []*DumpTable{}}
 	for _, name := range names {
-		t, err := dumpOneTable(ctx, s.DB, name)
+		t, err := dumpOneTable(ctx, s.CurrentDB(), name)
 		if err != nil {
 			return nil, err
 		}
@@ -186,7 +186,7 @@ func (s *Store) RestoreAll(ctx context.Context, d *Dump) (map[string]int, error)
 	if d.App != DumpApp || d.Version != DumpVersion {
 		return nil, fmt.Errorf("%w：不是牵丝 v%d 的导出文件（app=%q）", ErrDumpInvalid, DumpVersion, d.App)
 	}
-	names, err := dumpTables(ctx, s.DB)
+	names, err := dumpTables(ctx, s.CurrentDB())
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (s *Store) RestoreAll(ctx context.Context, d *Dump) (map[string]int, error)
 			return nil, fmt.Errorf("%w：表 %s 在文件里出现了两次", ErrDumpInvalid, t.Name)
 		}
 		seen[t.Name] = true
-		cols, err := tableColumns(ctx, s.DB, t.Name)
+		cols, err := tableColumns(ctx, s.CurrentDB(), t.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -222,7 +222,7 @@ func (s *Store) RestoreAll(ctx context.Context, d *Dump) (map[string]int, error)
 		}
 	}
 
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.CurrentDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}

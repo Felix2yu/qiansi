@@ -135,21 +135,31 @@ func TestLunarLunarToSolar(t *testing.T) {
 	}
 }
 
-// lunar-go v1.4.6 的 NewLunar 不接受负月（闰月）与超出当月天数的日期，
-// 直接 panic；固化该行为，防止调用方误以为闰月/三十在短月能安全转换。
-func TestLunarLunarToSolarPanicsOnLeapMonthAndDay30InShortMonth(t *testing.T) {
-	assertPanic := func(name string, fn func()) {
-		t.Run(name, func(t *testing.T) {
-			defer func() {
-				if r := recover(); r == nil {
-					t.Fatalf("%s 应 panic（当前库行为）", name)
-				}
-			}()
-			fn()
-		})
+// 「腊月三十」逢小月、闰月（负数月）这类换算不了的输入不再 panic：
+// 日超出的落到该月最后一天，月不存在的返回零值（调用方按「没有下一次」处理）。
+// lunar-go v1.4.6 的 NewLunar 对这些输入直接 panic，包装层必须自己兜住。
+func TestLunarLunarToSolarShortMonthAndBadMonth(t *testing.T) {
+	if days := daysInLunarMonth(2024, 12); days != 29 {
+		t.Fatalf("前提不成立：2024 腊月应有 29 天，实际 %d", days)
 	}
-	assertPanic("闰月(负数)", func() { LunarToSolar(-5, 1, YMD{2024, 1, 1}) })
-	assertPanic("2024 腊月廿九后无三十", func() { LunarToSolar(12, 30, YMD{2024, 1, 1}) })
+	// 三十不存在 → 折到廿九；期望值用同一年表独立换算，验证折算而非只验证不崩
+	want, ok := lunarYMD(2024, 12, 29)
+	if !ok {
+		t.Fatal("2024 腊月廿九应可换算")
+	}
+	if got := LunarToSolar(12, 30, YMD{2024, 1, 1}); got != want {
+		t.Errorf("小月三十应折到廿九: got %+v want %+v", got, want)
+	}
+	if got := LunarToSolar(-5, 1, YMD{2024, 1, 1}); got != (YMD{}) {
+		t.Errorf("闰月不存在应返回零值: got %+v", got)
+	}
+	if got := LunarToSolar(13, 1, YMD{2024, 1, 1}); got != (YMD{}) {
+		t.Errorf("月越界应返回零值: got %+v", got)
+	}
+	// 零值 YMD.String() 为空串，调用方（anniversaryOccurrence）据此跳过该行
+	if got := LunarToSolar(13, 1, YMD{2024, 1, 1}).String(); got != "" {
+		t.Errorf("零值应渲染为空串: got %q", got)
+	}
 }
 
 func TestLunarSolarToLunar(t *testing.T) {

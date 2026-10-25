@@ -38,7 +38,7 @@ func (s *Store) IntroPath(ctx context.Context, selfID, personID string) (*IntroP
 	// 最后一行的 intro 还留着值，就是断链的证据。
 	// 走 live_people：引荐人在回收站里等同于暂时不存在，路径照样标成断链，
 	// 恢复之后又自己接上。
-	rows, err := s.DB.QueryContext(ctx, `WITH RECURSIVE chain(id,name,intro,depth) AS (
+	rows, err := s.CurrentDB().QueryContext(ctx, `WITH RECURSIVE chain(id,name,intro,depth) AS (
   SELECT id, name, NULLIF(introduced_by_person_id,''), 0 FROM live_people WHERE id=?
   UNION ALL
   SELECT p.id, p.name, NULLIF(p.introduced_by_person_id,''), c.depth+1
@@ -140,7 +140,7 @@ func (s *Store) pairRelTypes(ctx context.Context, ids []string) (map[string][]st
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	rows, err := s.DB.QueryContext(ctx, `SELECT from_person_id,to_person_id,type
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT from_person_id,to_person_id,type
 FROM relationships WHERE from_person_id IN (`+ph+`) OR to_person_id IN (`+ph+`)`, append(args, args...)...)
 	if err != nil {
 		return nil, err

@@ -35,8 +35,18 @@ const (
 // If no apprise URLs are configured, it is effectively a no-op.
 // 自动备份已独立成 internal/backup/scheduler（周期可配置），不再由这里驱动。
 func RunScheduler(ctx context.Context, s *store.Store) {
+	// runTickSafe：HTTP 侧有 recoverer 兜底，这个常驻 goroutine 没有——
+	// 里面对纪念日/农历的任何一处 panic 都会带走整个进程，必须自己接住。
+	runTickSafe := func(now time.Time) {
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("[notify] 每日任务 panic，已恢复并等待下一轮: %v", rec)
+			}
+		}()
+		runTick(ctx, s, now)
+	}
 	// 启动即评估：进程 09:30 起来、摘要配在 09:00，不该再等一整天。
-	runTick(ctx, s, time.Now())
+	runTickSafe(time.Now())
 	t := time.NewTicker(tickInterval)
 	defer t.Stop()
 	for {
@@ -44,7 +54,7 @@ func RunScheduler(ctx context.Context, s *store.Store) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			runTick(ctx, s, time.Now())
+			runTickSafe(time.Now())
 		}
 	}
 }
@@ -117,7 +127,7 @@ func snapshotAll(ctx context.Context, s *store.Store, now time.Time) error {
 		if err != nil {
 			continue
 		}
-		if _, err := s.DB.ExecContext(ctx,
+		if _, err := s.CurrentDB().ExecContext(ctx,
 			"INSERT OR REPLACE INTO intimacy_snapshots(person_id,day,score) VALUES(?,?,?)",
 			p.ID, day, res.CurrentScore); err != nil {
 			return err

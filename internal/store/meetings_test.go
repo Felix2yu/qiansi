@@ -38,14 +38,14 @@ func TestMeetingStatsAndTimeline(t *testing.T) {
 	s := newTestStore(t)
 
 	// 迁移 017 的默认值：新类型不填 is_meeting 就是 1（算见面）
-	if _, err := s.DB.Exec(`INSERT INTO event_types(id,name,color) VALUES(10,'见面聊天','#111111')`); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO event_types(id,name,color) VALUES(10,'见面聊天','#111111')`); err != nil {
 		t.Fatalf("seed type 10: %v", err)
 	}
 	var def int
-	if err := s.DB.QueryRow(`SELECT is_meeting FROM event_types WHERE id=10`).Scan(&def); err != nil || def != 1 {
+	if err := s.CurrentDB().QueryRow(`SELECT is_meeting FROM event_types WHERE id=10`).Scan(&def); err != nil || def != 1 {
 		t.Fatalf("is_meeting 默认值 = %d(err=%v)，应为 1", def, err)
 	}
-	if _, err := s.DB.Exec(`INSERT INTO event_types(id,name,color,is_meeting) VALUES(20,'电话微信','#222222',0)`); err != nil {
+	if _, err := s.CurrentDB().Exec(`INSERT INTO event_types(id,name,color,is_meeting) VALUES(20,'电话微信','#222222',0)`); err != nil {
 		t.Fatalf("seed type 20: %v", err)
 	}
 
@@ -55,26 +55,26 @@ func TestMeetingStatsAndTimeline(t *testing.T) {
 	ding := evMustPerson(t, s, "丁")
 
 	mt := 10
-	mtEvent(t, s, "元旦茶叙", "2026-01-01", nil, jia.ID)                 // 无类型 → 算
-	mtEvent(t, s, "小聚", "2026-01-11", &mt, jia.ID)                    // 算见面的类型
-	mtEvent(t, s, "拜年电话", "2026-01-16", nil, jia.ID)                  // 无类型的电话——口径算见面，先记着
-	phone := mtEvent(t, s, "拜年电话2", "2026-01-17", nil, jia.ID)       // 稍后改成不算见面的类型
-	if _, err := s.DB.Exec(`UPDATE events SET type_id=20 WHERE id=?`, phone.ID); err != nil {
+	mtEvent(t, s, "元旦茶叙", "2026-01-01", nil, jia.ID)           // 无类型 → 算
+	mtEvent(t, s, "小聚", "2026-01-11", &mt, jia.ID)             // 算见面的类型
+	mtEvent(t, s, "拜年电话", "2026-01-16", nil, jia.ID)           // 无类型的电话——口径算见面，先记着
+	phone := mtEvent(t, s, "拜年电话2", "2026-01-17", nil, jia.ID) // 稍后改成不算见面的类型
+	if _, err := s.CurrentDB().Exec(`UPDATE events SET type_id=20 WHERE id=?`, phone.ID); err != nil {
 		t.Fatalf("把拜年电话2改成电话类型: %v", err)
 	}
 	// 同一天两场：created_at 决定先后，后一场间隔记 0
 	early := mtEvent(t, s, "午饭", "2026-01-21", &mt, jia.ID)
 	late := mtEvent(t, s, "晚饭", "2026-01-21", &mt, jia.ID)
-	if _, err := s.DB.Exec(`UPDATE events SET created_at='2026-01-21T01:00:00Z' WHERE id=?`, early.ID); err != nil {
+	if _, err := s.CurrentDB().Exec(`UPDATE events SET created_at='2026-01-21T01:00:00Z' WHERE id=?`, early.ID); err != nil {
 		t.Fatalf("固定午饭 created_at: %v", err)
 	}
-	if _, err := s.DB.Exec(`UPDATE events SET created_at='2026-01-21T02:00:00Z' WHERE id=?`, late.ID); err != nil {
+	if _, err := s.CurrentDB().Exec(`UPDATE events SET created_at='2026-01-21T02:00:00Z' WHERE id=?`, late.ID); err != nil {
 		t.Fatalf("固定晚饭 created_at: %v", err)
 	}
 
 	mtEvent(t, s, "乙的初见", "2026-01-05", nil, yi.ID)
 	mtEvent(t, s, "丁的见面", "2026-01-02", nil, ding.ID)
-	if _, err := s.DB.Exec(`UPDATE people SET archived=1 WHERE id=?`, ding.ID); err != nil {
+	if _, err := s.CurrentDB().Exec(`UPDATE people SET archived=1 WHERE id=?`, ding.ID); err != nil {
 		t.Fatalf("归档丁: %v", err)
 	}
 
@@ -83,12 +83,12 @@ func TestMeetingStatsAndTimeline(t *testing.T) {
 			title string
 			want  *int // nil = 不带间隔
 		}{
-			{"元旦茶叙", nil},         // 最早一场，没有「上一次」
-			{"小聚", intPtr(10)},      // 01-01 → 01-11
-			{"拜年电话", intPtr(5)},    // 01-11 → 01-16（无类型，算见面）
-			{"拜年电话2", nil},        // 不算见面的类型：不显示间隔
-			{"午饭", intPtr(5)},       // 01-16 → 01-21（不算见面的拜年电话2 不打断链）
-			{"晚饭", intPtr(0)},       // 同一天后一场
+			{"元旦茶叙", nil},       // 最早一场，没有「上一次」
+			{"小聚", intPtr(10)},  // 01-01 → 01-11
+			{"拜年电话", intPtr(5)}, // 01-11 → 01-16（无类型，算见面）
+			{"拜年电话2", nil},      // 不算见面的类型：不显示间隔
+			{"午饭", intPtr(5)},   // 01-16 → 01-21（不算见面的拜年电话2 不打断链）
+			{"晚饭", intPtr(0)},   // 同一天后一场
 		}
 		for _, c := range cases {
 			item := mtTimelineItem(t, s, jia.ID, c.title)
@@ -160,11 +160,11 @@ func TestMeetingGapAvgRounding(t *testing.T) {
 		count       int
 		want        int
 	}{
-		{"2026-01-01", "2026-01-31", 2, 30},  // 整除
-		{"2026-01-01", "2026-01-02", 1, 0},    // 只见一次没有间隔
-		{"2026-01-01", "2026-01-21", 4, 7},    // 20/3 四舍五入
-		{"", "2026-01-21", 3, 0},              // 日期读不懂宁可不算
-		{"2026-01-21", "2026-01-01", 2, 0},    // 末见早于首见（理论不可能）不算
+		{"2026-01-01", "2026-01-31", 2, 30}, // 整除
+		{"2026-01-01", "2026-01-02", 1, 0},  // 只见一次没有间隔
+		{"2026-01-01", "2026-01-21", 4, 7},  // 20/3 四舍五入
+		{"", "2026-01-21", 3, 0},            // 日期读不懂宁可不算
+		{"2026-01-21", "2026-01-01", 2, 0},  // 末见早于首见（理论不可能）不算
 	}
 	for _, c := range cases {
 		if got := avgMeetingGapDays(c.first, c.last, c.count); got != c.want {

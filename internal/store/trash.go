@@ -93,7 +93,7 @@ FROM reminders r LEFT JOIN people p ON p.id=r.person_id WHERE r.deleted_at IS NO
 func (s *Store) TrashList(ctx context.Context) ([]*TrashItem, error) {
 	out := []*TrashItem{}
 	for _, q := range trashQueries {
-		rows, err := s.DB.QueryContext(ctx, q.sql)
+		rows, err := s.CurrentDB().QueryContext(ctx, q.sql)
 		if err != nil {
 			return nil, err
 		}
@@ -131,7 +131,7 @@ func (s *Store) TrashRestore(ctx context.Context, kind, id string) error {
 	if err != nil {
 		return err
 	}
-	return execOne(ctx, s.DB, "UPDATE "+table+" SET deleted_at=NULL WHERE id=? AND deleted_at IS NOT NULL", id)
+	return execOne(ctx, s.CurrentDB(), "UPDATE "+table+" SET deleted_at=NULL WHERE id=? AND deleted_at IS NOT NULL", id)
 }
 
 // TrashHas 这一行是否还躺在回收站里。API 在碰磁盘文件之前先问一句：
@@ -143,7 +143,7 @@ func (s *Store) TrashHas(ctx context.Context, kind, id string) (bool, error) {
 		return false, err
 	}
 	var n int
-	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE id=? AND deleted_at IS NOT NULL", id).Scan(&n); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM "+table+" WHERE id=? AND deleted_at IS NOT NULL", id).Scan(&n); err != nil {
 		return false, err
 	}
 	return n > 0, nil
@@ -158,13 +158,35 @@ func (s *Store) TrashPurge(ctx context.Context, kind, id string) error {
 		return err
 	}
 	if kind == "event" {
-		if _, err := s.DB.ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id=?", id); err != nil {
+		if _, err := s.CurrentDB().ExecContext(ctx, "UPDATE transactions SET event_id=NULL WHERE event_id=?", id); err != nil {
 			return err
 		}
 	}
+	// 联系人的对话/待办是 SET NULL 不是 CASCADE，taggings 没有指向 people 的外键：
+	// 不显式随人删，人删掉后它们会以「无归属」状态重新可见（见 PersonPurge 同款注释）。
+	if kind == "person" {
+		tx, err := s.CurrentDB().BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, q := range []string{
+			"DELETE FROM memos WHERE person_id=?",
+			"DELETE FROM reminders WHERE person_id=?",
+			"DELETE FROM taggings WHERE target_type='person' AND target_id=?",
+		} {
+			if _, err := tx.ExecContext(ctx, q, id); err != nil {
+				return err
+			}
+		}
+		if err := execOne(ctx, tx, "DELETE FROM people WHERE id=? AND deleted_at IS NOT NULL", id); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	// 只删回收站里的行：还没进回收站的记录由这个接口删不掉（404），
 	// 避免一次点击把正在使用的记录抹成不可恢复。
-	return execOne(ctx, s.DB, "DELETE FROM "+table+" WHERE id=? AND deleted_at IS NOT NULL", id)
+	return execOne(ctx, s.CurrentDB(), "DELETE FROM "+table+" WHERE id=? AND deleted_at IS NOT NULL", id)
 }
 
 // TrashEmptyResult 是清空回收站的回执：各类删掉多少行，以及需要清理磁盘的头像。
@@ -195,7 +217,7 @@ func (s *Store) TrashEmptyBefore(ctx context.Context, before time.Time) (*TrashE
 		pcond += " AND p.deleted_at <= ?"
 		args = append(args, t)
 	}
-	atts, err := s.DB.QueryContext(ctx, `SELECT a.id,a.entity_type,a.entity_id,a.file_name,a.stored_name,a.mime,a.size,a.created_at
+	atts, err := s.CurrentDB().QueryContext(ctx, `SELECT a.id,a.entity_type,a.entity_id,a.file_name,a.stored_name,a.mime,a.size,a.created_at
 FROM attachments a JOIN people p ON p.id=a.entity_id
 WHERE a.entity_type='person' AND`+pcond, args...)
 	if err != nil {
@@ -215,7 +237,7 @@ WHERE a.entity_type='person' AND`+pcond, args...)
 	}
 	atts.Close()
 
-	tx, err := s.DB.BeginTx(ctx, nil)
+	tx, err := s.CurrentDB().BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +269,19 @@ WHERE a.entity_type='person' AND`+pcond, args...)
 			return nil, err
 		}
 	}
-	// 联系人的关联记录（含没进回收站、只是被他带着消失的那些）由外键级联收尾，
+	// 联系人名下的对话/待办不是 CASCADE（SET NULL），taggings 没有指向 people
+	// 的外键：不先删，人没了之后它们会以「无归属」状态重新可见。
+	// 这些行本来就没进回收站（是随人隐藏的），不计入 Purged 计数。
+	for _, q := range []string{
+		"DELETE FROM memos WHERE person_id IN (SELECT p.id FROM people p WHERE" + pcond + ")",
+		"DELETE FROM reminders WHERE person_id IN (SELECT p.id FROM people p WHERE" + pcond + ")",
+		"DELETE FROM taggings WHERE target_type='person' AND target_id IN (SELECT p.id FROM people p WHERE" + pcond + ")",
+	} {
+		if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+			return nil, err
+		}
+	}
+	// 联系人的其余关联记录（含没进回收站、只是被他带着消失的那些）由外键级联收尾，
 	// 这正是「彻底删除联系人」一直以来的代价，所以前一步才要先把头像挑出来。
 	if err := count("person", "DELETE FROM people WHERE"+cond, args...); err != nil {
 		return nil, err

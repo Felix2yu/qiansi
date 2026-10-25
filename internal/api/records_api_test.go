@@ -49,7 +49,7 @@ func evAPIStr(m map[string]any, key string) string {
 func evAPICount(t *testing.T, ts *testServer, query string) int {
 	t.Helper()
 	var n int
-	if err := ts.Store.DB.QueryRow(query).Scan(&n); err != nil {
+	if err := ts.Store.CurrentDB().QueryRow(query).Scan(&n); err != nil {
 		t.Fatalf("COUNT %s: %v", query, err)
 	}
 	return n
@@ -809,7 +809,7 @@ func TestAPIRecords_AnniversaryReminderDismissFlow(t *testing.T) {
 
 func TestAPIRecords_ClosedDB500s(t *testing.T) {
 	ts := newTestServer(t)
-	if err := ts.Store.DB.Close(); err != nil {
+	if err := ts.Store.CurrentDB().Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
 	wantStatus := func(name string, rec *httptest.ResponseRecorder, code int) {

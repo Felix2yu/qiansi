@@ -268,7 +268,7 @@ func TestContactCheckinMovesAnchor(t *testing.T) {
 		}
 	}
 	var count int
-	if err := s.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM contact_checkins WHERE person_id=?", p.ID).Scan(&count); err != nil {
+	if err := s.CurrentDB().QueryRowContext(ctx, "SELECT COUNT(*) FROM contact_checkins WHERE person_id=?", p.ID).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if count != 1 {

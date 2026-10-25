@@ -20,7 +20,7 @@ func TestPeopleNullAvatarIsScannable(t *testing.T) {
 	if err := s.AttachmentCreate(ctx, att); err != nil {
 		t.Fatalf("AttachmentCreate: %v", err)
 	}
-	if _, err := s.DB.ExecContext(ctx, "UPDATE people SET avatar_attachment_id=? WHERE id=?", att.ID, p.ID); err != nil {
+	if _, err := s.CurrentDB().ExecContext(ctx, "UPDATE people SET avatar_attachment_id=? WHERE id=?", att.ID, p.ID); err != nil {
 		t.Fatalf("set avatar: %v", err)
 	}
 	if got, err := s.PersonGet(ctx, p.ID); err != nil || got.AvatarAttachmentID != att.ID {
@@ -30,7 +30,7 @@ func TestPeopleNullAvatarIsScannable(t *testing.T) {
 	if _, err := s.PersonDetachAttachments(ctx, p.ID); err != nil {
 		t.Fatalf("PersonDetachAttachments: %v", err)
 	}
-	if _, err := s.DB.ExecContext(ctx, "DELETE FROM attachments"); err != nil {
+	if _, err := s.CurrentDB().ExecContext(ctx, "DELETE FROM attachments"); err != nil {
 		t.Fatalf("clean attachments: %v", err)
 	}
 

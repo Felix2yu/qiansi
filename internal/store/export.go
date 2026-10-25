@@ -56,7 +56,7 @@ const exportEventCols = `e.event_date,e.title,COALESCE(et.name,''),COALESCE(e.lo
 COALESCE((SELECT group_concat(p.name,'、') FROM event_participants ep JOIN live_people p ON p.id=ep.person_id WHERE ep.event_id=e.id),''),
 COALESCE((SELECT t.direction FROM live_transactions t WHERE t.id=e.gift_transaction_id),''),
 COALESCE((SELECT t.amount_fen FROM live_transactions t WHERE t.id=e.gift_transaction_id),0),
-(SELECT COALESCE(SUM(t.amount_fen),0) FROM live_transactions t WHERE t.event_id=e.id AND t.direction='out' AND t.id IS NOT e.gift_transaction_id),
+` + eventExpenseFenSQL + `,
 e.has_gift,COALESCE(e.gift,''),COALESCE(e.summary,'')`
 
 func (s *Store) exportEvents(ctx context.Context, f ExportFilter) ([]string, [][]string, error) {
@@ -80,7 +80,7 @@ func (s *Store) exportEvents(ctx context.Context, f ExportFilter) ([]string, [][
 		qry += " WHERE " + strings.Join(conds, " AND ")
 	}
 	qry += " ORDER BY e.event_date DESC, e.created_at DESC"
-	rows, err := s.DB.QueryContext(ctx, qry, args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, qry, args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -118,7 +118,7 @@ FROM live_transactions t LEFT JOIN live_people p ON p.id=t.person_id`
 		cond += "t.event_id=?"
 		args = append(args, f.EventID)
 	}
-	rows, err := s.DB.QueryContext(ctx, qry+cond+" ORDER BY t.occurred_at DESC, t.created_at DESC", args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, qry+cond+" ORDER BY t.occurred_at DESC, t.created_at DESC", args...)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -145,7 +145,7 @@ func (s *Store) exportMemos(ctx context.Context, f ExportFilter) ([]string, [][]
 FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id`
 	// 对话不挂事件，EventID 这一层对 memos 无意义
 	cond, args := f.yearPersonCond("m.said_at", "m.person_id")
-	rows, err := s.DB.QueryContext(ctx, qry+cond+" ORDER BY m.said_at DESC", args...)
+	rows, err := s.CurrentDB().QueryContext(ctx, qry+cond+" ORDER BY m.said_at DESC", args...)
 	if err != nil {
 		return nil, nil, err
 	}

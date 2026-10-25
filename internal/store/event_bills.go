@@ -43,7 +43,7 @@ func scanEventBill(rows *sql.Rows) (*EventBill, error) {
 
 // EventBills 返回一个往来关联的全部账单，按账单日期倒序。
 func (s *Store) EventBills(ctx context.Context, eventID string) ([]*EventBill, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventBillColumns+`
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT `+eventBillColumns+`
 FROM event_bills WHERE event_id=? ORDER BY tx_date DESC, created_at DESC`, eventID)
 	if err != nil {
 		return nil, err
@@ -75,7 +75,7 @@ func (s *Store) EventBillLink(ctx context.Context, b *EventBill) (*EventBill, er
 		b.Type = "expense"
 	}
 	now := nowUTC()
-	_, err := s.DB.ExecContext(ctx, `INSERT INTO event_bills
+	_, err := s.CurrentDB().ExecContext(ctx, `INSERT INTO event_bills
 (id,event_id,remote_id,remote_base,amount_fen,type,tx_date,description,category_name,account_name,book_name,created_at,synced_at)
 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(event_id,remote_id) DO UPDATE SET
@@ -91,7 +91,7 @@ ON CONFLICT(event_id,remote_id) DO UPDATE SET
 }
 
 func (s *Store) eventBillByRemote(ctx context.Context, eventID, remoteID string) (*EventBill, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT `+eventBillColumns+`
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT `+eventBillColumns+`
 FROM event_bills WHERE event_id=? AND remote_id=?`, eventID, remoteID)
 	if err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ FROM event_bills WHERE event_id=? AND remote_id=?`, eventID, remoteID)
 // EventBillUnlink 解除关联。只删关联，不动货殖那边的账单——
 // 删账是账本里的事，牵丝没有资格替用户决定。
 func (s *Store) EventBillUnlink(ctx context.Context, eventID, id string) error {
-	res, err := s.DB.ExecContext(ctx, `DELETE FROM event_bills WHERE id=? AND event_id=?`, id, eventID)
+	res, err := s.CurrentDB().ExecContext(ctx, `DELETE FROM event_bills WHERE id=? AND event_id=?`, id, eventID)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,12 @@ func (s *Store) EventBillUnlink(ctx context.Context, eventID, id string) error {
 
 // EventBillRefresh 用最新快照覆盖一行，保留 id 与 created_at。
 func (s *Store) EventBillRefresh(ctx context.Context, eventID, id string, b *EventBill) error {
-	res, err := s.DB.ExecContext(ctx, `UPDATE event_bills SET
+	// type 归一化同 EventBillLink：远端若对已关联账单返回空 type，
+	// 直接落库会让它退出「支出账单」合计，账单权威口径悄悄翻回手填
+	if b.Type == "" {
+		b.Type = "expense"
+	}
+	res, err := s.CurrentDB().ExecContext(ctx, `UPDATE event_bills SET
 remote_base=?, amount_fen=?, type=?, tx_date=?, description=?, category_name=?, account_name=?, book_name=?, synced_at=?
 WHERE id=? AND event_id=?`,
 		b.RemoteBase, b.AmountFen, b.Type, b.TxDate, b.Description, b.CategoryName,
@@ -139,7 +144,7 @@ func (s *Store) EventHasBills(ctx context.Context, eventID string) (bool, error)
 	var n int
 	// 只数支出账单：入账/转账账单不构成「这次往来的开销」，
 	// 拿它们当权威会把手填开销的编辑权也一起禁掉
-	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM event_bills WHERE event_id=? AND type='expense'`, eventID).Scan(&n)
+	err := s.CurrentDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM event_bills WHERE event_id=? AND type='expense'`, eventID).Scan(&n)
 	if err != nil {
 		return false, err
 	}
@@ -148,7 +153,7 @@ func (s *Store) EventHasBills(ctx context.Context, eventID string) (bool, error)
 
 // EventBillRemoteIDs 取出某往来已关联的远端 id，供刷新时批量重取。
 func (s *Store) EventBillRemoteIDs(ctx context.Context, eventID string) ([]string, error) {
-	rows, err := s.DB.QueryContext(ctx, `SELECT remote_id FROM event_bills WHERE event_id=? ORDER BY tx_date DESC`, eventID)
+	rows, err := s.CurrentDB().QueryContext(ctx, `SELECT remote_id FROM event_bills WHERE event_id=? ORDER BY tx_date DESC`, eventID)
 	if err != nil {
 		return nil, err
 	}

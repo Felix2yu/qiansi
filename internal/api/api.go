@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	bsched "github.com/qiansi/app/internal/backup/scheduler"
 	"github.com/qiansi/app/internal/config"
 	"github.com/qiansi/app/internal/store"
 )
@@ -22,10 +24,13 @@ type API struct {
 	Store  *store.Store
 	Cfg    *config.Config
 	Router *chi.Mux
+	// backup 自动备份调度器。必须与常驻循环（main 里 go Run）是同一个实例：
+	// 各自 new 的话互斥锁也是各自的，「立即执行」与定时触发可以同时进 VACUUM INTO
+	backup *bsched.Runner
 }
 
 func New(s *store.Store, cfg *config.Config) *API {
-	api := &API{Store: s, Cfg: cfg, Router: chi.NewRouter()}
+	api := &API{Store: s, Cfg: cfg, Router: chi.NewRouter(), backup: bsched.New(s, cfg)}
 	r := api.Router
 	// 默认不再对任意来源开放：CORS 只放行显式配置的来源（同源请求不带 Origin，不受影响），
 	// 避免任意网站跨站读写本机数据。需要跨域时用 QIANSI_CORS_ORIGINS 指定。
@@ -39,6 +44,7 @@ func New(s *store.Store, cfg *config.Config) *API {
 	// 文本类响应统一 gzip：前端产物去掉压缩后是 MB 级，公网访问时这是主要耗时。
 	// 只压缩文本类型，图片等已压缩的内容不受影响。
 	r.Use(middleware.Compress(5))
+	r.Use(api.csrfGuard)
 	r.Use(api.authGuard)
 
 	r.Get("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +125,61 @@ func (a *API) authorized(r *http.Request, token string) bool {
 	return err == nil && validSession(token, c.Value, time.Now())
 }
 
+// csrfGuard 拦截浏览器发起的跨站写请求。
+//
+// 未配置 QIANSI_TOKEN 的默认模式下 API 对本机全开，而 CORS 中间件只决定
+// 「响应能否被跨站脚本读到」，拦不住 no-cors 简单请求把数据写进来——
+// 任意网页都能 POST /api/v1/import/json 把整库静默替换掉。
+// 令牌模式下写请求必须带 Authorization 头（第三方页面借不到），本守卫是双保险。
+//
+// 判定依据浏览器自带的来源自述：Origin 与请求同 Host（或在显式配置的
+// CORS 白名单里）、或 Sec-Fetch-Site 为 same-origin/none 则放行；
+// 两个标都没有的是 curl 这类非浏览器客户端，不受影响。
+func (a *API) csrfGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !a.writeOriginAllowed(r) {
+			writeErr(w, http.StatusForbidden, "跨站请求被拒绝")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeOriginAllowed 判定一次非读请求是否来自允许的来源。
+// 同 Host 比对覆盖反代直传（Host 原样转发）与 SPA 本机调用；
+// Sec-Fetch-Site 兜住带 Origin 又比对不上的老浏览器。
+func (a *API) writeOriginAllowed(r *http.Request) bool {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		if u, err := url.Parse(origin); err == nil && u.Host != "" && u.Host == r.Host {
+			return true
+		}
+		for _, o := range a.Cfg.CORSOrigins {
+			if o == "*" || o == origin {
+				return true
+			}
+		}
+		// Origin 在，但既非同源也不在白名单——无论浏览器自述什么都拦下
+		return false
+	}
+	// 无 Origin（非浏览器客户端，或老浏览器的同源表单）：看 Fetch Metadata
+	switch r.Header.Get("Sec-Fetch-Site") {
+	case "", "same-origin", "none":
+		return true
+	default:
+		// cross-site / same-site（同站不同源可被他人注册子域）都拦
+		return false
+	}
+}
+
 func (a *API) recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
@@ -192,7 +253,9 @@ func parseIntQuery(r *http.Request, name string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil {
+	if err != nil || n < 0 {
+		// 负数与 queryPositiveInt 的口径一致：不认识就退默认值。
+		// 负 LIMIT 在 SQLite 里等价「不限行数」，负 OFFSET 则可能进到 Go 侧切片
 		return def
 	}
 	return n

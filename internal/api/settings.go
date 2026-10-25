@@ -310,7 +310,9 @@ func isNoRows(err error) bool { return err == sql.ErrNoRows }
 // secretSettingKeys 是绝不回显明文值的配置项。GET /settings 对它们只回答
 // 「有没有」，不回答「是什么」：密钥是长期有效的，一旦进了浏览器响应，
 // 任何 XSS、代理日志、页面错误上报都能把它读走。
-var secretSettingKeys = map[string]bool{"huozhi_api_key": true}
+// apprise URL 内嵌各平台 token（telegram://<bot_token>@…、discord://<token>@…），
+// 与 API 密钥同属长期凭证，一并脱敏。
+var secretSettingKeys = map[string]bool{"huozhi_api_key": true, "apprise_urls": true}
 
 // settingMasked 是脱敏后回显的哨兵值。前端据此把输入框留空并提示「已保存」，
 // 保存时不上报该键，服务端因此保留原值——「改地址不动密钥」不必重新粘贴一遍。
@@ -353,6 +355,11 @@ func (a *API) settingsBulk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for k, v := range m {
+		// 脱敏键的哨兵值原样写回等于把真值销毁（GET 回显被再次保存），
+		// 客户端不该发它；发来了就当作「没改这一键」处理
+		if secretSettingKeys[k] && v == settingMasked {
+			continue
+		}
 		if err := a.Store.SettingSet(r.Context(), k, v); err != nil {
 			writeStoreErr(w, err)
 			return

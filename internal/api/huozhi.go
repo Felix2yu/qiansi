@@ -224,6 +224,12 @@ func (a *API) eventBillsLink(w http.ResponseWriter, r *http.Request) {
 func (a *API) eventBillsRefresh(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	eventID := chi.URLParam(r, "id")
+	// 事件不存在时直接 404：否则对幽灵事件刷新也回 200，
+	// 调用方无从分辨「关联过但货殖里都没了」和「事件根本不存在」
+	if _, err := a.Store.EventGet(ctx, eventID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
 	ids, err := a.Store.EventBillRemoteIDs(ctx, eventID)
 	if err != nil {
 		writeStoreErr(w, err)
@@ -244,7 +250,12 @@ func (a *API) eventBillsRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := map[string]bool{}
-	existing, _ := a.Store.EventBills(ctx, eventID)
+	existing, err := a.Store.EventBills(ctx, eventID)
+	if err != nil {
+		// 本地快照都读不到时按成功返回等于空转；交 500 让调用方重试
+		writeStoreErr(w, err)
+		return
+	}
 	byRemote := map[string]*store.EventBill{}
 	for _, b := range existing {
 		byRemote[b.RemoteID] = b

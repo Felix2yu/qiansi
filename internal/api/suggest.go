@@ -2,7 +2,7 @@ package api
 
 import (
 	"context"
-	"database/sql"
+	"log"
 
 	"github.com/qiansi/app/internal/store"
 )
@@ -14,10 +14,9 @@ type Suggestion struct {
 	Message    string `json:"message"`
 }
 
-func (a *API) suggest() []Suggestion {
+func (a *API) suggest(ctx context.Context) []Suggestion {
 	out := []Suggestion{}
-	ctx := context.Background()
-	st := a.Store.DB
+	st := a.Store.CurrentDB()
 
 	// 「久未联系」这一类已经由联系节奏引擎接管：它过去拿 people.updated_at
 	// 当「最近一次接触」，改一次备注就把人从名单里摘出去，而且阈值写死 14 天。
@@ -29,7 +28,12 @@ func (a *API) suggest() []Suggestion {
 	// 建档当年命中一次，之后每年重复的纪念日再也不会出现在建议里。
 	// 用 AnniversarySoon 而不是 AnniversaryUpcoming —— 建议要前瞻，
 	// 待办那套「提醒档位到期才出现」的口径会把只设了当天提醒的日子整个漏掉。
-	if upcoming, err := a.Store.AnniversarySoon(ctx, 7); err == nil {
+	upcoming, err := a.Store.AnniversarySoon(ctx, 7)
+	if err != nil {
+		// 建议是首页的锦上添花，失败不拖垮整页，但也不能一声不响：
+		// 排障时「建议里少了一类」得能在日志里找到原因
+		log.Printf("[api] 建议之纪念日临近查询失败: %v", err)
+	} else {
 		for _, r := range upcoming {
 			name := r.PersonName
 			out = append(out, Suggestion{
@@ -51,7 +55,9 @@ FROM (
   FROM live_transactions t WHERE t.direction='out' AND t.kind='loan' AND t.settled=0
 ) x JOIN live_people p ON p.id=x.pid
 GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
-	if err == nil {
+	if err != nil {
+		log.Printf("[api] 建议之借款未还查询失败: %v", err)
+	} else {
 		defer rows.Close()
 		for rows.Next() {
 			var personID, name string
@@ -69,7 +75,9 @@ GROUP BY x.pid ORDER BY unpaid DESC LIMIT 5`)
 	rows, err = st.QueryContext(ctx, `SELECT COALESCE(p.id,''), COALESCE(p.name,''), m.content, COALESCE(m.due_date,'')
 FROM live_memos m LEFT JOIN live_people p ON p.id=m.person_id
 WHERE m.is_promise=1 AND m.status='open' AND m.due_date<>'' AND date(m.due_date) < ?`, store.TodayLocal())
-	if err == nil {
+	if err != nil {
+		log.Printf("[api] 建议之承诺到期查询失败: %v", err)
+	} else {
 		defer rows.Close()
 		for rows.Next() {
 			var personID, name, content, due string
@@ -82,7 +90,6 @@ WHERE m.is_promise=1 AND m.status='open' AND m.due_date<>'' AND date(m.due_date)
 		}
 	}
 
-	_ = sql.ErrNoRows
 	return out
 }
 
