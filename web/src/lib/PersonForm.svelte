@@ -371,12 +371,13 @@
   <div class="grid grid-cols-2 items-center gap-2">
     <input type="date" class="q-input" bind:value={form.birthday} />
     <label class="flex cursor-pointer items-center gap-2 text-sm" style="color: var(--q-muted);">
-      <input type="checkbox" bind:checked={form.birthday_is_lunar} /> 农历生日
+      <input type="checkbox" bind:checked={form.birthday_is_lunar} /> 按农历提醒
     </label>
   </div>
   {#if form.birthday}
     <p class="q-hint !mt-0">
-      保存后会自动生成一条「{composedName() || 'TA'}的生日」纪念日并进入提醒。
+      生日日期请填公历；勾选后按对应农历日期每年提醒，并自动生成「{composedName() ||
+        'TA'}的生日」纪念日。
     </p>
   {/if}
   <div class="grid grid-cols-2 gap-2">

@@ -127,6 +127,15 @@ func SolarToLunar(solar YMD) (int, int) {
 	return l.GetMonth(), l.GetDay()
 }
 
+// SolarToLunarDate 保留公历年份作为农历日期的锚点；闰月无法按普通农历年重复。
+func SolarToLunarDate(solar YMD) (YMD, bool) {
+	month, day := SolarToLunar(solar)
+	if month <= 0 || day <= 0 {
+		return YMD{}, false
+	}
+	return YMD{Year: solar.Year, Month: month, Day: day}, true
+}
+
 // DaysBetween returns abs(a-b) days. Uses time.Time; timezone-independent.
 func DaysBetween(a, b YMD) int {
 	ta := time.Date(a.Year, time.Month(a.Month), a.Day, 0, 0, 0, 0, time.UTC)

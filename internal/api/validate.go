@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/qiansi/app/internal/lunar"
 	"github.com/qiansi/app/internal/store"
 )
 
@@ -282,6 +283,11 @@ func validatePerson(p *store.Person) error {
 		return err
 	}
 	p.Birthday = d
+	if p.BirthdayIsLunar && p.Birthday != "" {
+		if _, ok := lunar.SolarToLunarDate(lunar.ParseDate(p.Birthday)); !ok {
+			return errors.New("农历生日暂不支持闰月，请取消农历提醒")
+		}
+	}
 	g, err := normGender(p.Gender)
 	if err != nil {
 		return err

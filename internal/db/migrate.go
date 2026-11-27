@@ -8,6 +8,8 @@ import (
 	"log"
 	"sort"
 	"strings"
+
+	"github.com/qiansi/app/internal/lunar"
 )
 
 //go:embed migrations/*.sql
@@ -33,6 +35,12 @@ func RunMigrations(ctx context.Context, db *sql.DB) error {
 		if _, err := db.ExecContext(ctx, string(data)); err != nil {
 			log.Printf("[migrate] FAIL %s: %v", f, err)
 			return err
+		}
+		if ver == 19 {
+			if err := repairLunarBirthdayAnniversaries(ctx, db); err != nil {
+				log.Printf("[migrate] FAIL %s: %v", f, err)
+				return err
+			}
 		}
 		if _, err := db.ExecContext(ctx, "INSERT INTO schema_version(version) VALUES(?)", ver); err != nil {
 			return err
@@ -60,4 +68,42 @@ func extractVersion(name string) int {
 		}
 	}
 	return n
+}
+
+func repairLunarBirthdayAnniversaries(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `SELECT a.id,p.birthday
+FROM anniversaries a JOIN people p ON p.id=a.person_id
+WHERE a.source='birthday' AND p.birthday_is_lunar<>0 AND COALESCE(p.birthday,'')<>''`)
+	if err != nil {
+		return err
+	}
+	type row struct{ id, birthday string }
+	var pending []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.birthday); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, r)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, r := range pending {
+		solar := lunar.ParseDate(r.birthday)
+		lunarDate, ok := lunar.SolarToLunarDate(solar)
+		if !ok {
+			continue
+		}
+		if _, err := db.ExecContext(ctx,
+			"UPDATE anniversaries SET date=? WHERE id=? AND source='birthday'", lunarDate.String(), r.id); err != nil {
+			return err
+		}
+	}
+	return nil
 }

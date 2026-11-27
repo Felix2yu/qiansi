@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/qiansi/app/internal/lunar"
 )
 
 // ===== Settings =====
@@ -674,11 +675,21 @@ func (s *Store) SyncBirthdayAnniversary(ctx context.Context, p *Person) error {
 		}
 	}
 
+	anniversaryDate := p.Birthday
+	if p.BirthdayIsLunar {
+		solar := lunar.ParseDate(p.Birthday)
+		lunarDate, ok := lunar.SolarToLunarDate(solar)
+		if !ok {
+			return errors.New("农历生日必须是有效的公历日期，且暂不支持闰月")
+		}
+		anniversaryDate = lunarDate.String()
+	}
+
 	title := p.Name + "的生日"
 	if annivID != "" {
 		if _, err := tx.ExecContext(ctx,
 			"UPDATE anniversaries SET person_id=?,title=?,date=?,is_lunar=?,repeat_yearly=1 WHERE id=?",
-			p.ID, title, p.Birthday, p.BirthdayIsLunar, annivID); err != nil {
+			p.ID, title, anniversaryDate, p.BirthdayIsLunar, annivID); err != nil {
 			return err
 		}
 	} else {
@@ -691,7 +702,7 @@ func (s *Store) SyncBirthdayAnniversary(ctx context.Context, p *Person) error {
 		annivID = uuid.NewString()
 		if _, err := tx.ExecContext(ctx, `INSERT INTO anniversaries(id,person_id,title,date,is_lunar,repeat_yearly,remind_days,created_at,source)
 VALUES(?,?,?,?,?,1,'7,3,1,0',?, 'birthday')`,
-			annivID, p.ID, title, p.Birthday, p.BirthdayIsLunar, nowUTC()); err != nil {
+			annivID, p.ID, title, anniversaryDate, p.BirthdayIsLunar, nowUTC()); err != nil {
 			return err
 		}
 	}

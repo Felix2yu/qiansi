@@ -56,7 +56,7 @@
       p.grade > 0 ? '♥'.repeat(p.grade) : '',
       (p.categories ?? []).map((c) => c.name).join('·'),
       genderLabel(p.gender),
-      p.birthday ? `生日 ${p.birthday}${p.birthday_is_lunar ? '（农历）' : ''}` : ''
+      p.birthday ? `生日 ${p.birthday}${p.birthday_is_lunar ? '（按农历提醒）' : ''}` : ''
     ]
       .filter(Boolean)
       .join(' · ');
