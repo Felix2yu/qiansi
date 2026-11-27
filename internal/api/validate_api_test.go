@@ -97,6 +97,27 @@ func TestAPIValidate_BirthdayFeedsAnniversary(t *testing.T) {
 	if annivDate != "1990-01-01" {
 		t.Fatalf("纪念日 date = %q, 期望 1990-01-01", annivDate)
 	}
+
+	rec = ts.do(http.MethodPost, "/api/v1/people/", map[string]any{
+		"name": "农历生日", "birthday": "1994-10-26", "birthday_is_lunar": true,
+	})
+	apiWantStatus(t, "person lunar birthday", "", rec, http.StatusOK)
+	created = decodeMap(t, rec)
+	if got := created["birthday"]; got != "1994-10-26" {
+		t.Fatalf("人物生日应保留公历日期, got %v", got)
+	}
+	if err := ts.Store.CurrentDB().QueryRow(
+		"SELECT date FROM anniversaries WHERE person_id=? AND source='birthday'", created["id"]).Scan(&annivDate); err != nil {
+		t.Fatalf("农历生日纪念日应已生成: %v", err)
+	}
+	if annivDate != "1994-09-22" {
+		t.Fatalf("农历生日纪念日 date = %q, 期望 1994-09-22", annivDate)
+	}
+
+	rec = ts.do(http.MethodPost, "/api/v1/people/", map[string]any{
+		"name": "闰月生日", "birthday": "2023-03-22", "birthday_is_lunar": true,
+	})
+	apiWantError(t, "person leap lunar birthday", "", rec, http.StatusBadRequest, "农历生日暂不支持闰月")
 }
 
 func TestAPIValidate_TransactionEnumsAndAmount(t *testing.T) {

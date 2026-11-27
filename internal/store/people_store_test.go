@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/qiansi/app/internal/lunar"
 )
 
 // ===== 测试辅助（名字带 people 前缀，避免与其他测试文件冲突） =====
@@ -1030,7 +1032,7 @@ func TestPeopleSyncBirthdayAnniversary(t *testing.T) {
 		Scan(&row.id, &row.title, &row.date, &row.remind, &row.src); err != nil {
 		t.Fatalf("查询纪念日: %v", err)
 	}
-	if row.title != "生日人的生日" || row.date != "1991-03-04" || row.src != "birthday" || row.remind != "7,3,1,0" {
+	if row.title != "生日人的生日" || row.date != "1991-01-18" || row.src != "birthday" || row.remind != "7,3,1,0" {
 		t.Fatalf("纪念日内容不正确: %+v", row)
 	}
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE repeat_yearly=1 AND id=?", p.BirthdayAnniversaryID); n != 1 {
@@ -1051,7 +1053,7 @@ func TestPeopleSyncBirthdayAnniversary(t *testing.T) {
 	if p.BirthdayAnniversaryID != row.id {
 		t.Fatalf("不应新建纪念日: %q -> %q", row.id, p.BirthdayAnniversaryID)
 	}
-	if got := pRawScanStr(t, s, "SELECT date FROM anniversaries WHERE id=?", row.id); got != "1991-03-05" {
+	if got := pRawScanStr(t, s, "SELECT date FROM anniversaries WHERE id=?", row.id); got != "1991-01-19" {
 		t.Fatalf("生日未更新: %q", got)
 	}
 	if n := pRawScanInt(t, s, "SELECT COUNT(*) FROM anniversaries WHERE person_id=?", p.ID); n != 1 {
@@ -1160,6 +1162,26 @@ func TestPeopleSyncBirthdayAnniversary(t *testing.T) {
 	}
 	if err := s.SyncBirthdayAnniversary(pCancelledCtx(), &Person{ID: plain.ID}); err == nil {
 		t.Errorf("已取消的 ctx（清空生日分支）应返回错误")
+	}
+}
+
+func TestPeopleSyncLunarBirthdayConvertsSolarDate(t *testing.T) {
+	ctx := pctx(t)
+	s := newTestStore(t)
+	p := &Person{Name: "童瑶", Birthday: "1994-10-26", BirthdayIsLunar: true}
+	pMustCreate(t, s, p)
+	if err := s.SyncBirthdayAnniversary(ctx, p); err != nil {
+		t.Fatalf("同步农历生日: %v", err)
+	}
+	if p.Birthday != "1994-10-26" {
+		t.Fatalf("人物生日应保留公历日期, got %q", p.Birthday)
+	}
+	if got := pRawScanStr(t, s, "SELECT date FROM anniversaries WHERE id=?", p.BirthdayAnniversaryID); got != "1994-09-22" {
+		t.Fatalf("生日纪念日应保存农历日期, got %q", got)
+	}
+	next := lunar.NextOccurrence(lunar.ParseDate("1994-09-22"), true, lunar.YMD{Year: 2026, Month: 1, Day: 1})
+	if next != (lunar.YMD{Year: 2026, Month: 10, Day: 31}) {
+		t.Fatalf("2026 年农历九月廿二应为 10-31, got %s", next)
 	}
 }
 
